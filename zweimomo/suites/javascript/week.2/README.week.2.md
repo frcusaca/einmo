@@ -62,44 +62,51 @@ re-sample. This tier is where that gap gets explored.
   server-side sampling endpoint, or stay a client-side shuffle of the
   worklist it already fetches?
 
-## Use case: a second DC signs off, with a reason (NOT YET IMPLEMENTED)
+## Use case: multiple DCs sign off, each with a reason (NOT YET IMPLEMENTED)
 
-**The scenario.** A second data center — different hardware, a different
-OS, a newer language/toolchain version — comes online. Before trusting it,
-the team wants to know: does it produce the *same* signed results as the
-existing DC? The natural way to check is to let the second DC run the test
-suite and add **its own** signature to the `checked` section — a second,
-independent attestation layered on top of the first, not a replacement for
-it. Ideally, that second signature carries a short reason recorded
-alongside it (e.g. "cross-verification from DC-2: aarch64, Ubuntu 26.04,
-Rust 1.9x") — so a reader of the stamp chain later can tell *why* there are
-two signatures at the same stage, not just that there are two.
+**The scenario.** A second data center comes online — different hardware, a
+different OS, a newer language/toolchain version. Then, over time, a
+third, a fourth. Before trusting any of them, the team wants to know: does
+each one produce the *same* signed results as the existing fleet? The
+natural way to check is to let each new DC run the test suite and add
+**its own** signature to any of the `output`, `checked`, or `verified`
+sections — an additional, independent attestation layered on top of the
+existing ones, never a replacement for them. Ideally, each additional
+signature carries a short reason recorded alongside it (e.g.
+"cross-verification from DC-2: aarch64, Ubuntu 26.04, Rust 1.9x") — so a
+reader of the stamp chain later can tell *why* there are multiple
+signatures at a stage, not just that there are multiple.
 
 **What einmo can do today.** Multiple independent signatures already work
 at the **`verified`** stage — that's the existing design (`EIMP-1` §S.5):
-two humans (or a human and an agent) can each promote `checked → verified`
-under their own key, and both `stage:verified` stamps accumulate;
-`Stamps::stamped_by(prefix)` lets anyone check whether a particular
-reviewer's key is among them. What does **not** exist yet: `promote` only
-ever appends **one** `stage:<to>` stamp per legal transition
+any number of humans (or humans and agents) can each promote
+`checked → verified` under their own key, and every `stage:verified` stamp
+accumulates; `Stamps::stamped_by(prefix)` lets anyone check whether a
+particular signer's key is among them. What does **not** exist yet:
+`promote` only ever appends **one** `stage:<to>` stamp per legal transition
 (`output → checked` or `checked/output → verified`), and a `Stamp` carries
 no free-form metadata field at all — just `key`, `pubkey_hex`, `signs`,
 `signature_b64`, `produced_by`, `timestamp` (`signature.rs`). So today
-there is no way to have a *second* `checked` stamp on an already-`checked`
-file, with or without a reason attached — the second DC's run is a
-completely separate signing operation, not an addition to the existing one.
+there is no way to have a *second, third, or Nth* `output` or `checked`
+stamp on an already-`output`/already-`checked` file, with or without a
+reason attached — each additional DC's run is a completely separate
+signing operation, not an addition to the existing ones. (`verified`
+already supports the *multiple-signature* part; it's the *reason metadata*
+part that's missing everywhere, including `verified`.)
 
 **What would need to change.** At minimum: (1) `is_legal_transition` (or a
-new operation distinct from `promote`) would need to allow `checked →
-checked` — re-signing an already-`checked` file, appending rather than
-replacing its stamp chain, the same append-only discipline every other
-stamp already follows; (2) `Stamp` would need an optional reason/metadata
-field, serialized alongside the existing fields, so `einmo show` can
-display *why* a second signature exists; (3) the CLI's `promote` verb (or a
-new verb) would need a way to pass that reason in. This is flagged as a
-**significant feature**, not a small one — it touches the stamp format
-(a wire-compatibility question: can old `einmo` readers parse a stamp with
-an unrecognized extra field?), the transition-legality rules, and the CLI
+new operation distinct from `promote`) would need to allow re-signing
+within a stage — `output → output` and `checked → checked`, not just
+`verified` accumulating as it does today — appending rather than replacing
+the stamp chain, the same append-only discipline every other stamp already
+follows; (2) `Stamp` would need an optional reason/metadata field,
+serialized alongside the existing fields, so `einmo show` can display *why*
+each additional signature exists, at any of the three sections; (3) the
+CLI's `promote` verb (or a new verb) would need a way to pass that reason
+in. This is flagged as a **significant feature**, not a small one — it
+touches the stamp format (a wire-compatibility question: can old `einmo`
+readers parse a stamp with an unrecognized extra field?), the
+transition-legality rules for `output`/`checked` specifically, and the CLI
 surface. It likely deserves its own EIMP once scoped. See
 `docs/todo/AIAGENT-einmo-repo.todo.md` in the repo root for the tracked
 follow-up.

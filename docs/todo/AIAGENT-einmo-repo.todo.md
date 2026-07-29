@@ -34,24 +34,25 @@
   before being corrected) is a concrete cautionary example worth citing
   when writing this guidance.
 
-- [ ] Document, then implement, a **double-signature** use case in
-  `zweimomo`'s `week.2/` tier: a second DC (data center / build machine)
-  comes online with new hardware, a new OS, and a new language/toolchain
-  version. To check whether it produces the same results, einmo should let
-  that second DC run the test suite and add its own signature to the
-  `checked` section — a second, independent attestation on top of the
-  first, not a replacement. The second signature's stamp should be able to
-  carry additional metadata explaining *why* a second signature was
-  provided (e.g. "cross-verification from DC-2: aarch64, Ubuntu 26.04, Rust
-  1.9x"), distinguishing "a second party independently confirms this" from
-  "the same party re-signed." This may not be fully implementable with
-  einmo's current stamp format/API (multiple stamps at the same stage,
-  each with a reason field, is not confirmed to exist yet — needs a design
-  pass, likely its own EIMP) but is flagged as a significant feature worth
-  building. Write it up as a documented use case in `week.2/README.week.2.md`
-  first (per the tier's existing "what's the use case, what's the present —
-  possibly unimplemented — solution" pattern), then implement once
-  designed.
+- [ ] Document, then implement, a **multiple-signature** use case (applies
+  across the `output`, `checked`, and `verified` sections) in `zweimomo`'s
+  `week.2/` tier: a second (or third, or Nth) DC (data center / build
+  machine) comes online with new hardware, a new OS, and a new
+  language/toolchain version. To check whether it produces the same
+  results, einmo should let that DC run the test suite and add its own
+  signature to any of the `output`/`checked`/`verified` sections — an
+  additional, independent attestation on top of the existing ones, not a
+  replacement. Each additional signature's stamp should be able to carry
+  metadata explaining *why* it was provided (e.g. "cross-verification from
+  DC-2: aarch64, Ubuntu 26.04, Rust 1.9x"), distinguishing "another party
+  independently confirms this" from "the same party re-signed." This may
+  not be fully implementable with einmo's current stamp format/API
+  (multiple stamps at the same stage, each with a reason field, is not
+  confirmed to exist yet — needs a design pass, likely its own EIMP) but is
+  flagged as a significant feature worth building. Write it up as a
+  documented use case in `week.2/README.week.2.md` first (per the tier's
+  existing "what's the use case, what's the present — possibly
+  unimplemented — solution" pattern), then implement once designed.
 
 - [ ] Document, then implement, a **blind test-taker / proctored exam**
   use case in `zweimomo`'s `years.later/` tier (added 2026-07-29 17:23):
