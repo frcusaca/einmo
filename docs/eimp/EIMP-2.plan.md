@@ -54,25 +54,39 @@ script) addresses cases by `EinmoId`.
 
 Built next: every later phase needs a real suite to test against.
 
-- [ ] New crate `zweimomo/` at this repo's root: `Cargo.toml` depending on
+- [x] New crate `zweimomo/` at this repo's root: `Cargo.toml` depending on
       `einmo` (path dependency, `.` / workspace-relative) and `boa_engine`
       (pinned to the version used in `foolish-rust`'s `zweimomo`) — no
       `foolish-ubca`/`foolish-core`, no `rustpython-vm` (EIMP-2.md §8,
       Rejected Alternative G)
-- [ ] Port `BoaEvaluator` + its unit tests from `foolish-rust`'s
+      (2026-07-29 16:59)
+- [x] Port `BoaEvaluator` + its unit tests from `foolish-rust`'s
       `zweimomo/src/evaluators.rs` (Boa-only slice)
-- [ ] Port the `suites/javascript/` tree (`input/`, `output/`, `checked/`)
-      from `foolish-rust`'s `zweimomo` verbatim
-- [ ] Write and pass: the ported `BoaEvaluator` unit tests; a test that
+      (2026-07-29 16:59)
+- [x] Port the `suites/javascript/` tree (`input/`, `output/`, `checked/`)
+      from `foolish-rust`'s `zweimomo`
+      (2026-07-29 16:59) — organized into progressive-difficulty tiers
+      rather than copied flat: `suites/javascript/day.1/` (the 8 ported
+      inputs), plus scaffolded `week.2/`/`month.2/`/`years.later/` tiers
+      with design-notes READMEs and no content yet (elaboration beyond the
+      original plan — see EIMP-2.md §8, updated).
+- [x] Write and pass: the ported `BoaEvaluator` unit tests; a test that
       evaluates every ported input via `EinmoSuite` and matches the ported
       `checked/` baselines byte-for-byte (Test Plan "Unit — zweimomo (Boa)
       port")
-- [ ] Add `zweimomo` to this repo's workspace, if/when one is introduced —
-      for now this repo has no `[workspace]`; confirm at begun-time whether
-      one is needed or whether `zweimomo` stays a sibling crate built
-      independently
-- [ ] Phase B tests green; `cargo fmt` / `cargo clippy -D warnings` clean
+      (2026-07-29 16:59) — `javascript_tiers_generate_and_verify` iterates
+      all four tier directories, skipping any without an `input/` dir yet
+      (only `day.1/` currently populated); also ported
+      `crash_crumb_survives_stack_overflow` (renamed from the original's
+      `_foolish_` name, since it's evaluator-agnostic).
+- [x] Add `zweimomo` to this repo's workspace
+      (2026-07-29 16:59) — resolved: yes, root `Cargo.toml` gained
+      `[workspace] members = [".", "zweimomo"]`. Only `einmo` (root) is
+      published; `zweimomo` is `publish = false`.
+- [x] Phase B tests green; `cargo fmt` / `cargo clippy -D warnings` clean
       (both crates)
+      (2026-07-29 16:59) — 145 tests total across the workspace (139 einmo
+      + 6 zweimomo), clippy/fmt clean
 
 ## Phase C — the minimum `EinmoReview` slice (EIMP-2.md §2)
 

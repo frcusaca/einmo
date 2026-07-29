@@ -1,3 +1,10 @@
+[workspace]
+members = [".", "zweimomo"]
+resolver = "2"
+
+# Only `einmo` (this root package) is published to crates.io. `zweimomo` is
+# a demo/debugging tool exercising einmo against real fixtures — never
+# published (EIMP-2 §8).
 [package]
 name = "einmo"
 version = "0.0.5"

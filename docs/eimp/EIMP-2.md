@@ -542,19 +542,43 @@ repository as its own crate:
   `foolish-rust`'s `zweimomo/src/evaluators.rs`: `BoaEvaluator` and its unit
   tests only (the `RustPythonEvaluator`/`UbcaEvaluatorAdapter` code and their
   tests are not copied).
-- **Ported test suite**: the `suites/javascript/` tree (`input/`, `output/`,
-  `checked/`) from `foolish-rust`'s `zweimomo`, copied as-is — eight `.js`
-  concept inputs (integer arithmetic, nested expressions, name binding, data
-  structures, function application, division-by-zero, search-query,
+- **Ported test suite, organized into progressive-difficulty tiers.** The
+  `suites/javascript/` tree from `foolish-rust`'s `zweimomo` (`input/`,
+  `output/`, `checked/`) was NOT copied flat — it lives under
+  `suites/javascript/day.1/` (its own `input/`/`output/`/`checked/`), the
+  first of four tiers named by elapsed time since a reviewer starts working
+  with einmo: `day.1/` → `week.2/` → `month.2/` → `years.later/`. Each tier
+  is its own independently-gated `EinmoSuite` (its own
+  `require_correspondence`), with its own `README.<tier>.md` explaining what
+  belongs at that stage and, once designed, its own `.js` inputs. Only
+  `day.1/` is populated in this EIMP — eight `.js` concept inputs (integer
+  arithmetic, nested expressions, name binding, data structures, function
+  application, division-by-zero, search-query,
   nested-expressions-with-division-by-zero) with their existing signed
-  `output/`/`checked/` baselines. This is real, previously-reviewed content —
-  not fixtures invented for this EIMP.
-- **Purpose here, specifically**: `zweimomo`'s `suites/javascript/` tree is
-  what `einmo-review-server` (§2–§7) is pointed at for the integration tests
-  in §Test Plan — a real suite with real signed baselines, several files,
-  and a mix of already-`checked`/already-verified-or-not content, so the
-  end-to-end script test in §Test Plan exercises list/body/flag/promote
-  against actual data instead of a synthetic one-file tempdir.
+  `output/`/`checked/` baselines, real previously-reviewed content, not
+  fixtures invented for this EIMP. `day.1/`'s `checked/` is signed under a
+  non-default `checked`-stage passphrase, configured in `day.1/einmo.toml`
+  (`[signing] checked = "…"`, per einmo's existing `[signing]` config
+  mechanism — `README.md` "Configuration Precedence" / "The default key in
+  configuration") rather than documented in prose anywhere — passphrases
+  are configuration, not documentation (see the repo's todo list for a
+  tracked follow-up on strengthening this guidance generally). `week.2/`,
+  `month.2/`, `years.later/` exist as scaffolded directories with a
+  design-notes README each (mass/randomized re-inspection via
+  `experimental_reviewer.sh -D`/`-s`; multiple reviewers and conflicting
+  decisions per `EIMP-1` §S.5; further tiers reserved) and no test content
+  yet — populating them is future work, not part of this EIMP.
+- **Workspace.** The repo root gained a `[workspace]` (`members = [".",
+  "zweimomo"]`) so both crates build/test together from the repo root.
+  Only `einmo` (the root package) is ever published to crates.io;
+  `zweimomo` is `publish = false` — a demo/debugging tool, not a library.
+- **Purpose here, specifically**: `zweimomo`'s tiered `suites/javascript/`
+  tree is what `einmo-review-server` (§2–§7) is pointed at for the
+  integration tests in §Test Plan (starting with `day.1/`) — a real suite
+  with real signed baselines, several files, and a mix of already-`checked`/
+  already-verified-or-not content, so the end-to-end script test in §Test
+  Plan exercises list/body/flag/promote against actual data instead of a
+  synthetic one-file tempdir.
 - **Not a general `foolish-rust` `zweimomo` replacement.** The
   `foolish-rust` workspace's own `zweimomo` crate is untouched by this EIMP
   and keeps all three evaluators (Foolish, Python, JavaScript) for now;
