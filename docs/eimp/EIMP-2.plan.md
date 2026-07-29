@@ -245,26 +245,47 @@ HTTP-only shape end to end before adding any mutation.
 vim invocation/pane/statusline setup as the starting point, not its
 decision-tracking arrays.
 
-- [ ] New file `scripts/einmo_review_client.sh`; port the vim invocation,
-      pane layout, and statusline setup from `experimental_reviewer.sh`
-      verbatim (EIMP-2.md §6); startup check: fail fast with a clear
-      message if no server socket (and session file) is found for the
-      suite — no fallback to `experimental_reviewer.sh` or direct `einmo`
-      calls (EIMP-2.md §6); read the session id once and hold it as a
-      constant for the run
-- [ ] Add `jq` as a new script dependency (EIMP-2.md §6, Rejected
-      Alternative H)
-- [ ] Implement listing: `curl --unix-socket … GET
-      /einmo/<session>/cases`, parsed with `jq` into the one local array
-      the script needs — `ids`, a list of `EinmoId`s (EIMP-2.md §5)
-- [ ] Implement body viewing: `GET
-      /einmo/<session>/cases/<id>/body/<stage>`
-- [ ] Verify against `zweimomo`: run `einmo_review_client.sh` (still
-      read-only — no decisions made yet) against `einmo-review-server`
-      pointed at `zweimomo`'s suite; confirm the worklist and pane bodies
-      match what direct `einmo list`/`einmo body` produce
-- [ ] Verify the no-server failure path: run the script with no server
-      running, confirm it fails fast with the documented message
+- [x] Complete 2026-07-29. New file `scripts/einmo_review_client.sh`; port
+      the vim invocation, pane layout, and statusline setup from
+      `experimental_reviewer.sh` as the starting point (not its
+      decision-tracking arrays) (EIMP-2.md §6); startup check: fail fast
+      with a clear message if no server socket (and session file) is found
+      for the suite — no fallback to `experimental_reviewer.sh` or direct
+      `einmo` calls (EIMP-2.md §6); read the session id once and hold it as
+      a constant for the run. Implementation note: vim caps `-c`/`--cmd`
+      arguments at 10 (`MAX_ARG_CMDS`); the original plan to pass each split/
+      mapping/function as its own `-c` hit that ceiling, so all setup
+      commands are joined into a single newline-separated `-c` argument
+      instead (same effect as sourcing a script) — documented inline in the
+      script so later phases adding more panes/mappings don't reintroduce
+      the ceiling. Also carried over the scratch-directory hardening
+      (`umask 077`, `harden_dir`, `EINMO_REVIEW_CLIENT_DIR` override, trap
+      cleanup) from `experimental_reviewer.sh` since verified bodies
+      fetched from the server are still signed content written to local
+      scratch files for vim to display.
+- [x] Complete 2026-07-29. Added `jq` as a new script dependency (EIMP-2.md
+      §6, Rejected Alternative H); checked availability at startup.
+- [x] Complete 2026-07-29. Implemented listing: `curl --unix-socket … GET
+      /einmo/<session>/cases`, parsed with `jq` into the one local array the
+      script needs — `ids`, a list of `EinmoId`s (EIMP-2.md §5), with an
+      optional substring filter (positional arg) mirroring
+      `experimental_reviewer.sh`'s name-filter usage.
+- [x] Complete 2026-07-29. Implemented body viewing: `GET
+      /einmo/<session>/cases/<id>/body/<stage>` for `output`/`checked`/
+      `verified`, rendered into vim panes; a missing/errored stage (e.g. no
+      `verified/` artifact yet) renders its pane's `error` field inline
+      instead of a blank pane or a script crash.
+- [x] Complete 2026-07-29. Verified against `zweimomo`: started
+      `einmo-review-server` against `zweimomo/suites/javascript/day.1`,
+      drove `einmo_review_client.sh` end-to-end over a pty (`python3 pty` +
+      programmatic `:qa!`); confirmed the worklist (8 cases), per-case
+      stage line, and all four panes (input placeholder, output, checked,
+      verified-unavailable-fallback) render the expected content sourced
+      entirely from the server's JSON responses.
+- [x] Complete 2026-07-29. Verified the no-server failure path: ran the
+      script against a socket path with no server listening; confirmed it
+      fails fast (exit 1) with the documented message and does not attempt
+      any fallback.
 
 ## Phase F — flag convenience endpoint (EIMP-2.md §3)
 
