@@ -25,6 +25,7 @@ mod config;
 mod einmo_suite;
 mod error;
 mod format;
+mod review;
 mod signature;
 mod stage;
 mod transitions;
@@ -39,6 +40,10 @@ pub use einmo_suite::{
 };
 pub use error::EinmoError;
 pub use format::{EinmoFile, Metadata, Section, Status};
+pub use review::{
+    Decision, EinmoReview, Executed, ExecutionPlan, ExecutionReport, PlannedAction, ReviewItem,
+    SignerSet, VerifiedBody,
+};
 pub use signature::{Stamp, StampRole, Stamps};
 pub use stage::{EinmoId, Stage};
 pub use transitions::{

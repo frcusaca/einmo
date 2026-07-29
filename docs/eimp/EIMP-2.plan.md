@@ -90,31 +90,72 @@ Built next: every later phase needs a real suite to test against.
 
 ## Phase C — the minimum `EinmoReview` slice (EIMP-2.md §2)
 
-- [ ] Write the unit tests FIRST (`EIMP-2.md` §Test Plan "Unit —
+- [x] Write the unit tests FIRST (`EIMP-2.md` §Test Plan "Unit —
       `EinmoReview` minimum slice") as failing tests against the intended
       `einmo::review` surface, run against `zweimomo`'s ported suite where a
       real suite is useful (not just synthetic fixtures)
-- [ ] Implement `review::Decision` (all four variants: `Promote`, `Retract`,
+      (2026-07-29 17:38) — 9 tests written in `src/review.rs`; used
+      lightweight `Echo`-evaluator tempdir suites rather than the ported
+      `zweimomo` fixtures directly (unit-level, not integration-level, per
+      the module's own scope) — `zweimomo`'s real suite is exercised at the
+      integration-test phase (E onward) instead.
+- [x] Implement `review::Decision` (all four variants: `Promote`, `Retract`,
       `Flag`, `Skip`) + `DecisionBook` (keyed by `EinmoId`; single implicit
       reviewer — no per-request `ReviewerId` yet, per §2's note;
       replace-not-stack)
-- [ ] Implement `review::VerifiedCache` (fingerprint →
-      `Arc<OnceLock<VerifiedBody>>`, single-flight; verify-count test hook,
-      reused from `EIMP-1`'s design as-is)
-- [ ] Implement `EinmoReview::open`/`items`/`body`/`decide`/`undecide`/
+      (2026-07-29 17:38)
+- [x] Implement `review::VerifiedCache` (fingerprint →
+      `Arc<OnceLock<...>>`, single-flight; verify-count test hook)
+      (2026-07-29 17:38) — caches `Result<VerifiedBody, String>` per slot
+      rather than `Arc<OnceLock<VerifiedBody>>` directly (`EinmoError` isn't
+      `Clone`, so the original EIMP-1 sketch's exact type doesn't compile);
+      a verification failure is memoized too (re-verifying a still-tampered
+      file is wasted work; a changed fingerprint mints a fresh slot).
+- [x] Implement `EinmoReview::open`/`items`/`body`/`decide`/`undecide`/
       `plan`/`execute` over the above (§2's minimum surface — no `diff`,
       `execute_one`, or `refresh` in this EIMP), all keyed by `EinmoId`
-- [ ] `Signer`/`SignerSet` (`EIMP-1` §S.4, unchanged) — computer key for
+      (2026-07-29 17:38) — also moved `scan_tests`/`body_sections`/`TestRow`
+      from `cli.rs` to `einmo_suite.rs` (`pub(crate)`) as a prep refactor so
+      `items()` reuses the CLI's existing suite-scan logic rather than
+      duplicating it.
+- [x] `Signer`/`SignerSet` (`EIMP-1` §S.4, unchanged) — computer key for
       `output to checked`, human passphrase-derived key for
       `checked to verified`
-- [ ] `execute()` promote byte-for-byte equivalence test vs. the existing
+      (2026-07-29 17:38) — `SignerSet` wraps the crate's existing
+      `KeySource` (already the "resolved passphrase" type `promote`/
+      `retract` take) rather than inventing a new key type; `to_verified`
+      is `Option<KeySource>` so a promotion needing it without one supplied
+      errors (`EinmoError::NoKey`), never silently falls back to the
+      computer key.
+- [x] `execute()` promote byte-for-byte equivalence test vs. the existing
       CLI `einmo promote`
-- [ ] `execute()` retract byte-for-byte equivalence test vs. the existing
+      (2026-07-29 17:38) — compares section bodies (not raw bytes, since
+      each independent run's stamp carries its own generation timestamp)
+      between an `EinmoReview::execute` promotion and a direct
+      `transitions::promote` call on identically-seeded content; both must
+      produce the same INPUT/OUTPUT/COMMENTS bodies.
+- [x] `execute()` retract byte-for-byte equivalence test vs. the existing
       CLI `einmo retract`, including its checked→verified cascade
-- [ ] Flag execution matches the script's current `mv` behavior: moves to
+      (2026-07-29 17:38) — `execute_retract_matches_cli_retract_and_cascades`
+- [x] Flag execution matches the script's current `mv` behavior: moves to
       `flagged/`, writes the plaintext advisory line, no signing, no gate
-- [ ] All Phase C tests green; `cargo fmt` and `cargo clippy -D warnings`
+      (2026-07-29 17:38) — `execute_flag_moves_and_writes_advisory_no_signing`
+- [x] Key hygiene: `execute()` groups pending promotions by `(from, to)`
+      stage pair and issues one `transitions::promote` call per group
+      (2026-07-29 17:44) — preserves `transitions::promote`'s existing KEK
+      discipline (`StageKeypair::derive` once per call, `with_signing_key`
+      unwraps/signs/zeroizes once per individual file inside that call);
+      `execute()` itself never derives or holds plaintext key material,
+      only forwards `SignerSet`'s `KeySource`s into `transitions::promote`.
+      Added `execute_derives_stage_key_once_per_batch_not_per_case`
+      (timing-bounded: 5 cases in one batch must complete well under
+      5×1.8s, the Argon2id cost of deriving per case). Required deriving
+      `Hash` on `Stage` (additive, no behavior change) to key a
+      `HashMap<(Stage, Stage), _>`.
+- [x] All Phase C tests green; `cargo fmt` and `cargo clippy -D warnings`
       clean
+      (2026-07-29 17:44) — 149 einmo tests (139 pre-Phase-C + 10 new in
+      `review.rs`) + 6 zweimomo tests, clippy/fmt clean
 
 ## Phase D — the HTTP server: session + read-only endpoints (EIMP-2.md §3, §3a, §7)
 

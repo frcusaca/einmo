@@ -67,3 +67,13 @@
   examined afterward by a proctor (who DOES have the golden standard, to
   compare against). Write it up as a documented use case in
   `years.later/README.years.later.md` first, then implement once designed.
+
+- [ ] For `zweimomo`'s `day.1/` suite, configure the **`output`**-stage
+  signing key to be the passphrase `"zweimomo genisis"` (verbatim spelling
+  as given — not "genesis") instead of the empty string / computer key.
+  Add `output = "zweimomo genisis"` to `day.1/einmo.toml`'s `[signing]`
+  section (same mechanism already used for the `checked` passphrase — see
+  the log entry above), then regenerate `day.1/output/` and re-promote
+  `day.1/checked/` under it so the whole chain reflects the new key.
+  Passphrase goes in the config file only, never in prose (per the first
+  open item above).
