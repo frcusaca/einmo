@@ -301,6 +301,64 @@ with `jq` (§6 — `curl` + `jq` is sufficient for JSON-RPC-shaped calls in
 bash; a parallel client in another language was considered and dropped, see
 Rejected Alternative H).
 
+### 3a. Server implementation stack — axum, serde, typed extractors
+
+Resolves `EIMP-1` §S.7's open "HTTP stack" question for this EIMP's server
+(a decision `EIMP-1` proper can revisit independently when it builds its
+fuller server): **axum**, over a hand-rolled minimal HTTP stack or a
+different framework. Standard, well-documented, and its extractor model
+fits einmo's existing "verify-on-inspect, validate before trust"
+discipline (`rust_instructions.md` §7) directly.
+
+- **`serde` / `serde_json`** for all request/response (de)serialization —
+  already einmo dependencies (the `.einmo` STAMPS section already uses
+  `serde_json`, `signature.rs`), so this adds no new crate for JSON itself,
+  only `axum` and its own transitive deps (`tokio`, `hyper`, `tower`).
+- **Domain types first, strings never reach handler bodies.** Every route
+  handler's signature uses typed axum extractors instead of taking `String`
+  and parsing inside the function body:
+  - `Path<EinmoId>` for `<id>` segments — implement `axum::extract::FromStr`
+    (or a small newtype wrapper implementing
+    [`axum::extract::FromRequestParts`]) over `EinmoId`'s existing
+    `TryFrom<&str>` (§0), so a malformed id is rejected by the extractor,
+    before any handler code runs, as a 400 — never a raw path segment
+    threaded into `EinmoReview` calls.
+  - `Path<SessionId>` similarly for `<session>` (a small newtype around a
+    UUID or similar, not a bare `String`).
+  - `Json<PromoteDecision>` / `Json<FlagRequest>` / `Json<RetractRequest>` /
+    `Json<ExecuteRequest>` — one request-body enum/struct per endpoint (not
+    one generic "decision JSON" blob parsed ad hoc), matching each row in
+    §3's table. `Decision`'s four variants (§2) map to a serde-tagged enum
+    (`#[serde(tag = "kind")]`) for the `PUT … /decision` body, so an invalid
+    `"kind"` value is a deserialization error (400) caught by the `Json<_>`
+    extractor itself, not a runtime `match` fallthrough.
+  - **Enums over stringly-typed fields everywhere a value is drawn from a
+    known set** — `Stage` (already an enum, §2/`stage.rs`), the `to`/`from`
+    fields on promote/retract requests, the decision `kind` tag. No
+    `String` field that is secretly one of N valid values without the type
+    system saying so (`rust_instructions.md` §3 "Encapsulation & types").
+- **Every handler returns `Result<impl IntoResponse, ApiError>`.** A new
+  `ApiError` enum (`thiserror`-derived, mirroring `EinmoError`'s existing
+  shape in `error.rs`) wraps or converts from `EinmoError` and implements
+  axum's `IntoResponse` — mapping each error variant to the right HTTP
+  status once, in one place, rather than ad hoc per-handler status codes:
+  - `EinmoError::InvalidId` / a bad decision `kind` → `400 Bad Request`
+  - unknown session id (§2) → `404 Not Found`
+  - a stale `If-Match`-style version conflict (if ever added, out of scope
+    for this EIMP) → `409 Conflict`
+  - `EinmoError::Verification` (tampered file, verify-on-inspect failure) →
+    `422 Unprocessable Entity` or `500`, decided at implementation time —
+    a tampered artifact is a server-side integrity problem, not a client
+    input problem, but it is also not an unexpected panic
+  - anything else (I/O, unexpected) → `500 Internal Server Error`, with the
+    error's `Display` text in the body for this prototype (no separate
+    "production-safe redacted message" layer yet — this is local-only over
+    a UDS, per §7 — but never the passphrase or any key material, per
+    `rust_instructions.md` §7 "Logging & observability")
+- **No `.unwrap()`/`.expect()`/`panic!` in any handler or extractor path** —
+  every fallible step returns through `ApiError`, consistent with
+  `rust_instructions.md` §4 "Do's" and §6 "Don'ts".
+
 ### 4. Signing stays exactly as `EIMP-1` §S.4 specifies
 
 No change from `EIMP-1`: `Signer`/`SignerSet` is a separate object from
@@ -422,9 +480,16 @@ the spec rather than forcing the original sketch.
 ### 7. Binary, socket location, and installation
 
 Mirrors the existing `einmo`/`cargo-einmo` pattern (`Cargo.toml`'s `[[bin]]`
-entries):
+entries). New dependencies for the server binary (axum + its usual runtime
+stack, §3a — `serde`/`serde_json` are already present):
 
 ```toml
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+tower = "0.5"
+hyperlocal = "0.9"   # UDS support for axum/hyper (server + tests)
+
 [[bin]]
 name = "einmo-review-server"
 path = "src/bin/einmo_review_server.rs"
@@ -433,6 +498,10 @@ path = "src/bin/einmo_review_server.rs"
 name = "cargo-einmo-review-server"
 path = "src/bin/cargo_einmo_review_server.rs"
 ```
+
+(Exact version pins confirmed against `cargo add`'s resolved versions at
+implementation time, per `rust_instructions.md` §7 "Dependencies" — weigh
+maintenance status and transitive weight before locking these in.)
 
 `cargo einmo-review-server [--socket <path>] <suite>` runs the resident
 process in the foreground (Ctrl-C to stop); it is the reviewer's
@@ -523,6 +592,15 @@ Tests are written first, per project rules.
   not for flags or retracts (§3's "no gate" rule for those two); `DELETE`
   on an undecided item is a no-op, not an error; passphrase never logged,
   never retained past the execute call.
+- **Unit — typed extractors and `ApiError` mapping (§3a)**: a malformed
+  `<id>` path segment (fails `EinmoId` validation) is rejected by the
+  extractor itself, before the handler body runs, as `400`; an unknown
+  session id is `404` on every route, not just some; each `EinmoError`
+  variant maps to its documented status via `ApiError::into_response`
+  (table in §3a); a `Json<_>` body with an invalid `"kind"` tag is a `400`
+  from deserialization, not a handler-level `match` fallthrough; no
+  handler panics on malformed input (fuzz a few malformed bodies/paths per
+  route as a smoke check).
 - **Integration — script against a live server**: a pty-driven end-to-end
   run of `einmo_review_client.sh` (reusing the stub-vim technique referenced
   in `EIMP-1`'s test plan) against a real
@@ -645,6 +723,23 @@ stage directory). An opaque id would need that same lookup table anyway
 (to answer "what is case 17") while also being less self-describing in a
 `curl` command or a log line. `EinmoId` (§0) formalizes the existing path
 identity instead of inventing a second one.
+
+### J. A minimal hand-rolled HTTP stack instead of axum
+
+Considered: a small dependency-light HTTP server (e.g. `tiny_http`-class,
+the option `EIMP-1` §S.7 names as its own open HTTP-stack question) fits
+this EIMP's "minimal prototype" spirit and avoids axum's larger transitive
+dependency tree (`tokio`, `hyper`, `tower`). Rejected for this EIMP: axum's
+typed-extractor model (`Path<EinmoId>`, `Json<Decision>`) is directly what
+turns "validate before trust" (§3a, `rust_instructions.md` §7) into
+something the compiler checks rather than something every handler has to
+remember to do by hand — for a server whose whole job is mediating access
+to signed, security-sensitive artifacts, that safety property is worth the
+extra dependency weight. A hand-rolled stack would need to reimplement
+routing, body parsing, and status-code mapping from scratch to get the same
+guarantees. `EIMP-1` §S.7 can still choose independently when it builds its
+fuller server (UDS-first, TCP+token later) — this EIMP's choice does not
+bind it.
 
 ## Open Questions
 

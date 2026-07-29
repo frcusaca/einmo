@@ -102,11 +102,20 @@ Built next: every later phase needs a real suite to test against.
 - [ ] All Phase C tests green; `cargo fmt` and `cargo clippy -D warnings`
       clean
 
-## Phase D — the HTTP server: session + read-only endpoints (EIMP-2.md §3, §7)
+## Phase D — the HTTP server: session + read-only endpoints (EIMP-2.md §3, §3a, §7)
 
 First server increment: create the one session, list, and inspect — no
 mutation yet.
 
+- [ ] Add `axum`, `tokio`, `tower`, `hyperlocal` dependencies (EIMP-2.md §7);
+      confirm exact version pins at implementation time
+- [ ] Define `ApiError` (`thiserror`-derived, `IntoResponse` impl mapping
+      each variant to its HTTP status per EIMP-2.md §3a's table); a
+      `SessionId` newtype; the `Decision` serde-tagged enum (`#[serde(tag =
+      "kind")]`) for `PUT … /decision` bodies
+- [ ] Implement `Path<EinmoId>` support: either `impl FromStr for EinmoId`
+      (axum's default `Path<T: FromStr>` extractor) or a small wrapper
+      implementing `FromRequestParts`, over `EinmoId::try_from` (§0)
 - [ ] Implement session creation: `POST /einmo/sessions` opens an
       `EinmoReview` for the suite given on the server's command line,
       returns the session id; the server calls this against itself once at
@@ -114,14 +123,18 @@ mutation yet.
 - [ ] Write endpoint tests FIRST for `POST /einmo/sessions`,
       `GET /einmo/<session>/cases`, `GET /einmo/<session>/cases/<id>`, and
       `GET /einmo/<session>/cases/<id>/body/<stage>`, against `zweimomo`'s
-      ported suite; unknown session id 404s on every route
-- [ ] Implement the four routes above; UDS binding at a configurable path
-      (default `./.einmo-review.sock`, §7), directory-permission inheritance
-      (mirrors `scripts/experimental_reviewer.sh`'s existing mode-700
-      discipline); write `<socket-path>.session` alongside the socket
-      containing the session id; both files removed on exit (normal exit and
-      `SIGINT`/`SIGTERM`); refuse to start if a stale socket file exists at
-      the target path and cannot be connected to
+      ported suite; unknown session id 404s on every route; a malformed
+      `<id>` segment 400s at the extractor (EIMP-2.md §Test Plan "Unit —
+      typed extractors and ApiError mapping")
+- [ ] Implement the four routes above using typed extractors throughout
+      (`Path<EinmoId>`, `Path<SessionId>` — never `Path<String>` parsed by
+      hand, EIMP-2.md §3a); UDS binding at a configurable path (default
+      `./.einmo-review.sock`, §7) via `hyperlocal`, directory-permission
+      inheritance (mirrors `scripts/experimental_reviewer.sh`'s existing
+      mode-700 discipline); write `<socket-path>.session` alongside the
+      socket containing the session id; both files removed on exit (normal
+      exit and `SIGINT`/`SIGTERM` via `tokio::signal`); refuse to start if a
+      stale socket file exists at the target path and cannot be connected to
 - [ ] `src/bin/einmo_review_server.rs` + `src/bin/cargo_einmo_review_server.rs`
       binaries (`--socket <path>` flag, `<suite>` positional), `Cargo.toml`
       `[[bin]]` entries
