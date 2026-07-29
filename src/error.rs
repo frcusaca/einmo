@@ -44,7 +44,7 @@ pub enum EinmoError {
     InvalidStageName(String),
 
     /// A requested transition is not one of the legal stage transitions.
-    #[error("illegal transition: {from} -> {to}")]
+    #[error("illegal transition: {from} to {to}")]
     IllegalTransition {
         /// The origin stage name.
         from: String,

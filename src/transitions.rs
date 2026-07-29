@@ -81,8 +81,8 @@ fn is_legal_transition(from: Stage, to: Stage) -> bool {
 /// Promote every matching file from `from` to `to`, appending the destination
 /// stage's stamp.
 ///
-/// `*->flagged` delegates to [`flag`] (move, no stamp). Other destinations copy
-/// the file and append the destination stage stamp signed by `key`.
+/// `* to flagged` delegates to [`flag`] (move, no stamp). Other destinations
+/// copy the file and append the destination stage stamp signed by `key`.
 ///
 /// # Errors
 ///

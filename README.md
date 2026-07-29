@@ -18,7 +18,7 @@ reviewer was a human or a machine.
 
 ### What einmo adds
 
-- **Four-stage promotion pipeline**: `output` -> `checked` -> `flagged` /
+- **Four-stage promotion pipeline**: `output` to `checked` to `flagged` /
   `verified`. Each stage is a directory; each promotion appends a signed stamp.
 - **Ed25519 + Argon2id signing**: every `.einmo` file carries a tamper-evident
   stamp chain. No surveyed framework signs its snapshots.
@@ -89,9 +89,9 @@ matters.
 | Stage | Directory | What it holds | Who writes it |
 |---|---|---|---|
 | **Output** | `output/` | Generated test results (signed by test runner) | `EinmoSuite::evaluate` |
-| **Checked** | `checked/` | Reviewed outputs (AI or human promoted) | `einmo promote output->checked` |
+| **Checked** | `checked/` | Reviewed outputs (AI or human promoted) | `einmo promote output to checked` |
 | **Flagged** | `flagged/` | Set aside (terminal sink) | `einmo flag <stage>` |
-| **Verified** | `verified/` | Human-signed (passphrase required) | `einmo promote checked->verified` |
+| **Verified** | `verified/` | Human-signed (passphrase required) | `einmo promote checked to verified` |
 
 Each stage directory mirrors the `input/` tree at any depth. An input file
 like `stage1/section3/specific.foo` produces
@@ -286,7 +286,7 @@ Einmo ships a single CLI app with two binary targets sharing the same parser:
 
 | Subcommand | What it does |
 |---|---|
-| `einmo promote <from>-><to> <work_dir>` | Append the destination stage's stamp to every matching file. `*->flagged` delegates to `flag`. |
+| `einmo promote <from> to <to> <work_dir>` | Append the destination stage's stamp to every matching file. `* to flagged` delegates to `flag`. |
 | `einmo flag <work_dir> <stage>` | Move matching files into `flagged/` with an unsigned advisory line. No stamp. |
 | `einmo compare <a> <b> <work_dir>` | Per-section comparison of two stages over the mirrored tree. |
 | `einmo verify <work_dir>` | Verify signature integrity across one stage (`--stage`) or all stages (`--all`). |
@@ -310,13 +310,13 @@ arguments** after `work_dir`:
 
 ```bash
 # Promote just one file:
-einmo promote output->checked suite_dir alarm_division_by_zero.foo.einmo
+einmo promote output to checked suite_dir alarm_division_by_zero.foo.einmo
 
 # Promote two files:
-einmo promote output->checked suite_dir a.foo.einmo b.foo.einmo
+einmo promote output to checked suite_dir a.foo.einmo b.foo.einmo
 
 # Use -- to separate flags from file names (when a file name starts with -):
-einmo promote output->checked suite_dir -- -weird-name.einmo
+einmo promote output to checked suite_dir -- -weird-name.einmo
 
 # Flag a single file with a reason:
 einmo flag suite_dir output broken_test.einmo --reason "produces wrong output"
@@ -332,14 +332,14 @@ einmo verify --all suite_dir critical.einmo
 
 ```bash
 # Pipe a list of files to promote:
-echo "a.foo.einmo\nb.foo.einmo" | einmo promote output->checked suite_dir -
+echo "a.foo.einmo\nb.foo.einmo" | einmo promote output to checked suite_dir -
 
 # Promote everything that changed (find + einmo):
 find suite_dir/output -name '*.einmo' -newer suite_dir/checked | \
-  einmo promote output->checked suite_dir -
+  einmo promote output to checked suite_dir -
 
 # Read from a file list:
-cat changed-files.txt | einmo promote output->checked suite_dir -
+cat changed-files.txt | einmo promote output to checked suite_dir -
 ```
 
 **Path normalization:** the CLI accepts file paths in any of these forms and
@@ -734,9 +734,9 @@ mod approval_tests {
 | **Storage** | `approved/*.snap` (flat, module-coupled) | `output/*.einmo` + `checked/*.einmo` (hierarchical, mirrors `input/`) |
 | **Format** | YAML frontmatter + content | Header + metadata + sections + signed JSON stamps |
 | **Signing** | None | Ed25519 append chain (compiled + configured + stage stamps) |
-| **Review** | `cargo insta review` (TUI, review == promotion) | `einmo promote output->checked` (CLI, review and promotion are separate acts) |
+| **Review** | `cargo insta review` (TUI, review == promotion) | `einmo promote output to checked` (CLI, review and promotion are separate acts) |
 | **CI gate** | `INSTA_UPDATE=no` (env var, easy to miss) | `einmo compare output checked --require-match` (explicit, signed) |
-| **Human attestation** | None | `einmo promote checked->verified --interactive` (passphrase, detects computer key) |
+| **Human attestation** | None | `einmo promote checked to verified --interactive` (passphrase, detects computer key) |
 | **Crash safety** | None (crash leaves no trace) | Catastrophe crumb (signed "TEST IN PROGRESS" file survives) |
 | **Error capture** | `eprintln!` (swallowed) | `status: input-error` / `status: output-error` in the signed `.einmo` |
 
@@ -783,17 +783,17 @@ the evaluator's output, and the stamp chain.
 
 ```bash
 einmo compare output checked snapshot_tests/          # see what's new
-einmo promote output->checked snapshot_tests/          # promote all
+einmo promote output to checked snapshot_tests/          # promote all
 
 # Or promote just one file (no --filter needed):
-einmo promote output->checked snapshot_tests/ alarm_division_by_zero_in_brane.foo.einmo
+einmo promote output to checked snapshot_tests/ alarm_division_by_zero_in_brane.foo.einmo
 
 # Promote a few specific files:
-einmo promote output->checked snapshot_tests/ a.foo.einmo b.foo.einmo c.foo.einmo
+einmo promote output to checked snapshot_tests/ a.foo.einmo b.foo.einmo c.foo.einmo
 
 # Promote everything that changed (pipe from find):
 find snapshot_tests/output -name '*.einmo' -newer snapshot_tests/checked | \
-  einmo promote output->checked snapshot_tests/ -
+  einmo promote output to checked snapshot_tests/ -
 ```
 
 The promoted files in `checked/` carry an additional `stage:checked` stamp.
@@ -802,7 +802,7 @@ The `output == checked` correspondence gate now passes on the next test run.
 **Step 6: (Optional) Human-verify for release.**
 
 ```bash
-einmo promote checked->verified snapshot_tests/ --interactive
+einmo promote checked to verified snapshot_tests/ --interactive
 # Enter a human passphrase (not empty) to produce a stage:verified stamp.
 # An AI piping --passphrase "" gets the computer key -- post-hoc detectable.
 einmo confirm-signatures snapshot_tests/verified <release-key-prefix> --require-all
@@ -963,7 +963,7 @@ fn iron_grid_release_attestation() {
 
     // --- Phase 4: no verified file may carry the computer key ---
     //
-    // An AI that ran `einmo promote checked->verified --passphrase ""` would
+    // An AI that ran `einmo promote checked to verified --passphrase ""` would
     // produce a stage:verified stamp under the well-known empty-passphrase
     // key. This is post-hoc detectable: confirm_signatures with the computer
     // key prefix should match ZERO files.
@@ -1130,9 +1130,9 @@ einmo compare output checked dev_suite/ failing_test.einmo
 # 3a. If the change is a bug -- fix the code, re-run step 1.
 
 # 3b. If the change is intentional -- review the diff, then promote:
-einmo promote output->checked dev_suite/                         # promote all
-einmo promote output->checked dev_suite/ fixed_test.einmo        # or just one
-echo "a.einmo\nb.einmo" | einmo promote output->checked dev_suite/ -  # or from stdin
+einmo promote output to checked dev_suite/                         # promote all
+einmo promote output to checked dev_suite/ fixed_test.einmo        # or just one
+echo "a.einmo\nb.einmo" | einmo promote output to checked dev_suite/ -  # or from stdin
 
 # 4. Verify signature integrity of the promoted files:
 einmo verify dev_suite/ --stage checked                           # all files
@@ -1169,7 +1169,7 @@ einmo show dev_suite/output/first_test.einmo
 einmo show dev_suite/output/second_test.einmo
 
 # Promote everything to checked/ (the computer key is used by default):
-einmo promote output->checked dev_suite/
+einmo promote output to checked dev_suite/
 
 # Commit the checked/ baseline:
 git add dev_suite/checked/

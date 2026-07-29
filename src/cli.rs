@@ -1,7 +1,8 @@
 //! The single `einmo` CLI app (FOOP-92 §B.6, Phase 10).
 //!
 //! Every subcommand calls the library; every read verifies-on-inspect. Stage
-//! pairs use the ASCII arrow `->` (`output->checked`); stage names are
+//! pairs use the `to` keyword (`output to checked`) or a glued `:`/`..`
+//! separator (`output:checked`, `output..checked`); stage names are
 //! validated `[A-Za-z0-9_-]+`.
 
 use std::ffi::OsString;
@@ -61,10 +62,9 @@ enum Command {
 struct PromoteArgs {
     /// The stage pair, in any of:
     ///   `<from> to <to>`  (spaced — preferred; needs no quoting)
-    ///   `<from>-><to>` · `<from>:<to>` · `<from>..<to>`  (glued)
+    ///   `<from>:<to>` · `<from>..<to>`  (glued)
     /// then the work directory, then any specific `.einmo` files.
     ///
-    /// An unquoted `->` is a shell redirect, so the spaced form is safest.
     /// Parsed positionally by [`split_promote_args`].
     #[arg(required = true, num_args = 1..)]
     args: Vec<String>,
@@ -323,18 +323,17 @@ fn dispatch(command: Command) -> Result<ExitCode> {
     }
 }
 
-/// Parse an `<from>-><to>` transition into a stage pair.
+/// Parse a glued `<from>:<to>` (or `<from>..<to>`) transition into a stage pair.
 fn parse_transition(s: &str) -> Result<(Stage, Stage)> {
-    // Accept `->` and the redirect-safe `:` / `..`. The canonical `->` collides
-    // with shell redirection: an unquoted `checked->verified` has its `>` eaten
-    // by the shell, so users who forget to quote get a baffling error. `:` and
-    // `..` mean the same and need no quoting. `->` is tried first so a stage
-    // name can never contain the separator.
-    let split = ["->", "..", ":"].iter().find_map(|sep| s.split_once(sep));
+    // `->` is no longer accepted here: it collided with shell redirection (an
+    // unquoted `checked->verified` had its `>` eaten by the shell, so users
+    // who forgot to quote got a baffling error) and `to` is easier to type.
+    // The spaced `<from> to <to>` form (handled in `split_promote_args`) is
+    // preferred; `:` and `..` remain as quoting-free glued alternatives.
+    let split = ["..", ":"].iter().find_map(|sep| s.split_once(sep));
     let (from, to) = split.ok_or_else(|| {
         EinmoError::Config(format!(
-            "transition {s:?} must be `<from>-><to>` (or `<from>:<to>`). \
-             Tip: quote it — an unquoted `->` is a shell redirect."
+            "transition {s:?} must be `<from> to <to>` (or `<from>:<to>`)."
         ))
     })?;
     Ok((Stage::parse(from.trim())?, Stage::parse(to.trim())?))
@@ -400,7 +399,7 @@ fn files_ref(files: &[PathBuf]) -> Option<&[PathBuf]> {
 ///   * **spaced** — `<from> to <to> <work_dir> [files…]` (preferred; the `to`
 ///     keyword needs no quoting and cannot be mistaken for a shell redirect)
 ///   * **glued**  — `<from><sep><to> <work_dir> [files…]` where `<sep>` is
-///     `->`, `:`, or `..`
+///     `:` or `..`
 fn split_promote_args(raw: &[String]) -> Result<(Stage, Stage, PathBuf, Vec<PathBuf>)> {
     // Spaced form: `<from> to <to> …` — arg[1] is the literal `to`.
     if raw.len() >= 3 && raw[1].eq_ignore_ascii_case("to") {
@@ -455,13 +454,13 @@ fn cmd_promote(args: PromoteArgs) -> Result<ExitCode> {
             report.promoted.iter().filter(|p| p.non_human).count()
         );
     } else {
-        println!("promoted {} file(s) {from}->{to}", report.promoted.len());
+        println!("promoted {} file(s) {from} to {to}", report.promoted.len());
     }
     Ok(ExitCode::SUCCESS)
 }
 
-/// Resolve the destination stage's key (only `*->verified` truly needs one; the
-/// `output->checked`/config defaults resolve without a prompt).
+/// Resolve the destination stage's key (only `* to verified` truly needs one;
+/// the `output to checked`/config defaults resolve without a prompt).
 fn resolve_promotion_key(to: Stage, args: &PromoteArgs, config: &TestConfig) -> Result<KeySource> {
     let stdin_line = if args.stdin_passphrase {
         Some(read_stdin_line()?)
@@ -1074,28 +1073,27 @@ mod tests {
     #[test]
     fn parse_transition_ok_and_errors() {
         assert_eq!(
-            parse_transition("output->checked").unwrap(),
+            parse_transition("output:checked").unwrap(),
             (Stage::Output, Stage::Checked)
         );
         assert!(parse_transition("output>checked").is_err());
-        assert!(parse_transition("output->bogus").is_err());
+        assert!(parse_transition("output:bogus").is_err());
     }
 
-    /// Regression: `->` collides with shell redirection. An UNQUOTED
-    /// `checked->verified` on the command line has its `>` eaten by the shell
-    /// (redirecting stdout to a file named `verified`), so einmo receives only
-    /// `checked-` and fails with a baffling `transition "checked-"` error.
-    ///
-    /// The fix accepts redirect-safe separators too — `:` and `..` — so a user
-    /// need not remember to quote. All three spellings mean the same thing.
+    /// `->` is not accepted: it collided with shell redirection (an UNQUOTED
+    /// `checked->verified` on the command line had its `>` eaten by the shell
+    /// — redirecting stdout to a file named `verified` — so einmo received
+    /// only `checked-` and failed with a baffling `transition "checked-"`
+    /// error) and `to` is easier to type. The spaced `to` keyword (handled in
+    /// `split_promote_args`) is preferred; `:` and `..` remain as
+    /// quoting-free glued alternatives.
     #[test]
     fn transition_accepts_redirect_safe_separators() {
         let want = (Stage::Checked, Stage::Verified);
-        assert_eq!(parse_transition("checked->verified").unwrap(), want);
         assert_eq!(parse_transition("checked:verified").unwrap(), want);
         assert_eq!(parse_transition("checked..verified").unwrap(), want);
-        // The mangled leftover of an unquoted `->` still fails clearly.
-        assert!(parse_transition("checked-").is_err());
+        // `->` is no longer a valid separator at all.
+        assert!(parse_transition("checked->verified").is_err());
     }
 
     #[test]
@@ -1119,12 +1117,15 @@ mod tests {
         );
 
         // Glued forms all agree with the spaced form.
-        for glued in ["checked->verified", "checked:verified", "checked..verified"] {
+        for glued in ["checked:verified", "checked..verified"] {
             let (f, t, dir, files) = split_promote_args(&strs(&[glued, "suite"])).unwrap();
             assert_eq!((f, t), want, "{glued}");
             assert_eq!(dir, PathBuf::from("suite"));
             assert!(files.is_empty());
         }
+
+        // `->` is no longer accepted, glued or otherwise.
+        assert!(split_promote_args(&strs(&["checked->verified", "suite"])).is_err());
     }
 
     #[test]
@@ -1132,7 +1133,7 @@ mod tests {
         // Smoke: the parser accepts each subcommand shape.
         assert!(Cli::try_parse_from(["einmo", "verify", "/tmp/s", "--all"]).is_ok());
         assert!(Cli::try_parse_from(["einmo", "compare", "output", "checked", "/tmp/s"]).is_ok());
-        assert!(Cli::try_parse_from(["einmo", "promote", "output->checked", "/tmp/s"]).is_ok());
+        assert!(Cli::try_parse_from(["einmo", "promote", "output:checked", "/tmp/s"]).is_ok());
         assert!(Cli::try_parse_from(["einmo", "self-check", "--quiet"]).is_ok());
     }
 
@@ -1203,7 +1204,7 @@ mod tests {
         let cli = Cli::try_parse_from([
             "einmo",
             "promote",
-            "output->checked",
+            "output:checked",
             "/tmp/s",
             "a.einmo",
             "b.einmo",
@@ -1242,7 +1243,7 @@ mod tests {
         let cli = Cli::try_parse_from([
             "einmo",
             "promote",
-            "output->checked",
+            "output:checked",
             "/tmp/s",
             "--filter",
             "*",

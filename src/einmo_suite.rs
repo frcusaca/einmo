@@ -349,7 +349,7 @@ impl Problem {
             }
             Problem::SignedByUnexpectedKey { .. } => "re-sign with the reviewer's key",
             Problem::KeyDerivedFromEmptyPassphrase { .. } => {
-                "a human must sign: `einmo promote checked->verified <suite> --interactive`"
+                "a human must sign: `einmo promote checked to verified <suite> --interactive`"
             }
         }
     }
