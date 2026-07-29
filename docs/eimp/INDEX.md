@@ -17,10 +17,19 @@ ls docs/eimp | rev | sort -V | rev
 |------|-------|--------|---------|--------|
 | [EIMP-0](EIMP-0.md) | EIMP Purpose, Process, and Format | Final | 2026-07-29 | Claude Code (Sonnet 5) |
 | [EIMP-1](EIMP-1.md) | EinmoReview — a thread-safe review-session object; thin bash, server, and dhtml frontends | Draft | 2026-07-19 | Atlas (ported by Claude Code (Sonnet 5)) |
+| [EIMP-2](EIMP-2.md) | einmo-review-server — a minimal HTTP prototype of the review/sign/promote/flag loop | Draft | 2026-07-29 | Claude Code (Sonnet 5) |
 
 ---
 
 ## Last Updated
+
+**Date**: 2026-07-29 (2)
+**Updated By**: Claude Code (Sonnet 5)
+**Changes**: Added `EIMP-2` — a minimal HTTP-server prototype slice of
+`EIMP-1`'s `EinmoReview` design (list/body/decide/execute over a unix-domain
+socket, `experimental_reviewer.sh` rewired to call it instead of shelling
+out to `einmo` directly), including a JavaScript-only (Boa) port of
+`foolish-rust`'s `zweimomo` test crate to provide real test fixtures.
 
 **Date**: 2026-07-29
 **Updated By**: Claude Code (Sonnet 5)
