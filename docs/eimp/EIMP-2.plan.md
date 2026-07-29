@@ -334,19 +334,34 @@ a single atomic call (resolved Open Question).
 
 ## Phase G — retract convenience endpoint (EIMP-2.md §3)
 
-- [ ] Write endpoint tests FIRST for
-      `POST /einmo/<session>/cases/<id>/retract`
-      (`{"from":"checked"|"verified"}`, records `Decision::Retract` and
-      executes it in one call, including the checked→verified cascade)
-- [ ] Implement the retract convenience endpoint
-- [ ] In `einmo_review_client.sh`: wire `\K` (kick) to one `POST … /retract`
-      call — this closes the pre-existing gap where
-      `experimental_reviewer.sh` accumulated kicks locally but never
-      actually executed them (EIMP-2.md §1, §5, §6)
-- [ ] Verify against `zweimomo`, step by step: promote a test to `checked`
-      by hand (direct `einmo promote`, to have something to retract), then
-      kick it via the new script; confirm the checked artifact is removed
-      and any verified cascade removal happens correctly
+- [x] Complete 2026-07-29. Wrote endpoint tests FIRST for
+      `POST /einmo/<session>/cases/<id>/retract/<stage>` — success removes
+      the case and returns `200` (`retract_endpoint_removes_the_case_and_returns_ok`),
+      unknown case `404`s, invalid stage name `400`s, `output` stage
+      (not retractable) `400`s — plus `EinmoReview::retract_now` unit tests
+      (atomic, cascades checked→verified, clears any pending decision,
+      errors when nothing to retract, refuses `output`). Implementation
+      note: `stage` is a path segment (`/retract/<stage>`), matching
+      `flag`'s and `body`'s shape, not a `{"from": ...}` body field as the
+      plan originally sketched — one consistent way to name a stage across
+      every route, no request body needed at all for retract.
+- [x] Complete 2026-07-29. Implemented the retract convenience endpoint:
+      `EinmoReview::retract_now` (calls `transitions::retract` directly,
+      cascade included, no signing/gate needed) plus the `retract_case`
+      handler. Also added `EinmoError::Config` → `400` to `ApiError`'s
+      mapping (retracting `output`/`flagged` returns `Config`, a client
+      error — was falling into the `500` catch-all before this).
+- [x] Complete 2026-07-29. In `einmo_review_client.sh`: wired `k` (kick) at
+      the between-tests prompt to one `POST … /retract/<stage>` call, sent
+      immediately — no local queue, closing the gap where
+      `experimental_reviewer.sh` accumulated kicks in its `flag_*` arrays
+      but never actually executed them (EIMP-2.md §1, §5, §6). Defaults to
+      the highest-present of `checked`/`verified` (the only two retractable
+      baselines) for this case.
+- [x] Complete 2026-07-29. Verified against `zweimomo`: promoted a case to
+      `checked` (direct `transitions::promote` in the smoke-test setup, to
+      have something to retract), kicked it via the running script over a
+      pty, confirmed the `checked/` artifact was removed on disk.
 
 ## Phase H — decision + execute endpoints: promote (EIMP-2.md §3, §4)
 

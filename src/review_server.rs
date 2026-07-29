@@ -68,6 +68,7 @@ impl IntoResponse for ApiError {
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::Einmo(crate::error::EinmoError::InvalidId(_)) => StatusCode::BAD_REQUEST,
             ApiError::Einmo(crate::error::EinmoError::NoKey(_)) => StatusCode::BAD_REQUEST,
+            ApiError::Einmo(crate::error::EinmoError::Config(_)) => StatusCode::BAD_REQUEST,
             ApiError::Einmo(crate::error::EinmoError::Verification(_)) => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
@@ -243,6 +244,19 @@ async fn flag_case(
     Ok(StatusCode::OK)
 }
 
+/// Retract (demote) `id` from `stage` immediately — a single atomic call,
+/// unlike promote (EIMP-2 §3, `EinmoReview::retract_now`). Cascades
+/// `checked → verified`.
+async fn retract_case(
+    State(state): State<Arc<AppState>>,
+    Path((session, id, stage)): Path<(SessionId, EinmoId, String)>,
+) -> Result<StatusCode, ApiError> {
+    let review = state.get(session)?;
+    let stage = parse_stage(&stage)?;
+    review.retract_now(&id, stage)?;
+    Ok(StatusCode::OK)
+}
+
 /// Build the router. `state` is shared across every route via axum's
 /// `State` extractor.
 pub fn router(state: Arc<AppState>) -> Router {
@@ -252,6 +266,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/einmo/:session/cases/:id", get(case_detail))
         .route("/einmo/:session/cases/:id/body/:stage", get(case_body))
         .route("/einmo/:session/cases/:id/flag/:stage", post(flag_case))
+        .route(
+            "/einmo/:session/cases/:id/retract/:stage",
+            post(retract_case),
+        )
         .with_state(state)
 }
 
@@ -352,6 +370,20 @@ mod tests {
         let suite = crate::einmo_suite::EinmoSuite::new(config);
         suite.evaluate_all(&Echo).unwrap();
         tmp
+    }
+
+    fn promote_output_to_checked(dir: &std::path::Path) {
+        let config =
+            crate::config::TestConfig::new(dir, crate::einmo_suite::ValidationLevel::Output);
+        crate::transitions::promote(
+            &config,
+            Stage::Output,
+            Stage::Checked,
+            &crate::config::KeySource::from_passphrase(""),
+            None,
+            None,
+        )
+        .unwrap();
     }
 
     async fn body_json<T: serde::de::DeserializeOwned>(response: Response) -> T {
@@ -518,6 +550,67 @@ mod tests {
             .body(Body::from(
                 serde_json::to_vec(&serde_json::json!({ "reason": "n/a" })).unwrap(),
             ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn retract_endpoint_removes_the_case_and_returns_ok() {
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::post(format!("/einmo/{session}/cases/a.foo/retract/checked"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        assert!(!tmp.path().join("checked/a.foo.einmo").exists());
+    }
+
+    #[tokio::test]
+    async fn retract_endpoint_404s_on_unknown_case() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::post(format!(
+            "/einmo/{session}/cases/does-not-exist.foo/retract/checked"
+        ))
+        .body(Body::empty())
+        .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn retract_endpoint_400s_on_invalid_stage() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::post(format!("/einmo/{session}/cases/a.foo/retract/not-a-stage"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn retract_endpoint_400s_on_output_stage() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::post(format!("/einmo/{session}/cases/a.foo/retract/output"))
+            .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);

@@ -330,6 +330,37 @@ impl EinmoReview {
         Ok(())
     }
 
+    /// Retract (demote) `id` from `stage` immediately — a single atomic
+    /// convenience call, unlike promote. Retraction needs no signing and no
+    /// gate (it only removes files), so there is nothing a two-call shape
+    /// would protect (EIMP-2 §3). Cascades `checked → verified` per
+    /// [`transitions::retract`]. Also clears any pending decision for `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EinmoError::Config`] if `stage` is `output` or `flagged`
+    /// (not a retractable baseline), or an error if `stage` holds nothing
+    /// for `id`.
+    pub fn retract_now(&self, id: &EinmoId, stage: Stage) -> Result<()> {
+        let rel = crate::stage::mirror_input_path(std::path::Path::new(id.as_str()));
+        let files = [rel];
+        let report = transitions::retract(&self.config, stage, None, Some(&files))?;
+        if report.retracted.is_empty() {
+            return Err(EinmoError::io(
+                id.to_stage_path(self.config.work_dir(), stage),
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "nothing to retract at that stage",
+                ),
+            ));
+        }
+        self.decisions
+            .write()
+            .expect("decisions lock poisoned")
+            .undecide(id);
+        Ok(())
+    }
+
     /// Clear `id`'s decision back to "untouched". Returns the cleared
     /// decision, if any; a no-op (returns `None`) if it was already
     /// undecided.
@@ -843,6 +874,84 @@ mod tests {
 
         let err = review.flag_now(&id, Stage::Verified, "n/a").unwrap_err();
         assert!(matches!(err, EinmoError::Io { .. }));
+    }
+
+    #[test]
+    fn retract_now_is_atomic_no_decide_or_execute_needed() {
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+
+        review.retract_now(&id, Stage::Checked).unwrap();
+
+        assert!(!tmp.path().join("checked/a.foo.einmo").exists());
+    }
+
+    #[test]
+    fn retract_now_cascades_checked_to_verified() {
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        transitions::promote(
+            &config,
+            Stage::Checked,
+            Stage::Verified,
+            &KeySource::from_passphrase(""),
+            None,
+            None,
+        )
+        .unwrap();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+
+        review.retract_now(&id, Stage::Checked).unwrap();
+
+        assert!(!tmp.path().join("checked/a.foo.einmo").exists());
+        assert!(
+            !tmp.path().join("verified/a.foo.einmo").exists(),
+            "cascade must remove the verified artifact too"
+        );
+    }
+
+    #[test]
+    fn retract_now_clears_any_pending_decision() {
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.decide(
+            id.clone(),
+            Decision::Promote {
+                to: Stage::Verified,
+            },
+        );
+
+        review.retract_now(&id, Stage::Checked).unwrap();
+
+        let items = review.items().unwrap();
+        let item = items.iter().find(|i| i.id == id).unwrap();
+        assert_eq!(item.decision, None);
+    }
+
+    #[test]
+    fn retract_now_errors_when_stage_has_nothing_for_id() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+
+        let err = review.retract_now(&id, Stage::Checked).unwrap_err();
+        assert!(matches!(err, EinmoError::Io { .. }));
+    }
+
+    #[test]
+    fn retract_now_refuses_output_stage() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+
+        let err = review.retract_now(&id, Stage::Output).unwrap_err();
+        assert!(matches!(err, EinmoError::Config(_)));
     }
 
     #[test]

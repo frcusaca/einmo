@@ -212,8 +212,13 @@ nnoremap <silent> \\D :call EinmoReviewToggleDiffAll()<CR>"
     # source_stage_for_promote's "prefer higher stage" preference, review.rs)
     default_flag_stage="$(echo "$detail_json" | jq -r \
         '([.stages[] | select(.[1] != null) | .[0]] | .[-1]) // empty')"
+    # same "highest present" preference restricted to checked/verified — the
+    # only two retractable baselines (output is regenerated every run,
+    # flagged is a terminal sink; transitions::retract refuses both)
+    default_retract_stage="$(echo "$detail_json" | jq -r \
+        '([.stages[] | select(.[1] != null) | .[0]] | map(select(. == "checked" or . == "verified")) | .[-1]) // empty')"
 
-    read -r -p "   Enter=next · f=flag · q=quit: " ans </dev/tty || ans=""
+    read -r -p "   Enter=next · f=flag · k=kick · q=quit: " ans </dev/tty || ans=""
     case "${ans,,}" in
         f*)
             if [[ -z "$default_flag_stage" ]]; then
@@ -227,6 +232,20 @@ nnoremap <silent> \\D :call EinmoReviewToggleDiffAll()<CR>"
                     echo "   flag failed: $flag_error"
                 else
                     echo "   flagged $default_flag_stage/$base"
+                fi
+            fi
+            idx=$(( idx + 1 ))
+            ;;
+        k*)
+            if [[ -z "$default_retract_stage" ]]; then
+                echo "   nothing to kick: not currently checked or verified"
+            else
+                resp="$(api POST "/einmo/$SESSION/cases/$id/retract/$default_retract_stage" "")"
+                retract_error="$(echo "${resp:-}" | jq -r '.error // empty' 2>/dev/null || true)"
+                if [[ -n "$retract_error" ]]; then
+                    echo "   kick failed: $retract_error"
+                else
+                    echo "   kicked $default_retract_stage/$base (cascades to verified if applicable)"
                 fi
             fi
             idx=$(( idx + 1 ))
