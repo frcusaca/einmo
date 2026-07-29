@@ -292,20 +292,45 @@ decision-tracking arrays.
 Smallest mutating endpoint first: flag has no signing, no gate, and is now
 a single atomic call (resolved Open Question).
 
-- [ ] Write endpoint tests FIRST for
-      `POST /einmo/<session>/cases/<id>/flag` (`{"reason":string}`,
-      records `Decision::Flag` and executes it in one call, no `confirm`
-      required)
-- [ ] Implement the flag convenience endpoint
-- [ ] In `einmo_review_client.sh`: implement flagging as one
-      `POST … /flag` call, sent immediately when the reviewer flags a case
-      (EIMP-2.md §6) — the equivalent of `experimental_reviewer.sh`'s raw
-      `mv … flagged/`, but over HTTP
-- [ ] Verify against `zweimomo`, step by step: flag one test via the new
-      script; confirm the plaintext advisory note lands in `flagged/`
-      exactly as `experimental_reviewer.sh`'s `mv`-based path would
-      produce; confirm the flagged test now fails `EinmoSuite` validation
-      (`EIMP-1` §S.3)
+- [x] Complete 2026-07-29. Wrote endpoint tests FIRST for
+      `POST /einmo/<session>/cases/<id>/flag/<stage>`
+      (`{"reason":string}`) — success moves the case and returns `200`
+      (`flag_endpoint_moves_the_case_and_returns_ok`), unknown case `404`s
+      (`flag_endpoint_404s_on_unknown_case`), invalid stage `400`s
+      (`flag_endpoint_400s_on_invalid_stage`) — plus `EinmoReview::flag_now`
+      unit tests (atomic no-decide-needed, clears any pending decision,
+      errors when the stage holds nothing for the id). Implementation note:
+      the stage is a path segment (`/flag/<stage>`), not a body field —
+      matches the `body/<stage>` route's shape and reuses the same
+      `Path<(SessionId, EinmoId, String)>` + `parse_stage` pattern already
+      used by `case_body`, rather than inventing a second way to name a
+      stage.
+- [x] Complete 2026-07-29. Implemented the flag convenience endpoint:
+      `EinmoReview::flag_now` (calls `transitions::flag` directly — no
+      `decide`/`plan`/`execute` ceremony, since flag needs no signing/gate)
+      plus the `flag_case` handler wired into the router. Also fixed
+      `ApiError`'s mapping: an `EinmoError::Io` whose underlying
+      `ErrorKind` is `NotFound` now maps to `404` instead of falling into
+      the `_ => 500` catch-all — this also corrected `case_body`'s
+      previously-500 response for a not-yet-promoted stage (observed
+      during Phase E's smoke test) into the `404` it should have been all
+      along.
+- [x] Complete 2026-07-29. In `einmo_review_client.sh`: implemented
+      flagging as one `POST … /flag/<stage>` call, sent immediately when
+      the reviewer types `f` at the between-tests prompt (EIMP-2.md §6) —
+      the equivalent of `experimental_reviewer.sh`'s raw `mv … flagged/`,
+      but over HTTP. The stage defaults to whichever stage currently holds
+      the case, preferring the highest one present (mirrors
+      `source_stage_for_promote`'s stage preference in `review.rs`); the
+      reviewer is prompted for a reason, which is sent as the request body.
+- [x] Complete 2026-07-29. Verified against `zweimomo`: ran the flag flow
+      end-to-end over a pty (server pointed at a scratch copy of `day.1`),
+      typed `f` → reason → confirmed the case moved from `checked/` to
+      `flagged/` on disk with the correct `# flagged: <reason> <timestamp>`
+      advisory line, matching `experimental_reviewer.sh`'s `mv`-based
+      output byte for byte in content. (Caught and fixed a stale-binary
+      test artifact along the way — the running server process needed a
+      rebuild to pick up the new route; not a code bug.)
 
 ## Phase G — retract convenience endpoint (EIMP-2.md §3)
 

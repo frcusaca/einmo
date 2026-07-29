@@ -207,8 +207,30 @@ nnoremap <silent> \\D :call EinmoReviewToggleDiffAll()<CR>"
 
     vim -M -n -c "$vim_cmds" "${pane[output]}" </dev/tty >/dev/tty 2>&1 || true
 
-    read -r -p "   Enter=next · q=quit: " ans </dev/tty || ans=""
+    # highest-present stage for this case — the natural default source when
+    # flagging without being told otherwise (mirrors
+    # source_stage_for_promote's "prefer higher stage" preference, review.rs)
+    default_flag_stage="$(echo "$detail_json" | jq -r \
+        '([.stages[] | select(.[1] != null) | .[0]] | .[-1]) // empty')"
+
+    read -r -p "   Enter=next · f=flag · q=quit: " ans </dev/tty || ans=""
     case "${ans,,}" in
+        f*)
+            if [[ -z "$default_flag_stage" ]]; then
+                echo "   nothing to flag: no stage currently holds this case"
+            else
+                read -r -p "   flag $default_flag_stage — reason: " reason </dev/tty || reason=""
+                flag_body="$(jq -n --arg reason "$reason" '{reason: $reason}')"
+                resp="$(api POST "/einmo/$SESSION/cases/$id/flag/$default_flag_stage" "$flag_body")"
+                flag_error="$(echo "${resp:-}" | jq -r '.error // empty' 2>/dev/null || true)"
+                if [[ -n "$flag_error" ]]; then
+                    echo "   flag failed: $flag_error"
+                else
+                    echo "   flagged $default_flag_stage/$base"
+                fi
+            fi
+            idx=$(( idx + 1 ))
+            ;;
         q*) break ;;
         *) idx=$(( idx + 1 )) ;;
     esac

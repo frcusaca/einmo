@@ -71,6 +71,11 @@ impl IntoResponse for ApiError {
             ApiError::Einmo(crate::error::EinmoError::Verification(_)) => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
+            ApiError::Einmo(crate::error::EinmoError::Io { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                StatusCode::NOT_FOUND
+            }
             ApiError::Einmo(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         let body = serde_json::json!({ "error": self.to_string() });
@@ -218,6 +223,26 @@ fn parse_stage(s: &str) -> Result<Stage, ApiError> {
     Stage::parse(s).map_err(|_| ApiError::BadRequest(format!("invalid stage {s:?}")))
 }
 
+/// `POST /einmo/<session>/cases/<id>/flag/<stage>` request body.
+#[derive(Debug, Deserialize)]
+pub struct FlagRequest {
+    /// The advisory reason recorded in the flagged file.
+    pub reason: String,
+}
+
+/// Flag `id` at `stage` immediately — a single atomic call, unlike promote
+/// (EIMP-2 §3, `EinmoReview::flag_now`).
+async fn flag_case(
+    State(state): State<Arc<AppState>>,
+    Path((session, id, stage)): Path<(SessionId, EinmoId, String)>,
+    Json(req): Json<FlagRequest>,
+) -> Result<StatusCode, ApiError> {
+    let review = state.get(session)?;
+    let stage = parse_stage(&stage)?;
+    review.flag_now(&id, stage, &req.reason)?;
+    Ok(StatusCode::OK)
+}
+
 /// Build the router. `state` is shared across every route via axum's
 /// `State` extractor.
 pub fn router(state: Arc<AppState>) -> Router {
@@ -226,6 +251,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/einmo/:session/cases", get(list_cases))
         .route("/einmo/:session/cases/:id", get(case_detail))
         .route("/einmo/:session/cases/:id/body/:stage", get(case_body))
+        .route("/einmo/:session/cases/:id/flag/:stage", post(flag_case))
         .with_state(state)
 }
 
@@ -420,6 +446,78 @@ mod tests {
 
         let req = Request::get(format!("/einmo/{session}/cases/..%2f..%2fetc%2fpasswd"))
             .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn flag_endpoint_moves_the_case_and_returns_ok() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::post(format!("/einmo/{session}/cases/a.foo/flag/output"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({ "reason": "looks wrong" })).unwrap(),
+            ))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        assert!(!tmp.path().join("output/a.foo.einmo").exists());
+        let flagged = std::fs::read_to_string(tmp.path().join("flagged/a.foo.einmo")).unwrap();
+        assert!(flagged.contains("# flagged: looks wrong"));
+
+        // The case still appears in the worklist (now living under
+        // flagged/), it just no longer has an `output` stage entry.
+        let req = Request::get(format!("/einmo/{session}/cases/a.foo"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let detail: CaseSummary = body_json(resp).await;
+        assert!(
+            detail
+                .stages
+                .iter()
+                .all(|(name, status)| name != "output" || status.is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn flag_endpoint_404s_on_unknown_case() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::post(format!(
+            "/einmo/{session}/cases/does-not-exist.foo/flag/output"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({ "reason": "n/a" })).unwrap(),
+        ))
+        .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn flag_endpoint_400s_on_invalid_stage() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::post(format!("/einmo/{session}/cases/a.foo/flag/not-a-stage"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({ "reason": "n/a" })).unwrap(),
+            ))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);

@@ -299,6 +299,37 @@ impl EinmoReview {
             .decide(id, decision)
     }
 
+    /// Flag `id` at `stage` immediately — a single atomic convenience call,
+    /// unlike promote (which stays two-call: record a decision, then a
+    /// separately gated execute). Flagging needs no signing and no gate, so
+    /// there is nothing a two-call shape would protect (EIMP-2 §3). Also
+    /// clears any pending decision for `id`, since flagging removes the
+    /// artifact from the stage that decision would have acted on.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `stage` holds nothing for `id`, or the
+    /// underlying artifact fails verify-on-inspect.
+    pub fn flag_now(&self, id: &EinmoId, stage: Stage, reason: &str) -> Result<()> {
+        let rel = crate::stage::mirror_input_path(std::path::Path::new(id.as_str()));
+        let files = [rel];
+        let report = transitions::flag(&self.config, stage, None, reason, Some(&files))?;
+        if report.flagged.is_empty() {
+            return Err(EinmoError::io(
+                id.to_stage_path(self.config.work_dir(), stage),
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "nothing to flag at that stage",
+                ),
+            ));
+        }
+        self.decisions
+            .write()
+            .expect("decisions lock poisoned")
+            .undecide(id);
+        Ok(())
+    }
+
     /// Clear `id`'s decision back to "untouched". Returns the cleared
     /// decision, if any; a no-op (returns `None`) if it was already
     /// undecided.
@@ -775,6 +806,43 @@ mod tests {
         assert!(!tmp.path().join("output/a.foo.einmo").exists());
         let flagged = std::fs::read_to_string(tmp.path().join("flagged/a.foo.einmo")).unwrap();
         assert!(flagged.contains("# flagged: looks wrong"));
+    }
+
+    #[test]
+    fn flag_now_is_atomic_no_decide_or_execute_needed() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+
+        review.flag_now(&id, Stage::Output, "looks wrong").unwrap();
+
+        assert!(!tmp.path().join("output/a.foo.einmo").exists());
+        let flagged = std::fs::read_to_string(tmp.path().join("flagged/a.foo.einmo")).unwrap();
+        assert!(flagged.contains("# flagged: looks wrong"));
+    }
+
+    #[test]
+    fn flag_now_clears_any_pending_decision() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+
+        review.flag_now(&id, Stage::Output, "actually no").unwrap();
+
+        let items = review.items().unwrap();
+        let item = items.iter().find(|i| i.id == id).unwrap();
+        assert_eq!(item.decision, None);
+    }
+
+    #[test]
+    fn flag_now_errors_when_stage_has_nothing_for_id() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+
+        let err = review.flag_now(&id, Stage::Verified, "n/a").unwrap_err();
+        assert!(matches!(err, EinmoError::Io { .. }));
     }
 
     #[test]
