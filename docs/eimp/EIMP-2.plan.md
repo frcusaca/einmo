@@ -153,32 +153,35 @@ decision-tracking arrays.
 - [ ] Verify the no-server failure path: run the script with no server
       running, confirm it fails fast with the documented message
 
-## Phase F — decision + execute endpoints: flag (EIMP-2.md §3)
+## Phase F — flag convenience endpoint (EIMP-2.md §3)
 
-Smallest mutating endpoint first: flag has no signing, no gate.
+Smallest mutating endpoint first: flag has no signing, no gate, and is now
+a single atomic call (resolved Open Question).
 
 - [ ] Write endpoint tests FIRST for
-      `PUT /einmo/<session>/cases/<id>/decision` (`kind: flag`) and
-      `POST /einmo/<session>/execute` (flag path, no `confirm` required)
-- [ ] Implement `PUT … /decision` and `POST /execute`'s flag-execution path
-- [ ] In `einmo_review_client.sh`: implement flagging as the `PUT`/`POST`
-      sequence, sent immediately when the reviewer flags a case (EIMP-2.md
-      §6) — the equivalent of `experimental_reviewer.sh`'s raw `mv …
-      flagged/`, but over HTTP
+      `POST /einmo/<session>/cases/<id>/flag` (`{"reason":string}`,
+      records `Decision::Flag` and executes it in one call, no `confirm`
+      required)
+- [ ] Implement the flag convenience endpoint
+- [ ] In `einmo_review_client.sh`: implement flagging as one
+      `POST … /flag` call, sent immediately when the reviewer flags a case
+      (EIMP-2.md §6) — the equivalent of `experimental_reviewer.sh`'s raw
+      `mv … flagged/`, but over HTTP
 - [ ] Verify against `zweimomo`, step by step: flag one test via the new
       script; confirm the plaintext advisory note lands in `flagged/`
       exactly as `experimental_reviewer.sh`'s `mv`-based path would
       produce; confirm the flagged test now fails `EinmoSuite` validation
       (`EIMP-1` §S.3)
 
-## Phase G — decision + execute endpoints: retract/kick (EIMP-2.md §3)
+## Phase G — retract convenience endpoint (EIMP-2.md §3)
 
-- [ ] Write endpoint tests FIRST for `PUT … /decision` (`kind: retract`)
-      and `POST /execute`'s retract-execution path (including the
-      checked→verified cascade)
-- [ ] Implement the retract decision + execution path
-- [ ] In `einmo_review_client.sh`: wire `\K` (kick) to the `PUT`/`POST`
-      sequence — this closes the pre-existing gap where
+- [ ] Write endpoint tests FIRST for
+      `POST /einmo/<session>/cases/<id>/retract`
+      (`{"from":"checked"|"verified"}`, records `Decision::Retract` and
+      executes it in one call, including the checked→verified cascade)
+- [ ] Implement the retract convenience endpoint
+- [ ] In `einmo_review_client.sh`: wire `\K` (kick) to one `POST … /retract`
+      call — this closes the pre-existing gap where
       `experimental_reviewer.sh` accumulated kicks locally but never
       actually executed them (EIMP-2.md §1, §5, §6)
 - [ ] Verify against `zweimomo`, step by step: promote a test to `checked`
@@ -222,11 +225,8 @@ Smallest mutating endpoint first: flag has no signing, no gate.
       applies at execute time; revisit a test and back out to undecided,
       confirm execute treats it as untouched
 
-## Phase J — summary rendering + immediate-execute + cleanup
+## Phase J — summary rendering + cleanup
 
-- [ ] Resolve the one remaining Open Question: immediate-execute convenience
-      endpoints for flag/retract, or keep the two-call shape — implement
-      whichever is chosen (EIMP-2.md §Open Questions "Still open")
 - [ ] Implement the end-of-pass summary in `einmo_review_client.sh` as a
       rendering of `GET /einmo/<session>/plan`'s response — there is no
       local stats computation to replace, since this script never

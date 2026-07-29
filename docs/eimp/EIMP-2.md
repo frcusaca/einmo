@@ -2,11 +2,11 @@
 eimp: 2
 title: einmo-review-server — a minimal HTTP prototype of the review/sign/promote/flag loop
 author: Claude Code (Sonnet 5) <noreply@anthropic.com>
-status: Draft
+status: Implementing
 type: Standards
 created: 2026-07-29
 supersedes: []
-begun: [ ]
+begun: [x]
 ---
 
 # EIMP-2: einmo-review-server — a minimal HTTP prototype of the review/sign/promote/flag loop
@@ -187,10 +187,10 @@ practice the script fetches it once at startup and treats it as a constant.
 |---|---|
 | `"$EINMO" list "$SUITE" [--filter …] [--differing]` | `GET /einmo/<session>/cases` |
 | `"$EINMO" body "$f"` (verified body of a stage file) | `GET /einmo/<session>/cases/<id>/body/<stage>` |
-| raw `mv "$SUITE/$stage/$rel" "$SUITE/$stage/flagged/$rel"` (writes the plaintext advisory note itself) | `PUT /einmo/<session>/cases/<id>/decision` with `{"kind":"flag","reason":…}` then `POST /einmo/<session>/execute` (or an immediate-execute variant — see §3) |
+| raw `mv "$SUITE/$stage/$rel" "$SUITE/$stage/flagged/$rel"` (writes the plaintext advisory note itself) | `POST /einmo/<session>/cases/<id>/flag` `{"reason":…}` — one call, atomic (§3) |
 | `"$EINMO" promote output to checked "$SUITE" -- <files>` | `PUT /einmo/<session>/cases/<id>/decision` `{"kind":"promote","to":"checked"}` per case, then `POST /einmo/<session>/execute` |
 | `"$EINMO" promote checked to verified "$SUITE" --interactive -- <files>` | same shape, `{"to":"verified"}`, passphrase carried in the execute call body (§4) |
-| `\K` (kick) — accumulated locally as `retract_checked`/`retract_verified`; the existing script does not appear to actually invoke `einmo retract` to execute these today (a pre-existing gap, not introduced by this EIMP) | `PUT /einmo/<session>/cases/<id>/decision` `{"kind":"retract","from":"checked"\|"verified"}`, then `POST /einmo/<session>/execute` — this EIMP closes the gap by actually executing kicks, cascade included (`einmo retract`'s existing checked→verified cascade, `transitions.rs`) |
+| `\K` (kick) — accumulated locally as `retract_checked`/`retract_verified`; the existing script does not appear to actually invoke `einmo retract` to execute these today (a pre-existing gap, not introduced by this EIMP) | `POST /einmo/<session>/cases/<id>/retract` `{"from":"checked"\|"verified"}` — one call, atomic (§3); this EIMP closes the gap by actually executing kicks, cascade included (`einmo retract`'s existing checked→verified cascade, `transitions.rs`) |
 | `u` (revisit) — local array surgery (`drop_from`, `answer_of`) | `GET /einmo/<session>/cases/<id>` to read the current decision, then `PUT … /decision` to replace it (§5) — or `DELETE … /decision` (`undecide`) if the reviewer backs out to "no decision yet" rather than replacing with a new one |
 
 This table is the entire scope of this EIMP's HTTP surface. Beyond adding
@@ -271,10 +271,12 @@ actually needs it).
 | GET    | `/einmo/<session>/cases` | — (query: `filter`, `differing`) | worklist rows (each carrying its `EinmoId`), mirrors `einmo list` |
 | GET    | `/einmo/<session>/cases/<id>` | — | one case's detail, incl. its current decision (if any) — read before a revisit (§5) |
 | GET    | `/einmo/<session>/cases/<id>/body/<stage>` | — | verified body content, mirrors `einmo body` |
-| PUT    | `/einmo/<session>/cases/<id>/decision` | `{"kind":"promote","to":"checked"\|"verified"} \| {"kind":"retract","from":"checked"\|"verified"} \| {"kind":"flag","reason":string} \| {"kind":"skip"}` | record (or replace — replace-not-stack, `EIMP-1` §S.3) a decision — all four `Decision` variants |
+| PUT    | `/einmo/<session>/cases/<id>/decision` | `{"kind":"promote","to":"checked"\|"verified"} \| {"kind":"retract","from":"checked"\|"verified"} \| {"kind":"flag","reason":string} \| {"kind":"skip"}` | record (or replace — replace-not-stack, `EIMP-1` §S.3) a decision — all four `Decision` variants. Promotions and `skip` only go through this route; flag/retract normally use the convenience endpoints below instead |
 | DELETE | `/einmo/<session>/cases/<id>/decision` | — | `undecide` — clear a decision back to "untouched" (§5's revisit path, when the reviewer backs out rather than replaces) |
+| POST   | `/einmo/<session>/cases/<id>/flag` | `{"reason":string}` | convenience: record `Decision::Flag` AND execute it in one call — no gate, matches the old script's single `mv` call site (resolved Open Question) |
+| POST   | `/einmo/<session>/cases/<id>/retract` | `{"from":"checked"\|"verified"}` | convenience: record `Decision::Retract` AND execute it in one call, cascade included — no gate |
 | GET    | `/einmo/<session>/plan` | — | structured plan preview (what execute would do) — also doubles as the end-of-pass summary the script renders (§5) |
-| POST   | `/einmo/<session>/execute` | `{"confirm":"PROMOTE","passphrase"?:string}` | apply all pending decisions; flags AND retracts execute unconditionally (no gate — flags per `EIMP-1` §S.3; retracts are a local demotion, not a new signature, so the same "no gate" treatment applies), promotions require the `confirm` token |
+| POST   | `/einmo/<session>/execute` | `{"confirm":"PROMOTE","passphrase"?:string}` | apply all pending `PUT`-recorded decisions (promotions and any `skip`s); requires the `confirm` token for promotions |
 
 `<id>` is a case's `EinmoId` (§0) as a percent-encoded URL path segment.
 `<session>` is the session id `POST /einmo/sessions` returned; every other
@@ -283,20 +285,21 @@ EIMP creates exactly one session per server run (§7) — the routes are
 session-scoped in *shape* for `EIMP-1`'s future multi-session support (§2),
 not exercised with multiple concurrent sessions *in* this EIMP.
 
-**`PUT … /decision` is sent the moment the reviewer decides, not batched
+**Decisions are sent the moment the reviewer decides, not batched
 client-side** — see §5: the server's `DecisionBook` is the single
 accumulating store, so the script never needs a local copy to dump at the
-end. Flags execute (via their own `POST /execute`) right after their `PUT`;
-promotions accumulate as pending decisions across the whole pass and are
-applied together by one gated `POST /execute` at the end.
+end. Flag and retract go through their own convenience endpoints and
+execute immediately, no `confirm` gate — neither produces a new signature
+the way a promotion does (flag is a plaintext advisory move; retract is a
+local demotion). Promotions (and any `skip`) go through `PUT … /decision`
+and accumulate as pending decisions across the whole pass, applied together
+by one gated `POST /execute` at the end.
 
-Retracts execute like flags do — immediately, no `confirm` gate (they demote
-an already-signed artifact locally; they do not themselves produce a new
-signature the way a promotion does). No session-summary endpoint beyond
-`GET .../plan`, no SSE — not needed by the script's current flow. Every
-response is JSON; the script parses it with `jq` (§6 — `curl` + `jq` is
-sufficient for JSON-RPC-shaped calls in bash; a parallel client in another
-language was considered and dropped, see Rejected Alternative H).
+No session-summary endpoint beyond `GET .../plan`, no SSE — not needed by
+the script's current flow. Every response is JSON; the script parses it
+with `jq` (§6 — `curl` + `jq` is sufficient for JSON-RPC-shaped calls in
+bash; a parallel client in another language was considered and dropped, see
+Rejected Alternative H).
 
 ### 4. Signing stays exactly as `EIMP-1` §S.4 specifies
 
@@ -390,13 +393,12 @@ New behavior specific to `einmo_review_client.sh`:
   (`ids`) per §5.
 - `"$EINMO" body "$f"` becomes a GET against
   `/einmo/<session>/cases/<id>/body/<stage>`.
-- The raw `mv … flagged/` (from `experimental_reviewer.sh`) becomes a
-  `PUT … /decision` (`kind: flag`) followed immediately by its own
-  `POST /execute`, sent the moment the reviewer flags a test (not batched)
-  — flags still run unconditionally, no gate (§3).
-- `\K` (kick) — dead state in the old script (§1/§5) — becomes a real
-  `PUT … /decision` (`kind: retract`) followed immediately by its own
-  `POST /execute`: kicks now actually execute, closing the pre-existing gap.
+- The raw `mv … flagged/` (from `experimental_reviewer.sh`) becomes one
+  `POST /einmo/<session>/cases/<id>/flag` call, sent the moment the
+  reviewer flags a test — no gate, matching current behavior (§3).
+- `\K` (kick) — dead state in the old script (§1/§5) — becomes one
+  `POST /einmo/<session>/cases/<id>/retract` call: kicks now actually
+  execute, closing the pre-existing gap.
 - `"$EINMO" promote …` becomes a `PUT … /decision` sent per-case as each
   decision is made (§5); at the end of the pass, one gated `POST /execute`
   (reading the plan the server already holds) carries the typed `PROMOTE`
@@ -663,16 +665,15 @@ EIMP reaches `Implementing`):
   opaque id (Rejected Alternative I).
 - ~~Socket location~~ — **configurable, default `.`** (current directory),
   removed on exit (§7).
+- ~~Immediate-execute for flags and retracts~~ — **one convenience endpoint
+  each**: `POST /einmo/<session>/cases/<id>/flag` and `POST
+  /einmo/<session>/cases/<id>/retract`, each atomic (record the decision
+  and execute it in one call), rather than the two-call `PUT decision` +
+  `POST execute` shape used for promotions. Closest match to
+  `experimental_reviewer.sh`'s current single `mv` call site.
 
-Still open — confirm before Phase C/§Test Plan begins:
+Still open — not blocking, revisit later:
 
-- **Immediate-execute for flags and retracts.** §3 has flag/retract-then-
-  execute as two calls (`PUT decision` + `POST execute`); should there
-  instead be single convenience endpoints (`POST
-  /einmo/<session>/cases/<id>/flag`, `POST
-  /einmo/<session>/cases/<id>/retract`) that do both atomically, closer to
-  matching the script's current single `mv` call site? Leaning toward the
-  convenience endpoints; confirm at begun-time.
 - **Plaintext passphrase transport (documented weakness, not blocking this
   EIMP).** The `checked to verified` passphrase travels as plaintext inside
   `POST /einmo/<session>/execute`'s request body (§4, Abstract). Accepted
