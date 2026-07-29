@@ -17,11 +17,20 @@ ls docs/eimp | rev | sort -V | rev
 |------|-------|--------|---------|--------|
 | [EIMP-0](EIMP-0.md) | EIMP Purpose, Process, and Format | Final | 2026-07-29 | Claude Code (Sonnet 5) |
 | [EIMP-1](EIMP-1.md) | EinmoReview — a thread-safe review-session object; thin bash, server, and dhtml frontends | Draft | 2026-07-19 | Atlas (ported by Claude Code (Sonnet 5)) |
-| [EIMP-2](EIMP-2.md) | einmo-review-server — a minimal HTTP prototype of the review/sign/promote/flag loop | Draft | 2026-07-29 | Claude Code (Sonnet 5) |
+| [EIMP-2](EIMP-2.md) | einmo-review-server — a minimal HTTP prototype of the review/sign/promote/flag loop | complete | 2026-07-29 | Claude Code (Sonnet 5) |
 
 ---
 
 ## Last Updated
+
+**Date**: 2026-07-29 (3)
+**Updated By**: Claude Code (Sonnet 5)
+**Changes**: `EIMP-2` reached `complete` — all ten plan phases (A–J) plus
+the comprehensive test implemented, tested, and verified end-to-end
+against `zweimomo`'s real suite over a pty-driven `einmo_review_client.sh`
+session. Frontmatter status updated; the "Resolved during scoping" record
+removed from `EIMP-2.md`'s Open Questions per `EIMP-0`'s convention
+(the plaintext-passphrase-transport "Still open" item remains, as intended).
 
 **Date**: 2026-07-29 (2)
 **Updated By**: Claude Code (Sonnet 5)

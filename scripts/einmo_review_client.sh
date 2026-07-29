@@ -63,6 +63,17 @@ if [[ -z "$SESSION" ]]; then
     exit 1
 fi
 
+# A socket special file existing (-S above) does not mean a server is still
+# listening on it — a killed server (vs. one that shut down cleanly via
+# Ctrl-C/SIGTERM through serve_uds's own cleanup) can leave a stale socket
+# file behind. Probe with an actual connection before trusting it, the same
+# live-vs-stale distinction serve_uds itself makes on the server side.
+if ! curl -sS --unix-socket "$SOCKET" -o /dev/null "http://einmo-review-client/einmo/$SESSION/cases" 2>/dev/null; then
+    echo "einmo_review_client: socket $SOCKET exists but nothing is listening (stale socket file — the server was likely killed rather than shut down cleanly)" >&2
+    echo "  Start one first:  cargo einmo-review-server --socket $SOCKET <suite>" >&2
+    exit 1
+fi
+
 command -v jq >/dev/null 2>&1 || {
     echo "einmo_review_client: jq is required (curl + jq talk to the server's JSON API)" >&2
     exit 1

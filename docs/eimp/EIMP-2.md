@@ -2,7 +2,7 @@
 eimp: 2
 title: einmo-review-server — a minimal HTTP prototype of the review/sign/promote/flag loop
 author: Claude Code (Sonnet 5) <noreply@anthropic.com>
-status: Implementing
+status: complete
 type: Standards
 created: 2026-07-29
 supersedes: []
@@ -766,30 +766,6 @@ fuller server (UDS-first, TCP+token later) — this EIMP's choice does not
 bind it.
 
 ## Open Questions
-
-Resolved during scoping (kept here as a record of the decision, per
-`EIMP-0`'s Open-Questions-emptied-when-frozen convention — remove once this
-EIMP reaches `Implementing`):
-
-- ~~State loss on restart~~ — **acceptable for this prototype.** No journal;
-  a server restart loses undecided/unexecuted decisions. A real journal is
-  `EIMP-1`'s job.
-- ~~Script JSON parsing~~ — **`jq`**, not a script-friendly plain-text mode
-  and not a parallel client in another language (Rejected Alternative H).
-- ~~Session identity / URL shape~~ — **session id in the URL path**
-  (`/einmo/<session-id>/…`), one session per server run for this EIMP, JSON-
-  RPC-flavored, future-proofing for `EIMP-1`'s multi-session support (§2).
-- ~~Case identity~~ — **`EinmoId`**, the existing mirror-relative-path
-  identity formalized as a validated, tested type (§0), not a server-minted
-  opaque id (Rejected Alternative I).
-- ~~Socket location~~ — **configurable, default `.`** (current directory),
-  removed on exit (§7).
-- ~~Immediate-execute for flags and retracts~~ — **one convenience endpoint
-  each**: `POST /einmo/<session>/cases/<id>/flag` and `POST
-  /einmo/<session>/cases/<id>/retract`, each atomic (record the decision
-  and execute it in one call), rather than the two-call `PUT decision` +
-  `POST execute` shape used for promotions. Closest match to
-  `experimental_reviewer.sh`'s current single `mv` call site.
 
 Still open — not blocking, revisit later:
 

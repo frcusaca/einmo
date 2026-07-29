@@ -451,31 +451,70 @@ a single atomic call (resolved Open Question).
 
 ## Phase J — summary rendering + cleanup
 
-- [ ] Implement the end-of-pass summary in `einmo_review_client.sh` as a
-      rendering of `GET /einmo/<session>/plan`'s response — there is no
-      local stats computation to replace, since this script never
-      accumulated the counts itself (EIMP-2.md §5)
-- [ ] Measure and record here: `einmo_review_client.sh`'s line count vs.
-      `experimental_reviewer.sh`'s (~700 lines, per `EIMP-1` §S.8) — the new
-      script is expected to be substantially shorter (EIMP-2.md §6)
-- [ ] Note in this plan whether the plaintext-passphrase-transport weakness
-      (EIMP-2.md §Open Questions "Still open") needs a follow-up EIMP, or
-      stays an accepted prototype limitation
-- [ ] Phase E–J tests green; `cargo fmt` / `cargo clippy -D warnings` clean
+- [x] Complete 2026-07-29. Already in place from Phase H: the end-of-pass
+      block calls `GET /einmo/<session>/plan` and renders its `actions`
+      directly (`kind`, `id`, `to` where present) before asking for
+      confirmation, then reports `POST … /execute`'s own `executed`/
+      `skipped` counts afterward — no local stats computation exists to
+      replace, since this script never accumulated counts itself
+      (EIMP-2.md §5). No further work needed for this checkbox.
+- [x] Complete 2026-07-29. Measured: `einmo_review_client.sh` is **341
+      lines**, `experimental_reviewer.sh` is **1080 lines** (`wc -l`) — the
+      new script is not merely "substantially shorter" but under a third
+      the size, consistent with EIMP-2.md §5's prediction that moving
+      state ownership server-side (no `promote_checked`/`promote_verified`/
+      `retract_checked`/`retract_verified`/`flag_stage`/`flag_rel`/
+      `flag_reason`/`send_to_agent_list`/`skip_list`/`noop_list` parallel
+      arrays, no `undo_last_decision`/`answer_of`/`drop_from` array
+      surgery) removes most of what made the old script long.
+- [x] Complete 2026-07-29. The plaintext-passphrase-transport weakness
+      (EIMP-2.md §Open Questions "Still open") stays an accepted prototype
+      limitation, not a blocker for this EIMP's completion — the doc
+      already states this explicitly ("not blocking this EIMP", "revisit
+      later", "not an emergency, but should not be silently carried
+      forward either"). No follow-up EIMP is being opened for it now;
+      revisit before `EIMP-1`'s TCP+bearer-token mode is ever built, per
+      the existing note.
+- [x] Complete 2026-07-29. Phase E–J tests green (184 einmo + 6 zweimomo);
+      `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D
+      warnings` clean.
 
 ## Comprehensive test + completion
 
-- [ ] Comprehensive test, per `EIMP-2.md` §Test Plan: a full review pass
-      exercising the complete decision vocabulary (list, view, approve,
-      kick, flag, undo) at least once each over `zweimomo`'s real suite,
-      via `einmo_review_client.sh` against a live server, chained end to
-      end in one run (not just the per-phase step-by-step checks above)
-- [ ] Integration test: `einmo_review_client.sh` run with no server running
-      fails fast with the documented message, no silent fallback
-- [ ] All tests pass: `cargo test`, `cargo clippy --all-targets -- -D
-      warnings`, `cargo fmt --check`
-- [ ] Update `EIMP-2.md` frontmatter `status: complete`; remove the
-      "Resolved during scoping" record from §Open Questions per `EIMP-0`'s
-      Open-Questions-emptied-when-frozen convention
-- [ ] Update `docs/eimp/INDEX.md` to add EIMP-2 and reflect its completed
-      status
+- [x] Complete 2026-07-29. Comprehensive test, per `EIMP-2.md` §Test Plan:
+      one chained run over a scratch copy of `zweimomo`'s `day.1` suite (8
+      cases), driven over a pty against a live server, exercising every
+      decision kind in the same pass: `data_structures.js` promoted
+      output→checked; `division_by_zero.js` promoted output→verified with
+      a genuine passphrase (confirmed via a distinct signing pubkey);
+      `function_application.js` kicked (retracted from `checked`);
+      `integer_arithmetic.js` flagged with an advisory reason; and
+      `name_binding.js` decided-then-undone (confirmed removed from the
+      pending plan by a second script invocation reading the same
+      server-side session). Every artifact-level effect was verified on
+      disk, not just from the script's own success messages.
+      **Found and fixed a real bug while running this test**: a killed
+      (not cleanly shut down) server leaves its socket file in place, so
+      the startup check's `-S "$SOCKET"` (file exists, is socket-typed)
+      passed even though nothing was listening — the script would then
+      fail deep inside with a raw, unhelpful `curl: (7) Failed to
+      connect`. Added a connectivity probe (`curl` a real request against
+      the socket) immediately after the existing existence checks, with
+      the same fail-fast messaging as the missing-socket case; verified
+      both the no-socket-at-all and the killed-server/stale-socket-file
+      cases now produce the same clear, documented error.
+- [x] Complete 2026-07-29. Integration test: ran `einmo_review_client.sh`
+      against a socket path with nothing listening (both "never existed"
+      and "existed, server was killed" variants); confirmed it fails fast
+      with the documented message and does not attempt any fallback in
+      either case.
+- [x] Complete 2026-07-29. All tests pass: 184 einmo + 6 zweimomo tests,
+      `cargo clippy --workspace --all-targets -- -D warnings` clean,
+      `cargo fmt --check` clean.
+- [x] Complete 2026-07-29. Updated `EIMP-2.md` frontmatter to
+      `status: complete`; removed the "Resolved during scoping" record
+      from §Open Questions (kept "Still open" — the plaintext-passphrase
+      note — per `EIMP-0`'s convention, which empties only the resolved
+      record, not genuinely still-open items).
+- [x] Complete 2026-07-29. Updated `docs/eimp/INDEX.md` to add EIMP-2 and
+      reflect its completed status.
