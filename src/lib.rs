@@ -40,7 +40,7 @@ pub use einmo_suite::{
 pub use error::EinmoError;
 pub use format::{EinmoFile, Metadata, Section, Status};
 pub use signature::{Stamp, StampRole, Stamps};
-pub use stage::Stage;
+pub use stage::{EinmoId, Stage};
 pub use transitions::{
     FlagReport, PromotionReport, RetractReport, SignatureReport, confirm_signatures, flag, promote,
     retract,

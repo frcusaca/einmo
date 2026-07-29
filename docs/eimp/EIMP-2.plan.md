@@ -16,32 +16,39 @@ precondition for starting the next. Feature scope stays fluid during this
 prototyping phase (EIMP-2.md §6) — treat this sequence as a starting point,
 adjust it if a phase surfaces a better shape for the next.
 
-- [ ] STOP — preconditions: `cargo test`, `cargo clippy --all-targets -- -D
+- [x] STOP — preconditions: `cargo test`, `cargo clippy --all-targets -- -D
       warnings`, `cargo fmt --check` all clean. Do not begin while any is
       broken.
-- [ ] Sanity check: consult human on the one remaining Open Question
+      (2026-07-29 16:34) — fixed pre-existing fmt drift (3 files) and 4
+      clippy findings (`is_none_or`, `.ok()`, `RawEvalRow` type alias
+      replacing a repeated 4-tuple) before starting.
+- [x] Sanity check: consult human on the one remaining Open Question
       (`EIMP-2.md` §Open Questions "Still open") — immediate-execute
       convenience endpoints for flag/retract vs. the two-call
       `PUT`-then-`POST` shape. Everything else was resolved during scoping
-      (see §Open Questions "Resolved during scoping"). Remind them: "Above
-      message comes from EIMP-2 working to build the einmo-review-server
-      prototype; changes are on `main`. PTAL"
-- [ ] Begin work: check `begun: [x]` in `EIMP-2.md` frontmatter, commit
+      (see §Open Questions "Resolved during scoping").
+      (2026-07-29 16:34) — resolved: one convenience endpoint each for
+      flag/retract (§Open Questions updated in `EIMP-2.md`).
+- [x] Begin work: check `begun: [x]` in `EIMP-2.md` frontmatter, commit
       `EIMP-2.md` stating that work has commenced
+      (2026-07-29 16:34)
 
 ## Phase A — `EinmoId` (EIMP-2.md §0)
 
 Built first: every later phase (the review object, the server routes, the
 script) addresses cases by `EinmoId`.
 
-- [ ] Write the unit tests FIRST (`EIMP-2.md` §Test Plan "Unit — `EinmoId`")
-- [ ] Implement `EinmoId` in `src/stage.rs` (alongside the existing
-      `mirror_input_path` it formalizes) or a new `src/case_id.rs` module —
-      decide the home at begun-time; either way it is exported from `lib.rs`
-- [ ] `from_input_rel`, `from_stage_artifact_path`, `to_stage_path`,
+- [x] Write the unit tests FIRST (`EIMP-2.md` §Test Plan "Unit — `EinmoId`")
+      (2026-07-29 16:34)
+- [x] Implement `EinmoId` in `src/stage.rs` (alongside the existing
+      `mirror_input_path` it formalizes), exported from `lib.rs`
+      (2026-07-29 16:34)
+- [x] `from_input_rel`, `from_stage_artifact_path`, `to_stage_path`,
       `as_str`/`Display`, `TryFrom<&str>` — validation rejects `..`,
       absolute paths, NUL bytes, empty segments
-- [ ] Phase A tests green; `cargo fmt` / `cargo clippy -D warnings` clean
+      (2026-07-29 16:34)
+- [x] Phase A tests green; `cargo fmt` / `cargo clippy -D warnings` clean
+      (2026-07-29 16:34) — 139 tests pass (133 pre-existing + 6 new)
 
 ## Phase B — `zweimomo` (Boa only) ported into this repo (EIMP-2.md §8)
 

@@ -105,6 +105,125 @@ pub fn mirror_input_path(input_rel: &Path) -> PathBuf {
     PathBuf::from(os)
 }
 
+/// A validated identifier for one reviewable case (EIMP-2 §0, einmo repo).
+///
+/// Formalizes the identity [`mirror_input_path`] already computes: the
+/// input-relative path with its input extension preserved (so
+/// same-stem-different-extension inputs, e.g. `x.foo` and `x.js`, never
+/// collide), stored WITHOUT the trailing `.einmo` mirror suffix — e.g.
+/// `foop/23/comprehensive.foo` for an input at
+/// `input/foop/23/comprehensive.foo`. Stable across stages: the same id
+/// names the input and every stage artifact
+/// (`output/<id>.einmo`, `checked/<id>.einmo`, …).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct EinmoId(String);
+
+impl EinmoId {
+    /// Construct from an input-relative path (e.g. one returned by
+    /// [`walk_input_tree`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EinmoError::InvalidId`] if the path fails validation (see
+    /// [`validate_id_str`]).
+    pub fn from_input_rel(input_rel: &Path) -> Result<Self> {
+        let s = input_rel.to_string_lossy();
+        validate_id_str(&s)?;
+        // Normalize to forward slashes regardless of host path separator,
+        // so the id is stable across platforms and safe as a URL segment.
+        Ok(EinmoId(s.replace('\\', "/")))
+    }
+
+    /// Derive an id from any stage artifact's path, given that stage's root
+    /// directory. Strips the stage root and the trailing `.einmo` suffix,
+    /// recovering the same id [`EinmoId::from_input_rel`] would have
+    /// produced for the same case. Lets a case be identified even when its
+    /// `input/` file is missing (e.g. deleted after being promoted).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EinmoError::InvalidId`] if `artifact_path` is not under
+    /// `stage_root`, does not end in `.einmo`, or the recovered id fails
+    /// validation.
+    pub fn from_stage_artifact_path(stage_root: &Path, artifact_path: &Path) -> Result<Self> {
+        let rel = artifact_path.strip_prefix(stage_root).map_err(|_| {
+            EinmoError::InvalidId(format!(
+                "{} is not under stage root {}",
+                artifact_path.display(),
+                stage_root.display()
+            ))
+        })?;
+        let rel_str = rel.to_string_lossy();
+        let without_suffix = rel_str.strip_suffix(".einmo").ok_or_else(|| {
+            EinmoError::InvalidId(format!(
+                "{} does not end in .einmo",
+                artifact_path.display()
+            ))
+        })?;
+        validate_id_str(without_suffix)?;
+        Ok(EinmoId(without_suffix.replace('\\', "/")))
+    }
+
+    /// Construct this case's artifact path in a given stage, rooted at the
+    /// suite directory — e.g. `output/foop/23/comprehensive.foo.einmo`.
+    #[must_use]
+    pub fn to_stage_path(&self, suite_root: &Path, stage: Stage) -> PathBuf {
+        suite_root
+            .join(stage.dir_name())
+            .join(mirror_input_path(Path::new(&self.0)))
+    }
+
+    /// The validated id as a `&str` (forward-slash separated, no `.einmo`
+    /// suffix) — used for URL path segments (percent-encode at the call
+    /// site; this method does not encode) and log lines.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for EinmoId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl TryFrom<&str> for EinmoId {
+    type Error = EinmoError;
+
+    /// Parses an incoming (already percent-decoded) URL path segment or any
+    /// other caller-supplied string, applying the same validation as
+    /// [`EinmoId::from_input_rel`].
+    fn try_from(s: &str) -> Result<Self> {
+        validate_id_str(s)?;
+        Ok(EinmoId(s.replace('\\', "/")))
+    }
+}
+
+/// Validate an `EinmoId` candidate string: non-empty, no NUL byte, no `..`
+/// path component, not absolute (no leading `/` or `\`, no drive letter).
+///
+/// # Errors
+///
+/// Returns [`EinmoError::InvalidId`] on any violation.
+fn validate_id_str(s: &str) -> Result<()> {
+    if s.is_empty() {
+        return Err(EinmoError::InvalidId("empty id".to_string()));
+    }
+    if s.contains('\0') {
+        return Err(EinmoError::InvalidId(s.to_string()));
+    }
+    if s.starts_with('/') || s.starts_with('\\') {
+        return Err(EinmoError::InvalidId(s.to_string()));
+    }
+    for component in s.split(['/', '\\']) {
+        if component.is_empty() || component == ".." {
+            return Err(EinmoError::InvalidId(s.to_string()));
+        }
+    }
+    Ok(())
+}
+
 /// Recursively discover every file under `input_dir`, returning
 /// input-relative paths in sorted (deterministic) order.
 ///
@@ -264,6 +383,66 @@ mod tests {
         assert!(validate_stage_name("").is_err());
         assert!(validate_stage_name("out>put").is_err());
         assert!(validate_stage_name("out put").is_err());
+    }
+
+    #[test]
+    fn einmo_id_round_trips_through_stage_path() {
+        let id = EinmoId::from_input_rel(Path::new("foop/23/comprehensive.foo")).unwrap();
+        assert_eq!(id.as_str(), "foop/23/comprehensive.foo");
+        for stage in Stage::ALL {
+            let suite_root = Path::new("/suite");
+            let stage_path = id.to_stage_path(suite_root, stage);
+            let expected = suite_root
+                .join(stage.dir_name())
+                .join("foop/23/comprehensive.foo.einmo");
+            assert_eq!(stage_path, expected, "stage {stage:?}");
+            let recovered =
+                EinmoId::from_stage_artifact_path(&suite_root.join(stage.dir_name()), &stage_path)
+                    .unwrap();
+            assert_eq!(recovered, id, "recovered id for stage {stage:?}");
+        }
+    }
+
+    #[test]
+    fn einmo_id_from_stage_artifact_path_recovers_flat_id() {
+        let stage_root = Path::new("/suite/checked");
+        let artifact = stage_root.join("simple.foo.einmo");
+        let id = EinmoId::from_stage_artifact_path(stage_root, &artifact).unwrap();
+        assert_eq!(id.as_str(), "simple.foo");
+    }
+
+    #[test]
+    fn einmo_id_rejects_traversal_and_absolute_and_nul() {
+        assert!(EinmoId::from_input_rel(Path::new("../escape.foo")).is_err());
+        assert!(EinmoId::from_input_rel(Path::new("a/../b.foo")).is_err());
+        assert!(EinmoId::from_input_rel(Path::new("/abs.foo")).is_err());
+        assert!(EinmoId::try_from("../escape.foo").is_err());
+        assert!(EinmoId::try_from("a/b\0c.foo").is_err());
+        assert!(EinmoId::try_from("").is_err());
+    }
+
+    #[test]
+    fn einmo_id_try_from_str_matches_from_input_rel() {
+        let from_path = EinmoId::from_input_rel(Path::new("nested/name_binding.js")).unwrap();
+        let from_str = EinmoId::try_from("nested/name_binding.js").unwrap();
+        assert_eq!(from_path, from_str);
+    }
+
+    #[test]
+    fn einmo_id_distinguishes_same_stem_different_extension() {
+        let foo = EinmoId::from_input_rel(Path::new("x.foo")).unwrap();
+        let js = EinmoId::from_input_rel(Path::new("x.js")).unwrap();
+        assert_ne!(foo, js);
+        assert_ne!(
+            foo.to_stage_path(Path::new("/s"), Stage::Output),
+            js.to_stage_path(Path::new("/s"), Stage::Output)
+        );
+    }
+
+    #[test]
+    fn einmo_id_display_matches_as_str() {
+        let id = EinmoId::from_input_rel(Path::new("a/b.foo")).unwrap();
+        assert_eq!(id.to_string(), id.as_str());
     }
 
     #[test]

@@ -43,6 +43,11 @@ pub enum EinmoError {
     #[error("invalid stage name {0:?}: must match [A-Za-z0-9_-]+")]
     InvalidStageName(String),
 
+    /// A case identifier ([`crate::stage::EinmoId`]) failed validation or
+    /// could not be derived from the given path.
+    #[error("invalid einmo id {0:?}")]
+    InvalidId(String),
+
     /// A requested transition is not one of the legal stage transitions.
     #[error("illegal transition: {from} to {to}")]
     IllegalTransition {
