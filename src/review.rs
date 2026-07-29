@@ -522,6 +522,21 @@ impl EinmoReview {
                 }
             }
         }
+
+        // Every id this plan touched — executed or skipped — is no longer
+        // "pending": an executed decision has been applied, and a skipped
+        // one (source drifted since planning) needs a fresh decision, not a
+        // stale one lingering in the next plan() preview.
+        {
+            let mut decisions = self.decisions.write().expect("decisions lock poisoned");
+            for executed in &report.executed {
+                decisions.undecide(&executed.id);
+            }
+            for skipped in &report.skipped {
+                decisions.undecide(skipped);
+            }
+        }
+
         Ok(report)
     }
 }
@@ -721,6 +736,58 @@ mod tests {
 
     fn seeded_suite_with_same_content() -> tempfile::TempDir {
         seeded_suite()
+    }
+
+    #[test]
+    fn execute_clears_pending_decisions_it_applied() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+        let plan = review.plan();
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: None,
+        };
+        let report = review.execute(&plan, &keys).unwrap();
+        assert_eq!(report.executed.len(), 1);
+
+        // the applied decision must no longer show up as pending
+        let next_plan = review.plan();
+        assert!(
+            next_plan.actions.is_empty(),
+            "an executed decision must not linger in the next plan"
+        );
+        let items = review.items().unwrap();
+        let item = items.iter().find(|i| i.id == id).unwrap();
+        assert_eq!(item.decision, None);
+    }
+
+    #[test]
+    fn execute_clears_pending_decisions_it_skipped() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+        let plan = review.plan();
+        // Source drifts between planning and execution: the output artifact
+        // this plan targeted is gone by the time execute actually runs.
+        std::fs::remove_file(tmp.path().join("output/a.foo.einmo")).unwrap();
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: None,
+        };
+        let report = review.execute(&plan, &keys).unwrap();
+        assert_eq!(report.skipped, vec![id.clone()]);
+        assert!(report.executed.is_empty());
+
+        let next_plan = review.plan();
+        assert!(
+            next_plan.actions.is_empty(),
+            "a skipped decision must not linger in the next plan either"
+        );
     }
 
     /// `execute` must derive the stage key ONCE per `(from, to)` pair in a

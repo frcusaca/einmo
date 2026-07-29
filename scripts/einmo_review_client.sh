@@ -218,8 +218,30 @@ nnoremap <silent> \\D :call EinmoReviewToggleDiffAll()<CR>"
     default_retract_stage="$(echo "$detail_json" | jq -r \
         '([.stages[] | select(.[1] != null) | .[0]] | map(select(. == "checked" or . == "verified")) | .[-1]) // empty')"
 
-    read -r -p "   Enter=next · f=flag · k=kick · q=quit: " ans </dev/tty || ans=""
+    read -r -p "   Enter=next · c=checked · v=verified · f=flag · k=kick · q=quit: " ans </dev/tty || ans=""
     case "${ans,,}" in
+        c*)
+            put_body='{"kind":"promote","to":"checked"}'
+            resp="$(api PUT "/einmo/$SESSION/cases/$id/decision" "$put_body")"
+            put_error="$(echo "${resp:-}" | jq -r '.error // empty' 2>/dev/null || true)"
+            if [[ -n "$put_error" ]]; then
+                echo "   decision failed: $put_error"
+            else
+                echo "   decided: promote $base to checked (applied at end of pass)"
+            fi
+            idx=$(( idx + 1 ))
+            ;;
+        v*)
+            put_body='{"kind":"promote","to":"verified"}'
+            resp="$(api PUT "/einmo/$SESSION/cases/$id/decision" "$put_body")"
+            put_error="$(echo "${resp:-}" | jq -r '.error // empty' 2>/dev/null || true)"
+            if [[ -n "$put_error" ]]; then
+                echo "   decision failed: $put_error"
+            else
+                echo "   decided: promote $base to verified (applied at end of pass)"
+            fi
+            idx=$(( idx + 1 ))
+            ;;
         f*)
             if [[ -z "$default_flag_stage" ]]; then
                 echo "   nothing to flag: no stage currently holds this case"
@@ -254,5 +276,47 @@ nnoremap <silent> \\D :call EinmoReviewToggleDiffAll()<CR>"
         *) idx=$(( idx + 1 )) ;;
     esac
 done
+
+# End-of-pass execute: apply every PUT-recorded decision accumulated above
+# (promotions and any skips) in one gated call. Flag/retract already
+# executed immediately when decided, so this only ever has promotions left
+# to apply (EIMP-2.md §3, §5).
+plan_json="$(api GET "/einmo/$SESSION/plan")"
+plan_count="$(echo "$plan_json" | jq '.actions | length')"
+
+if (( plan_count == 0 )); then
+    echo "einmo_review_client: nothing pending to execute."
+else
+    echo "── pending plan (${plan_count} action(s)) ──"
+    echo "$plan_json" | jq -r '.actions[] | "  " + .kind + " " + .id + (if .to then " -> " + .to else "" end)'
+
+    needs_verified="$(echo "$plan_json" | jq '[.actions[] | select(.kind == "promote" and .to == "verified")] | length > 0')"
+    passphrase=""
+    if [[ "$needs_verified" == "true" ]]; then
+        read -r -s -p "   checked -> verified passphrase (plaintext over the socket — see EIMP-2.md Open Questions): " passphrase </dev/tty || passphrase=""
+        echo
+    fi
+
+    read -r -p "   type PROMOTE to apply the plan above, anything else to abort: " confirm </dev/tty || confirm=""
+    if [[ "$confirm" == "PROMOTE" ]]; then
+        if [[ -n "$passphrase" ]]; then
+            exec_body="$(jq -n --arg passphrase "$passphrase" '{confirm: "PROMOTE", passphrase: $passphrase}')"
+        else
+            exec_body='{"confirm":"PROMOTE"}'
+        fi
+        passphrase=""
+        resp="$(api POST "/einmo/$SESSION/execute" "$exec_body")"
+        exec_error="$(echo "${resp:-}" | jq -r '.error // empty' 2>/dev/null || true)"
+        if [[ -n "$exec_error" ]]; then
+            echo "   execute failed: $exec_error"
+        else
+            executed_count="$(echo "$resp" | jq '.executed | length')"
+            skipped_count="$(echo "$resp" | jq '.skipped | length')"
+            echo "   executed: $executed_count, skipped (drifted): $skipped_count"
+        fi
+    else
+        echo "   aborted: plan left pending, nothing executed."
+    fi
+fi
 
 echo "einmo_review_client: done."

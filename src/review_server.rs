@@ -17,7 +17,7 @@ use axum::Router;
 use axum::extract::{Json, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use serde::{Deserialize, Serialize};
 
 use crate::review::{Decision, EinmoReview};
@@ -224,6 +224,232 @@ fn parse_stage(s: &str) -> Result<Stage, ApiError> {
     Stage::parse(s).map_err(|_| ApiError::BadRequest(format!("invalid stage {s:?}")))
 }
 
+/// A promote/retract destination or source restricted to the two stages a
+/// human decision can name (`checked`/`verified`) — deliberately narrower
+/// than [`Stage`] (which also has `output`/`flagged`, neither a legal
+/// promote/retract target), so an invalid value is a `400` at the `Json`
+/// extractor, before any handler code runs (EIMP-2 §3a).
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DecidableStage {
+    /// The `checked` stage.
+    Checked,
+    /// The `verified` stage.
+    Verified,
+}
+
+impl From<DecidableStage> for Stage {
+    fn from(s: DecidableStage) -> Self {
+        match s {
+            DecidableStage::Checked => Stage::Checked,
+            DecidableStage::Verified => Stage::Verified,
+        }
+    }
+}
+
+/// `PUT /einmo/<session>/cases/<id>/decision` request body — one of
+/// [`Decision`]'s four variants, tagged by `"kind"` (EIMP-2 §3).
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum DecisionRequest {
+    /// Record a pending promotion to `to`.
+    Promote {
+        /// The destination stage.
+        to: DecidableStage,
+    },
+    /// Record a pending retraction from `from`.
+    Retract {
+        /// The stage to retract from.
+        from: DecidableStage,
+    },
+    /// Record a pending flag at `stage` with `reason`. Normally the
+    /// convenience `POST … /flag/<stage>` endpoint is used instead — this
+    /// variant exists so `PUT … /decision` can express all four [`Decision`]
+    /// kinds, matching EIMP-2 §3's table.
+    Flag {
+        /// The stage to flag from.
+        stage: DecidableStage,
+        /// The advisory reason.
+        reason: String,
+    },
+    /// Record "looked, deliberately chose not to rule".
+    Skip,
+}
+
+impl From<DecisionRequest> for Decision {
+    fn from(req: DecisionRequest) -> Self {
+        match req {
+            DecisionRequest::Promote { to } => Decision::Promote { to: to.into() },
+            DecisionRequest::Retract { from } => Decision::Retract { from: from.into() },
+            DecisionRequest::Flag { stage, reason } => Decision::Flag {
+                stage: stage.into(),
+                reason,
+            },
+            DecisionRequest::Skip => Decision::Skip,
+        }
+    }
+}
+
+/// Record (or replace — replace-not-stack) `id`'s pending decision.
+async fn put_decision(
+    State(state): State<Arc<AppState>>,
+    Path((session, id)): Path<(SessionId, EinmoId)>,
+    Json(req): Json<DecisionRequest>,
+) -> Result<StatusCode, ApiError> {
+    let review = state.get(session)?;
+    review.decide(id, req.into());
+    Ok(StatusCode::OK)
+}
+
+/// Clear `id`'s pending decision back to "untouched" (a no-op, still `200`,
+/// if it was already undecided).
+async fn delete_decision(
+    State(state): State<Arc<AppState>>,
+    Path((session, id)): Path<(SessionId, EinmoId)>,
+) -> Result<StatusCode, ApiError> {
+    let review = state.get(session)?;
+    review.undecide(&id);
+    Ok(StatusCode::OK)
+}
+
+/// One planned action, as returned by `GET /einmo/<session>/plan`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum PlannedActionResponse {
+    /// A pending promotion.
+    Promote {
+        /// The case.
+        id: String,
+        /// The destination stage.
+        to: String,
+    },
+    /// A pending retraction.
+    Retract {
+        /// The case.
+        id: String,
+        /// The stage retracted from.
+        from: String,
+    },
+    /// A pending flag.
+    Flag {
+        /// The case.
+        id: String,
+        /// The stage flagged from.
+        stage: String,
+        /// The advisory reason.
+        reason: String,
+    },
+}
+
+impl From<crate::review::PlannedAction> for PlannedActionResponse {
+    fn from(action: crate::review::PlannedAction) -> Self {
+        match action {
+            crate::review::PlannedAction::Promote { id, to } => PlannedActionResponse::Promote {
+                id: id.as_str().to_string(),
+                to: to.dir_name().to_string(),
+            },
+            crate::review::PlannedAction::Retract { id, from } => PlannedActionResponse::Retract {
+                id: id.as_str().to_string(),
+                from: from.dir_name().to_string(),
+            },
+            crate::review::PlannedAction::Flag { id, stage, reason } => {
+                PlannedActionResponse::Flag {
+                    id: id.as_str().to_string(),
+                    stage: stage.dir_name().to_string(),
+                    reason,
+                }
+            }
+        }
+    }
+}
+
+/// `GET /einmo/<session>/plan` response body — a preview of what
+/// `POST … /execute` would do right now; also the end-of-pass summary the
+/// client renders (EIMP-2 §5).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PlanResponse {
+    /// The actions a call to execute would apply, in order.
+    pub actions: Vec<PlannedActionResponse>,
+}
+
+async fn get_plan(
+    State(state): State<Arc<AppState>>,
+    Path(session): Path<SessionId>,
+) -> Result<Json<PlanResponse>, ApiError> {
+    let review = state.get(session)?;
+    let plan = review.plan();
+    Ok(Json(PlanResponse {
+        actions: plan.actions.into_iter().map(Into::into).collect(),
+    }))
+}
+
+/// `POST /einmo/<session>/execute` request body. The passphrase, if
+/// present, is used only long enough to build the `SignerSet` passed into
+/// [`EinmoReview::execute`] — never stored on `AppState` or logged
+/// (EIMP-2 §4).
+#[derive(Debug, Deserialize)]
+pub struct ExecuteRequest {
+    /// Must be the literal string `"PROMOTE"` for any pending promotion to
+    /// apply — a typo-resistant confirmation gate, not a security boundary.
+    pub confirm: String,
+    /// The `checked → verified` signing passphrase, if any pending decision
+    /// promotes to `verified`. `output`/`checked → checked` promotions
+    /// always use the computer/empty-passphrase key.
+    #[serde(default)]
+    pub passphrase: Option<String>,
+}
+
+/// One executed (or skipped) action, as returned by `POST … /execute`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExecuteResponse {
+    /// `(case id, what happened)` pairs for actions that completed.
+    pub executed: Vec<(String, String)>,
+    /// Case ids skipped because their source drifted since planning.
+    pub skipped: Vec<String>,
+}
+
+async fn post_execute(
+    State(state): State<Arc<AppState>>,
+    Path(session): Path<SessionId>,
+    Json(req): Json<ExecuteRequest>,
+) -> Result<Json<ExecuteResponse>, ApiError> {
+    let review = state.get(session)?;
+    let plan = review.plan();
+    let has_promotion = plan
+        .actions
+        .iter()
+        .any(|a| matches!(a, crate::review::PlannedAction::Promote { .. }));
+    if has_promotion && req.confirm != "PROMOTE" {
+        return Err(ApiError::BadRequest(
+            "execute needs confirm: \"PROMOTE\" when any pending decision promotes".to_string(),
+        ));
+    }
+
+    // The passphrase lives in this request's Json<ExecuteRequest> only —
+    // built into a SignerSet right here, handed to execute() for the
+    // duration of this one call, and dropped when this function returns.
+    // Never stored on AppState, never logged (EIMP-2 §4).
+    let keys = crate::review::SignerSet {
+        to_checked: crate::config::KeySource::from_passphrase(""),
+        to_verified: req
+            .passphrase
+            .map(crate::config::KeySource::from_passphrase),
+    };
+    let report = review.execute(&plan, &keys).map_err(ApiError::from)?;
+    Ok(Json(ExecuteResponse {
+        executed: report
+            .executed
+            .into_iter()
+            .map(|e| (e.id.as_str().to_string(), e.detail))
+            .collect(),
+        skipped: report
+            .skipped
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect(),
+    }))
+}
+
 /// `POST /einmo/<session>/cases/<id>/flag/<stage>` request body.
 #[derive(Debug, Deserialize)]
 pub struct FlagRequest {
@@ -270,6 +496,12 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/einmo/:session/cases/:id/retract/:stage",
             post(retract_case),
         )
+        .route(
+            "/einmo/:session/cases/:id/decision",
+            put(put_decision).delete(delete_decision),
+        )
+        .route("/einmo/:session/plan", get(get_plan))
+        .route("/einmo/:session/execute", post(post_execute))
         .with_state(state)
 }
 
@@ -614,6 +846,234 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn put_decision_then_plan_reflects_it() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "promote", "to": "checked"}))
+                    .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let req = Request::get(format!("/einmo/{session}/plan"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let plan: PlanResponse = body_json(resp).await;
+        assert_eq!(plan.actions.len(), 1);
+        assert!(matches!(
+            &plan.actions[0],
+            PlannedActionResponse::Promote { id, to } if id == "a.foo" && to == "checked"
+        ));
+
+        // the case's own decision is visible too
+        let req = Request::get(format!("/einmo/{session}/cases/a.foo"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let detail: CaseSummary = body_json(resp).await;
+        assert_eq!(detail.decision.as_deref(), Some("promote to checked"));
+    }
+
+    #[tokio::test]
+    async fn put_decision_replaces_not_stacks() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        for to in ["checked", "verified"] {
+            let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({"kind": "promote", "to": to})).unwrap(),
+                ))
+                .unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        }
+
+        let req = Request::get(format!("/einmo/{session}/plan"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let plan: PlanResponse = body_json(resp).await;
+        assert_eq!(plan.actions.len(), 1, "replace-not-stack: still one action");
+    }
+
+    #[tokio::test]
+    async fn put_decision_400s_on_invalid_kind() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "not-a-kind"})).unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        // axum's Json<T> extractor rejects a deserialize failure with its
+        // own default (422 Unprocessable Entity), before ApiError/handler
+        // code ever runs — unlike Path<EinmoId>, whose custom Deserialize
+        // error axum's Path rejection maps to 400 (malformed_id_400s test).
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn delete_decision_clears_it() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "skip"})).unwrap(),
+            ))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+
+        let req = Request::delete(format!("/einmo/{session}/cases/a.foo/decision"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let req = Request::get(format!("/einmo/{session}/cases/a.foo"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let detail: CaseSummary = body_json(resp).await;
+        assert_eq!(detail.decision, None);
+    }
+
+    #[tokio::test]
+    async fn execute_without_confirm_refuses_a_pending_promotion() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "promote", "to": "checked"}))
+                    .unwrap(),
+            ))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+
+        // a syntactically valid body, but the wrong (or absent) confirm
+        // token — this exercises put_execute's own gate, not axum's
+        // required-field extractor rejection (a missing "confirm" key
+        // entirely is itself a 422 at the Json<ExecuteRequest> extractor,
+        // covered implicitly since confirm has no #[serde(default)]).
+        let req = Request::post(format!("/einmo/{session}/execute"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"confirm": ""})).unwrap(),
+            ))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        assert!(!tmp.path().join("checked/a.foo.einmo").exists());
+    }
+
+    #[tokio::test]
+    async fn execute_with_confirm_promotes_to_checked() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "promote", "to": "checked"}))
+                    .unwrap(),
+            ))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+
+        let req = Request::post(format!("/einmo/{session}/execute"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"confirm": "PROMOTE"})).unwrap(),
+            ))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let report: ExecuteResponse = body_json(resp).await;
+        assert_eq!(report.executed.len(), 1);
+
+        assert!(tmp.path().join("checked/a.foo.einmo").exists());
+
+        // the executed decision is no longer pending
+        let req = Request::get(format!("/einmo/{session}/plan"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let plan: PlanResponse = body_json(resp).await;
+        assert!(plan.actions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_promote_to_verified_needs_a_passphrase() {
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "promote", "to": "verified"}))
+                    .unwrap(),
+            ))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+
+        // no passphrase: refused, nothing written
+        let req = Request::post(format!("/einmo/{session}/execute"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"confirm": "PROMOTE"})).unwrap(),
+            ))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert!(!tmp.path().join("verified/a.foo.einmo").exists());
+
+        // with a passphrase: succeeds
+        let req = Request::post(format!("/einmo/{session}/execute"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(
+                    &serde_json::json!({"confirm": "PROMOTE", "passphrase": "s3cr3t"}),
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(tmp.path().join("verified/a.foo.einmo").exists());
     }
 
     #[tokio::test]

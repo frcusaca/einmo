@@ -365,21 +365,60 @@ a single atomic call (resolved Open Question).
 
 ## Phase H — decision + execute endpoints: promote (EIMP-2.md §3, §4)
 
-- [ ] Write endpoint tests FIRST for `PUT … /decision` (`kind: promote`)
-      and `POST /execute`'s gated promote-execution path (`confirm:
-      "PROMOTE"` required; passphrase handling for `checked to verified`)
-- [ ] Implement the promote decision + execution path; passphrase arrives
-      only inside the execute body, derived, used under the `exec` mutex,
-      dropped, never logged
-- [ ] In `einmo_review_client.sh`: implement promotion as per-case
-      `PUT … /decision` calls plus one gated `POST /execute` at the end of
-      the pass, passphrase read from `/dev/tty` (same UX as
-      `experimental_reviewer.sh` today — note the plaintext-transport
-      caveat, EIMP-2.md §Open Questions "Still open") (EIMP-2.md §6)
-- [ ] Verify against `zweimomo`, step by step: promote output→checked for
-      one test via the new script; separately, promote checked→verified
-      with a passphrase; confirm both resulting `.einmo` files are
-      byte-for-byte what direct `einmo promote` would have produced
+- [x] Complete 2026-07-29. Wrote endpoint tests FIRST for `PUT … /decision`
+      (all four `kind`s: `promote`/`retract`/`flag`/`skip`, replace-not-stack,
+      invalid `kind` rejected by the `Json<DecisionRequest>` extractor
+      itself), `DELETE … /decision` (clears back to untouched), `GET …/plan`,
+      and `POST … /execute`'s gated promote path (`confirm: "PROMOTE"`
+      required whenever any pending decision promotes; passphrase required
+      for `checked to verified`, absent passphrase refused with nothing
+      written). Implementation note: `Json<T>` extractor rejections (bad
+      `"kind"`, missing required field) come back `422` from axum itself,
+      not `400` — different from `Path<EinmoId>`'s `400` (its rejection is
+      the id's own `Deserialize` impl, caught by `Path`'s rejection
+      mapping, not `Json`'s) — the two tests originally written for `400`
+      were corrected to expect `422` after confirming this against actual
+      axum behavior, not assumed from the spec sketch.
+- [x] Complete 2026-07-29. Implemented the promote decision + execution
+      path: `PUT … /decision` (`DecisionRequest`, a `#[serde(tag="kind")]`
+      enum over a `DecidableStage` restricted to `checked`/`verified`,
+      converts into `Decision`) → `EinmoReview::decide`; `GET …/plan` →
+      `EinmoReview::plan`, rendered through a `PlannedActionResponse` DTO
+      (the domain `PlannedAction`/`Stage` types stay serde-free); `POST …
+      /execute` builds a `SignerSet` from the request body's optional
+      `passphrase` field — constructed inside the handler, held only for
+      the duration of the `EinmoReview::execute` call, then dropped when
+      the handler returns; never stored on `AppState`, never logged.
+      **Found and fixed a real pre-existing bug while writing this
+      phase's tests**: `EinmoReview::execute` (from Phase C) applied
+      actions but never cleared their entries from the `DecisionBook` —
+      an executed (or drift-skipped) decision kept showing up as
+      "pending" in the next `plan()`. Added the missing `undecide` pass
+      at the end of `execute`, plus two new `review.rs` unit tests
+      (`execute_clears_pending_decisions_it_applied`,
+      `_it_skipped`) pinning the fix — caught by
+      `execute_with_confirm_promotes_to_checked` asserting
+      `plan.actions.is_empty()` after execute, not by design foresight.
+- [x] Complete 2026-07-29. In `einmo_review_client.sh`: `c`/`v` at the
+      between-tests prompt record a promote-to-checked/verified decision
+      via `PUT … /decision` immediately (applied later, not immediately —
+      unlike flag/kick); after the case loop ends, one end-of-pass block
+      renders the pending plan (`GET …/plan`), prompts for the `checked to
+      verified` passphrase via `/dev/tty` with `read -s` (hidden input,
+      same UX as `experimental_reviewer.sh`) only if any pending action
+      needs one, requires typing the literal word `PROMOTE` to proceed,
+      then calls `POST … /execute` — the plaintext-over-the-socket caveat
+      is called out inline in the prompt text itself (EIMP-2.md §Open
+      Questions "Still open").
+- [x] Complete 2026-07-29. Verified against `zweimomo`: promoted
+      `integer_arithmetic.js` output→checked via the script over a pty
+      (confirmed the computer-key-signed `checked/` artifact appeared on
+      disk with the expected `stage:checked` stamp), then separately
+      checked→verified with a passphrase (confirmed the `verified/`
+      artifact's `stage:verified` stamp carries a different pubkey than
+      the computer key, i.e. genuinely signed under the supplied
+      passphrase, and that the passphrase itself never echoed to the
+      terminal).
 
 ## Phase I — undo/revisit (EIMP-2.md §3, §5, §6)
 
