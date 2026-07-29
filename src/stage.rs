@@ -200,6 +200,29 @@ impl TryFrom<&str> for EinmoId {
     }
 }
 
+impl serde::Serialize for EinmoId {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for EinmoId {
+    /// Routes through [`EinmoId::try_from`] so a request path segment or a
+    /// JSON body field that names a case is validated identically to any
+    /// other `EinmoId` construction path — an invalid id is a
+    /// deserialization error (axum's `Path<EinmoId>`/`Json<_>` extractors
+    /// turn this into a `400` before handler code runs, EIMP-2 §3a).
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        EinmoId::try_from(s.as_str()).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Validate an `EinmoId` candidate string: non-empty, no NUL byte, no `..`
 /// path component, not absolute (no leading `/` or `\`, no drive letter).
 ///

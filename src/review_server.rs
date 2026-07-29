@@ -1,0 +1,558 @@
+//! `einmo-review-server` — the axum HTTP app for `EinmoReview` (EIMP-2 §3,
+//! §3a, `docs/eimp/`). One process, one suite, one session (created once at
+//! startup against itself — `POST /einmo/sessions`), session-scoped routes
+//! shaped for `EIMP-1`'s eventual multi-session support (§2) even though
+//! only one session exists in this EIMP.
+//!
+//! Typed extractors throughout: `Path<EinmoId>`/`Path<SessionId>` reject a
+//! malformed segment before handler code runs (a `400`, via
+//! `serde::Deserialize`); `Json<Decision>` rejects an invalid `"kind"` tag
+//! the same way. A single [`ApiError`] maps every failure to its HTTP
+//! status in one place (EIMP-2 §3a).
+
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+
+use axum::Router;
+use axum::extract::{Json, Path, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use serde::{Deserialize, Serialize};
+
+use crate::review::{Decision, EinmoReview};
+use crate::stage::{EinmoId, Stage};
+
+/// A session identifier — opaque from the client's perspective, minted by
+/// [`AppState::create_session`]. `Display`s as a short hex string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+pub struct SessionId(u64);
+
+impl std::fmt::Display for SessionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:016x}", self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        u64::from_str_radix(&s, 16)
+            .map(SessionId)
+            .map_err(|_| serde::de::Error::custom(format!("invalid session id {s:?}")))
+    }
+}
+
+/// Every failure this server's handlers can produce, mapped to one HTTP
+/// status each (EIMP-2 §3a) — the single place that mapping happens.
+#[derive(Debug, thiserror::Error)]
+pub enum ApiError {
+    /// The path names a session id no [`AppState`] session matches.
+    #[error("no such session: {0}")]
+    UnknownSession(SessionId),
+    /// The path names a case id `EinmoReview::items` doesn't know about.
+    #[error("no such case: {0}")]
+    UnknownCase(String),
+    /// A request body or path segment failed to parse/validate.
+    #[error("bad request: {0}")]
+    BadRequest(String),
+    /// An underlying einmo operation failed (verification, I/O, config).
+    #[error(transparent)]
+    Einmo(#[from] crate::error::EinmoError),
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let status = match &self {
+            ApiError::UnknownSession(_) | ApiError::UnknownCase(_) => StatusCode::NOT_FOUND,
+            ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            ApiError::Einmo(crate::error::EinmoError::InvalidId(_)) => StatusCode::BAD_REQUEST,
+            ApiError::Einmo(crate::error::EinmoError::NoKey(_)) => StatusCode::BAD_REQUEST,
+            ApiError::Einmo(crate::error::EinmoError::Verification(_)) => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
+            ApiError::Einmo(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let body = serde_json::json!({ "error": self.to_string() });
+        (status, Json(body)).into_response()
+    }
+}
+
+/// Shared server state: every open session, keyed by [`SessionId`].
+#[derive(Default)]
+pub struct AppState {
+    sessions: RwLock<HashMap<SessionId, Arc<EinmoReview>>>,
+    next_id: std::sync::atomic::AtomicU64,
+}
+
+impl AppState {
+    /// Open a new session over `suite` and register it. Returns the id the
+    /// client will address it by.
+    pub fn create_session(&self, suite: impl Into<std::path::PathBuf>) -> SessionId {
+        let id = SessionId(
+            self.next_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        );
+        let review = Arc::new(EinmoReview::open(suite));
+        self.sessions
+            .write()
+            .expect("sessions lock poisoned")
+            .insert(id, review);
+        id
+    }
+
+    fn get(&self, id: SessionId) -> Result<Arc<EinmoReview>, ApiError> {
+        self.sessions
+            .read()
+            .expect("sessions lock poisoned")
+            .get(&id)
+            .cloned()
+            .ok_or(ApiError::UnknownSession(id))
+    }
+}
+
+/// `POST /einmo/sessions` request body.
+#[derive(Debug, Deserialize)]
+pub struct CreateSessionRequest {
+    /// The suite's work directory.
+    pub suite: std::path::PathBuf,
+}
+
+/// `POST /einmo/sessions` response body.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateSessionResponse {
+    /// The new session's id.
+    pub session: String,
+}
+
+async fn create_session(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateSessionRequest>,
+) -> impl IntoResponse {
+    let id = state.create_session(req.suite);
+    Json(CreateSessionResponse {
+        session: id.to_string(),
+    })
+}
+
+/// One worklist row, as returned by `GET /einmo/<session>/cases`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CaseSummary {
+    /// The case identifier.
+    pub id: String,
+    /// `differing` per [`crate::review::ReviewItem`].
+    pub differing: bool,
+    /// `(stage name, status if present)` pairs.
+    pub stages: Vec<(String, Option<String>)>,
+    /// The reviewer's current decision, if any, rendered as a short tag.
+    pub decision: Option<String>,
+}
+
+impl From<crate::review::ReviewItem> for CaseSummary {
+    fn from(item: crate::review::ReviewItem) -> Self {
+        CaseSummary {
+            id: item.id.as_str().to_string(),
+            differing: item.differing,
+            stages: item
+                .stages
+                .into_iter()
+                .map(|(s, st)| (s.dir_name().to_string(), st))
+                .collect(),
+            decision: item.decision.as_ref().map(decision_tag),
+        }
+    }
+}
+
+fn decision_tag(d: &Decision) -> String {
+    match d {
+        Decision::Promote { to } => format!("promote to {to}"),
+        Decision::Retract { from } => format!("retract from {from}"),
+        Decision::Flag { stage, reason } => format!("flag {stage}: {reason}"),
+        Decision::Skip => "skip".to_string(),
+    }
+}
+
+async fn list_cases(
+    State(state): State<Arc<AppState>>,
+    Path(session): Path<SessionId>,
+) -> Result<Json<Vec<CaseSummary>>, ApiError> {
+    let review = state.get(session)?;
+    let items = review.items().map_err(ApiError::from)?;
+    Ok(Json(items.into_iter().map(CaseSummary::from).collect()))
+}
+
+async fn case_detail(
+    State(state): State<Arc<AppState>>,
+    Path((session, id)): Path<(SessionId, EinmoId)>,
+) -> Result<Json<CaseSummary>, ApiError> {
+    let review = state.get(session)?;
+    let items = review.items().map_err(ApiError::from)?;
+    items
+        .into_iter()
+        .find(|i| i.id == id)
+        .map(CaseSummary::from)
+        .map(Json)
+        .ok_or_else(|| ApiError::UnknownCase(id.as_str().to_string()))
+}
+
+/// `GET /einmo/<session>/cases/<id>/body/<stage>` response body.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BodyResponse {
+    /// `(section name, section body)` pairs, STAMPS excluded.
+    pub sections: Vec<(String, String)>,
+}
+
+async fn case_body(
+    State(state): State<Arc<AppState>>,
+    Path((session, id, stage)): Path<(SessionId, EinmoId, String)>,
+) -> Result<Json<BodyResponse>, ApiError> {
+    let review = state.get(session)?;
+    let stage = parse_stage(&stage)?;
+    let body = review.body(&id, stage).map_err(ApiError::from)?;
+    Ok(Json(BodyResponse {
+        sections: body.sections,
+    }))
+}
+
+fn parse_stage(s: &str) -> Result<Stage, ApiError> {
+    Stage::parse(s).map_err(|_| ApiError::BadRequest(format!("invalid stage {s:?}")))
+}
+
+/// Build the router. `state` is shared across every route via axum's
+/// `State` extractor.
+pub fn router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/einmo/sessions", post(create_session))
+        .route("/einmo/:session/cases", get(list_cases))
+        .route("/einmo/:session/cases/:id", get(case_detail))
+        .route("/einmo/:session/cases/:id/body/:stage", get(case_body))
+        .with_state(state)
+}
+
+/// Serve `app` over a unix-domain socket at `socket_path` until `shutdown`
+/// resolves (EIMP-2 §7).
+///
+/// **Socket lifecycle**: refuses to start if a stale socket file already
+/// exists at `socket_path` and cannot be connected to (a genuinely dead
+/// socket from a crashed prior run is removed and rebound; a socket a live
+/// process is listening on is left alone — starting would just fail to
+/// bind anyway). The socket file is removed on the way out, success or
+/// error, so a clean shutdown leaves the directory as it found it.
+///
+/// # Errors
+///
+/// Returns an error if the socket cannot be bound (including the
+/// stale-socket-still-live case above).
+pub async fn serve_uds(
+    app: Router,
+    socket_path: &std::path::Path,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    use tokio::net::UnixListener;
+
+    if socket_path.exists() {
+        // A live socket refuses a fresh bind on its own (AddrInUse); only a
+        // genuinely stale one (no listener left) needs manual removal.
+        match tokio::net::UnixStream::connect(socket_path).await {
+            Ok(_) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AddrInUse,
+                    format!("a server is already listening at {}", socket_path.display()),
+                ));
+            }
+            Err(_) => std::fs::remove_file(socket_path)?,
+        }
+    }
+    let listener = UnixListener::bind(socket_path)?;
+
+    let result = run_accept_loop(listener, app, shutdown).await;
+    let _ = std::fs::remove_file(socket_path); // best-effort cleanup either way
+    result
+}
+
+async fn run_accept_loop(
+    listener: tokio::net::UnixListener,
+    app: Router,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    use hyper_util::rt::TokioIo;
+    use hyper_util::service::TowerToHyperService;
+
+    tokio::pin!(shutdown);
+    loop {
+        let accepted = tokio::select! {
+            accepted = listener.accept() => accepted,
+            () = &mut shutdown => return Ok(()),
+        };
+        let (stream, _addr) = match accepted {
+            Ok(pair) => pair,
+            Err(_) => continue, // a single failed accept is not fatal
+        };
+        let io = TokioIo::new(stream);
+        let service = TowerToHyperService::new(app.clone());
+        tokio::spawn(async move {
+            let _ = hyper::server::conn::http1::Builder::new()
+                .serve_connection(io, service)
+                .await;
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    fn write_input(dir: &std::path::Path, rel: &str, content: &str) {
+        let path = dir.join("input").join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+
+    struct Echo;
+    impl crate::einmo_suite::Evaluator for Echo {
+        fn evaluate(&self, source: &str) -> std::result::Result<Vec<String>, String> {
+            Ok(vec![source.trim().to_string()])
+        }
+    }
+
+    fn seeded_suite() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        write_input(tmp.path(), "a.foo", "{1+1;}");
+        let config =
+            crate::config::TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        suite.evaluate_all(&Echo).unwrap();
+        tmp
+    }
+
+    async fn body_json<T: serde::de::DeserializeOwned>(response: Response) -> T {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn create_session_then_list_cases() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let app = router(state.clone());
+
+        let req = Request::post("/einmo/sessions")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({ "suite": tmp.path() })).unwrap(),
+            ))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let created: CreateSessionResponse = body_json(resp).await;
+
+        let req = Request::get(format!("/einmo/{}/cases", created.session))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cases: Vec<CaseSummary> = body_json(resp).await;
+        assert_eq!(cases.len(), 1);
+        assert_eq!(cases[0].id, "a.foo");
+    }
+
+    #[tokio::test]
+    async fn unknown_session_404s_on_every_route() {
+        let state = Arc::new(AppState::default());
+        let app = router(state);
+
+        for uri in [
+            "/einmo/deadbeefdeadbeef/cases",
+            "/einmo/deadbeefdeadbeef/cases/a.foo",
+            "/einmo/deadbeefdeadbeef/cases/a.foo/body/output",
+        ] {
+            let req = Request::get(uri).body(Body::empty()).unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn case_body_returns_verified_sections() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::get(format!("/einmo/{session}/cases/a.foo/body/output"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: BodyResponse = body_json(resp).await;
+        assert!(body.sections.iter().any(|(name, _)| name == "OUTPUT"));
+    }
+
+    #[tokio::test]
+    async fn unknown_case_404s() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::get(format!("/einmo/{session}/cases/does-not-exist.foo"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// A path traversal attempt in the `<id>` segment must be rejected by
+    /// the `Path<EinmoId>` extractor itself (`EinmoId`'s `Deserialize`
+    /// routes through the same validation as `TryFrom<&str>`) — a `400`,
+    /// before `case_detail`'s body runs at all (EIMP-2 §3a).
+    #[tokio::test]
+    async fn malformed_id_400s_at_the_extractor() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::get(format!("/einmo/{session}/cases/..%2f..%2fetc%2fpasswd"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn invalid_stage_400s() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::get(format!("/einmo/{session}/cases/a.foo/body/not-a-stage"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// End-to-end over a real unix-domain socket: bind, request via
+    /// `hyperlocal`'s client extension, confirm the response, then trigger
+    /// shutdown and confirm both the socket and (in the binary's own
+    /// wiring, not exercised here) session file are gone.
+    #[tokio::test]
+    async fn serve_uds_end_to_end_and_cleans_up_on_shutdown() {
+        use hyperlocal::{UnixClientExt, Uri};
+
+        let tmp = seeded_suite();
+        let socket_dir = tempfile::tempdir().unwrap();
+        let socket_path = socket_dir.path().join("test.sock");
+
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let shutdown = async move {
+            let _ = shutdown_rx.await;
+        };
+        let socket_path_for_serve = socket_path.clone();
+        let serve_handle =
+            tokio::spawn(async move { serve_uds(app, &socket_path_for_serve, shutdown).await });
+
+        // Give the accept loop a moment to bind.
+        for _ in 0..50 {
+            if socket_path.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(socket_path.exists(), "socket was never bound");
+
+        let client: hyper_util::client::legacy::Client<_, axum::body::Body> =
+            hyper_util::client::legacy::Client::unix();
+        let uri: hyper::Uri = Uri::new(&socket_path, &format!("/einmo/{session}/cases")).into();
+        let resp = client.get(uri).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        shutdown_tx.send(()).unwrap();
+        serve_handle.await.unwrap().unwrap();
+        assert!(!socket_path.exists(), "socket must be removed on shutdown");
+    }
+
+    /// A second bind attempt on a socket a live server still holds must be
+    /// refused, not silently steal the path out from under it.
+    #[tokio::test]
+    async fn serve_uds_refuses_a_live_socket() {
+        let tmp = seeded_suite();
+        let socket_dir = tempfile::tempdir().unwrap();
+        let socket_path = socket_dir.path().join("test.sock");
+
+        let state = Arc::new(AppState::default());
+        state.create_session(tmp.path());
+        let app1 = router(state.clone());
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let shutdown = async move {
+            let _ = shutdown_rx.await;
+        };
+        let socket_path_for_serve = socket_path.clone();
+        let serve_handle =
+            tokio::spawn(async move { serve_uds(app1, &socket_path_for_serve, shutdown).await });
+
+        for _ in 0..50 {
+            if socket_path.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let app2 = router(state);
+        let never = std::future::pending();
+        let second = serve_uds(app2, &socket_path, never).await;
+        assert!(second.is_err(), "a live socket must refuse a second bind");
+
+        shutdown_tx.send(()).unwrap();
+        serve_handle.await.unwrap().unwrap();
+    }
+
+    /// A stale socket file (no listener behind it) must be cleaned up and
+    /// rebound, not treated as permanently occupied.
+    #[tokio::test]
+    async fn serve_uds_rebinds_a_stale_socket_file() {
+        let tmp = seeded_suite();
+        let socket_dir = tempfile::tempdir().unwrap();
+        let socket_path = socket_dir.path().join("test.sock");
+        // A plain file at the socket path, with nothing listening on it.
+        std::fs::write(&socket_path, b"").unwrap();
+        assert!(socket_path.exists());
+
+        let state = Arc::new(AppState::default());
+        state.create_session(tmp.path());
+        let app = router(state);
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let shutdown = async move {
+            let _ = shutdown_rx.await;
+        };
+        let socket_path_for_serve = socket_path.clone();
+        let serve_handle =
+            tokio::spawn(async move { serve_uds(app, &socket_path_for_serve, shutdown).await });
+
+        for _ in 0..50 {
+            if socket_path.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(
+            socket_path.exists(),
+            "the stale file must be rebound, not left alone"
+        );
+
+        shutdown_tx.send(()).unwrap();
+        let result = serve_handle.await.unwrap();
+        assert!(result.is_ok(), "rebinding a stale socket must succeed");
+    }
+}

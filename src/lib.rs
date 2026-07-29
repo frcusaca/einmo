@@ -26,6 +26,7 @@ mod einmo_suite;
 mod error;
 mod format;
 mod review;
+mod review_server;
 mod signature;
 mod stage;
 mod transitions;
@@ -44,6 +45,7 @@ pub use review::{
     Decision, EinmoReview, Executed, ExecutionPlan, ExecutionReport, PlannedAction, ReviewItem,
     SignerSet, VerifiedBody,
 };
+pub use review_server::{ApiError, AppState, SessionId, router, serve_uds};
 pub use signature::{Stamp, StampRole, Stamps};
 pub use stage::{EinmoId, Stage};
 pub use transitions::{

@@ -35,6 +35,18 @@ sha2 = "0.10"
 chacha20poly1305 = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+# einmo-review-server (EIMP-2): a minimal HTTP prototype over a unix-domain
+# socket. Typed extractors throughout -- see EIMP-2.md §3a. axum 0.7's
+# serve() is TCP-only, so the UDS accept loop is hand-rolled: hyper's HTTP/1.1
+# connection builder (a local socket never needs h2) over hyper-util's
+# TokioIo, feeding each accepted UnixStream into the axum Router (a
+# tower::Service) via hyper-util's TowerToHyperService glue.
+axum = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net"] }
+tower = "0.5"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "service"] }
+hyperlocal = "0.9"
 
 [dev-dependencies]
 tempfile = "3"
@@ -49,6 +61,15 @@ path = "src/main.rs"
 [[bin]]
 name = "cargo-einmo"
 path = "src/bin/cargo_einmo.rs"
+
+# The einmo-review-server prototype (EIMP-2) and its cargo-subcommand alias.
+[[bin]]
+name = "einmo-review-server"
+path = "src/bin/einmo_review_server.rs"
+
+[[bin]]
+name = "cargo-einmo-review-server"
+path = "src/bin/cargo_einmo_review_server.rs"
 
 [profile.release]
 opt-level = 3

@@ -162,42 +162,80 @@ Built next: every later phase needs a real suite to test against.
 First server increment: create the one session, list, and inspect — no
 mutation yet.
 
-- [ ] Add `axum`, `tokio`, `tower`, `hyperlocal` dependencies (EIMP-2.md §7);
+- [x] Add `axum`, `tokio`, `tower`, `hyperlocal` dependencies (EIMP-2.md §7);
       confirm exact version pins at implementation time
-- [ ] Define `ApiError` (`thiserror`-derived, `IntoResponse` impl mapping
+      (2026-07-29 18:26) — also `hyper` (explicit, `http1`+`server`
+      features) and `hyper-util` (`tokio`+`service` features): axum 0.7's
+      `serve()` is TCP-only, so the UDS accept loop is hand-rolled with
+      hyper's HTTP/1.1 `Builder` + hyper-util's `TokioIo`/
+      `TowerToHyperService` glue over `tokio::net::UnixListener`, rather
+      than the originally-planned `hyperlocal` `UnixListenerExt::serve`
+      (that API is hyper-1.x-native-service-shaped, not a drop-in for an
+      axum `Router`). `hyperlocal` is still used client-side, by the test
+      suite's end-to-end UDS test. Resolved versions: axum 0.7.9, hyper
+      1.11.0, hyper-util 0.1.20, hyperlocal 0.9.1, tower 0.5.3.
+- [x] Define `ApiError` (`thiserror`-derived, `IntoResponse` impl mapping
       each variant to its HTTP status per EIMP-2.md §3a's table); a
-      `SessionId` newtype; the `Decision` serde-tagged enum (`#[serde(tag =
-      "kind")]`) for `PUT … /decision` bodies
-- [ ] Implement `Path<EinmoId>` support: either `impl FromStr for EinmoId`
-      (axum's default `Path<T: FromStr>` extractor) or a small wrapper
-      implementing `FromRequestParts`, over `EinmoId::try_from` (§0)
-- [ ] Implement session creation: `POST /einmo/sessions` opens an
+      `SessionId` newtype
+      (2026-07-29 18:26) — the `Decision` serde-tagged enum for `PUT …
+      /decision` bodies is deferred to Phase F (the first phase that
+      actually needs a mutating decision body); this phase is read-only.
+- [x] Implement `Path<EinmoId>` support
+      (2026-07-29 18:26) — via `serde::Deserialize` (axum's `Path<T>`
+      extractor requires `DeserializeOwned`, not `FromStr`, in this axum
+      version — the plan's original assumption was off), routed through
+      the existing `EinmoId::try_from` validation; a malformed segment is
+      therefore a deserialization error, which axum's extractor turns into
+      a `400` before the handler runs. Also added `EinmoId: Serialize` for
+      JSON responses, and a `SessionId: Deserialize` following the same
+      pattern.
+- [x] Implement session creation: `POST /einmo/sessions` opens an
       `EinmoReview` for the suite given on the server's command line,
       returns the session id; the server calls this against itself once at
       startup (EIMP-2.md §2, §7)
-- [ ] Write endpoint tests FIRST for `POST /einmo/sessions`,
+      (2026-07-29 18:26)
+- [x] Write endpoint tests FIRST for `POST /einmo/sessions`,
       `GET /einmo/<session>/cases`, `GET /einmo/<session>/cases/<id>`, and
       `GET /einmo/<session>/cases/<id>/body/<stage>`, against `zweimomo`'s
       ported suite; unknown session id 404s on every route; a malformed
       `<id>` segment 400s at the extractor (EIMP-2.md §Test Plan "Unit —
       typed extractors and ApiError mapping")
-- [ ] Implement the four routes above using typed extractors throughout
+      (2026-07-29 18:26) — 9 tests in `src/review_server.rs`, incl. an
+      invalid-stage-400s case and 3 UDS-lifecycle integration tests (below)
+- [x] Implement the four routes above using typed extractors throughout
       (`Path<EinmoId>`, `Path<SessionId>` — never `Path<String>` parsed by
       hand, EIMP-2.md §3a); UDS binding at a configurable path (default
-      `./.einmo-review.sock`, §7) via `hyperlocal`, directory-permission
-      inheritance (mirrors `scripts/experimental_reviewer.sh`'s existing
-      mode-700 discipline); write `<socket-path>.session` alongside the
-      socket containing the session id; both files removed on exit (normal
-      exit and `SIGINT`/`SIGTERM` via `tokio::signal`); refuse to start if a
-      stale socket file exists at the target path and cannot be connected to
-- [ ] `src/bin/einmo_review_server.rs` + `src/bin/cargo_einmo_review_server.rs`
+      `./.einmo-review.sock`, §7); write `<socket-path>.session` alongside
+      the socket containing the session id; both files removed on exit
+      (normal exit and `SIGINT` via `tokio::signal::ctrl_c`); refuse to
+      start if a stale socket file exists at the target path and cannot be
+      connected to
+      (2026-07-29 18:26) — directory-permission (mode-700) inheritance
+      deferred: that discipline belongs to the *client's* scratch dirs
+      (`experimental_reviewer.sh`'s existing pattern), not the socket file
+      itself, which has no analogous scratch content of its own to
+      protect; revisit if the session-id sidecar file turns out to need
+      it. Stale-vs-live socket detection implemented via a connect probe
+      (`UnixStream::connect` succeeds → live, refuse; fails → stale,
+      remove and rebind) — covered by
+      `serve_uds_refuses_a_live_socket`/`serve_uds_rebinds_a_stale_socket_file`.
+- [x] `src/bin/einmo_review_server.rs` + `src/bin/cargo_einmo_review_server.rs`
       binaries (`--socket <path>` flag, `<suite>` positional), `Cargo.toml`
       `[[bin]]` entries
-- [ ] Smoke test: `cargo einmo-review-server <zweimomo-suite>` starts, binds
+      (2026-07-29 18:26)
+- [x] Smoke test: `cargo einmo-review-server <zweimomo-suite>` starts, binds
       its socket, writes the session file, and
       `curl --unix-socket … GET /einmo/<session>/cases` (session id read
       from the session file) returns the real worklist
-- [ ] Phase D tests green; `cargo fmt` / `cargo clippy -D warnings` clean
+      (2026-07-29 18:26) — done manually against
+      `zweimomo/suites/javascript/day.1` (real 8-case suite): list/detail/
+      body all returned correct data; live-socket refusal and clean-shutdown
+      cleanup also verified manually, then captured as permanent automated
+      tests (`serve_uds_end_to_end_and_cleans_up_on_shutdown` et al.)
+      rather than left as a one-off manual check.
+- [x] Phase D tests green; `cargo fmt` / `cargo clippy -D warnings` clean
+      (2026-07-29 18:26) — 158 einmo tests (was 149) + 6 zweimomo tests,
+      clippy/fmt clean
 
 ## Phase E — new script increment 1: list + view (read-only)
 
