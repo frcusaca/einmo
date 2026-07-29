@@ -963,6 +963,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_decision_is_a_no_op_when_already_undecided() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        // no PUT first — a.foo starts undecided
+        let req = Request::delete(format!("/einmo/{session}/cases/a.foo/decision"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn put_decision_after_delete_starts_a_fresh_decision() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "promote", "to": "checked"}))
+                    .unwrap(),
+            ))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+
+        let req = Request::delete(format!("/einmo/{session}/cases/a.foo/decision"))
+            .body(Body::empty())
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+
+        // revisit: back in with a different decision
+        let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "skip"})).unwrap(),
+            ))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+
+        let req = Request::get(format!("/einmo/{session}/cases/a.foo"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let detail: CaseSummary = body_json(resp).await;
+        assert_eq!(detail.decision.as_deref(), Some("skip"));
+    }
+
+    #[tokio::test]
     async fn execute_without_confirm_refuses_a_pending_promotion() {
         let tmp = seeded_suite();
         let state = Arc::new(AppState::default());

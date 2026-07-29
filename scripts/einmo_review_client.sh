@@ -153,6 +153,8 @@ while (( idx < ${#ids[@]} )); do
     stages_line="$(echo "$detail_json" | jq -r \
         '.stages | map("\(.[0]):\(.[1] // "—")") | join(" ")')"
     echo "   $stages_line"
+    current_decision="$(echo "$detail_json" | jq -r '.decision // empty')"
+    [[ -n "$current_decision" ]] && echo "   pending decision: $current_decision (u to undo)"
 
     base="$(basename "$id")"
     declare -A pane=()
@@ -218,8 +220,25 @@ nnoremap <silent> \\D :call EinmoReviewToggleDiffAll()<CR>"
     default_retract_stage="$(echo "$detail_json" | jq -r \
         '([.stages[] | select(.[1] != null) | .[0]] | map(select(. == "checked" or . == "verified")) | .[-1]) // empty')"
 
-    read -r -p "   Enter=next · c=checked · v=verified · f=flag · k=kick · q=quit: " ans </dev/tty || ans=""
+    read -r -p "   Enter=next · c=checked · v=verified · f=flag · k=kick · u=undo · q=quit: " ans </dev/tty || ans=""
     case "${ans,,}" in
+        u*)
+            # Revisit: DELETE clears back to "untouched" — GET .../cases/<id>
+            # already told us the current decision above, so there is no
+            # local array to search or splice (EIMP-2.md §5); a bare DELETE
+            # is a no-op if nothing was pending, so this is safe to send
+            # unconditionally.
+            resp="$(api DELETE "/einmo/$SESSION/cases/$id/decision" "")"
+            undo_error="$(echo "${resp:-}" | jq -r '.error // empty' 2>/dev/null || true)"
+            if [[ -n "$undo_error" ]]; then
+                echo "   undo failed: $undo_error"
+            elif [[ -n "$current_decision" ]]; then
+                echo "   undone: $base is untouched again"
+            else
+                echo "   nothing to undo: $base had no pending decision"
+            fi
+            idx=$(( idx + 1 ))
+            ;;
         c*)
             put_body='{"kind":"promote","to":"checked"}'
             resp="$(api PUT "/einmo/$SESSION/cases/$id/decision" "$put_body")"

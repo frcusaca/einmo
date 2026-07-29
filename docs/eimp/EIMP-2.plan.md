@@ -422,21 +422,32 @@ a single atomic call (resolved Open Question).
 
 ## Phase I — undo/revisit (EIMP-2.md §3, §5, §6)
 
-- [ ] Write endpoint tests FIRST for
-      `DELETE /einmo/<session>/cases/<id>/decision` (undecide — no-op on an
-      already-undecided case, clears an existing one) and for re-`PUT`
-      replace semantics
-- [ ] Implement `DELETE … /decision`
-- [ ] In `einmo_review_client.sh`: implement `u` (revisit) as `GET …
-      /cases/<id>` followed by re-`PUT`-or-`DELETE` — there is no local
-      array surgery to delete here, because unlike
-      `experimental_reviewer.sh`'s `undo_last_decision`/`answer_of`/
-      `drop_from`, this script never had that state to begin with
-      (EIMP-2.md §5, §6)
-- [ ] Verify against `zweimomo`, step by step: decide a test (any kind),
-      revisit it and change the decision, confirm only the new decision
-      applies at execute time; revisit a test and back out to undecided,
-      confirm execute treats it as untouched
+- [x] Complete 2026-07-29. `DELETE … /decision` and its handler were
+      already implemented in Phase H (a natural companion to `PUT`, needed
+      by that phase's own test setup); this phase added the two tests the
+      plan specifically calls for: `delete_decision_is_a_no_op_when_already_undecided`
+      (bare `DELETE` with no prior `PUT`, still `200`) and
+      `put_decision_after_delete_starts_a_fresh_decision` (`PUT` → `DELETE`
+      → `PUT` a *different* kind → the new decision, not a stack of both,
+      is what's visible — replace-not-stack survives a revisit).
+- [x] Complete 2026-07-29. In `einmo_review_client.sh`: the between-tests
+      display now shows `GET … /cases/<id>`'s `decision` field inline
+      (`pending decision: … (u to undo)`) whenever one exists — reusing the
+      `detail_json` already fetched for the stages line, no extra request.
+      `u` sends `DELETE … /decision` unconditionally (safe: a no-op if
+      nothing was pending) — there is no local array surgery to perform,
+      unlike `experimental_reviewer.sh`'s `undo_last_decision`/`answer_of`/
+      `drop_from`, because this script never had that state to begin with
+      (EIMP-2.md §5, §6).
+- [x] Complete 2026-07-29. Verified against `zweimomo` across two script
+      runs sharing one server (decisions live server-side, so this is a
+      valid way to simulate "revisit later in the same session"): run 1
+      decided promote-to-checked on `name_binding.js` and aborted execute
+      (left it pending); run 2 showed `pending decision: promote to
+      checked (u to undo)`, undo cleared it, and the end-of-pass plan
+      immediately reported "nothing pending to execute" — confirming the
+      revisit is genuinely server-side, not something the second script
+      invocation could have faked locally.
 
 ## Phase J — summary rendering + cleanup
 
