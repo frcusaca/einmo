@@ -81,18 +81,19 @@
 - [x] Promoted to their own EIMPs (2026-07-30). Two items previously carried
   here as design TODOs now have specifications of their own, so they are not
   tracked in this list any more:
-  - **Merkle-tree corpus signing** → `EIMP-6` (`docs/eimp/EIMP-6.md`).
-    Includes the deterministic filename ordering the maintainer asked for
-    (§S.1): a total order computed from the mirror-relative paths
-    themselves — component-wise, byte-wise within a component, no locale
-    collation, no Unicode normalization, no case folding — so the tree's
-    shape never depends on filesystem enumeration order. `EIMP-5`'s second
-    STOP gate blocks on this EIMP.
-  - **Structured JSONL logging + retiring the crash crumb** → `EIMP-7`
-    (`docs/eimp/EIMP-7.md`). Per its §S.3, **crash-crumb work is frozen as
+  - **Merkle-tree corpus signing** → `EIMP-5` (`docs/eimp/EIMP-5.md`),
+    merged with the parallel-machinery work since making hashing faster and
+    cheaper to update is the whole point of the restructuring.
+    The filename collation itself moved *into* `EIMP-1` (§S.11a) since the
+    byte-join digest needs it too: a configurable `Collation` defaulting to
+    `PathBytes` (component-wise, byte-wise within a component, no locale,
+    no normalization, no case folding), recorded in `.section.sig` so a
+    verifier never mistakes a configuration difference for tampering.
+  - **Structured JSONL logging + retiring the crash crumb** → `EIMP-6`
+    (`docs/eimp/EIMP-6.md`). Per its §S.3, **crash-crumb work is frozen as
     of 2026-07-30**: no new crumb features, config knobs, or consumers of
     the `"TEST IN PROGRESS"` prefix. The existing mechanism keeps working
-    untouched until `EIMP-7` retires it.
+    untouched until `EIMP-6` retires it.
   Neither has a plan file yet, deliberately — both land after `EIMP-1`, and
   their shape depends on what it produces.
 

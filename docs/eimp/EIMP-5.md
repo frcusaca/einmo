@@ -1,6 +1,6 @@
 ---
 eimp: 5
-title: Parallelized corpus signing — parallel machinery over the Merkle-structured CorpusSigner
+title: Merkle-tree corpus signing — faster to compute, cheaper to update
 author: Claude Code (Opus 5) <noreply@anthropic.com>
 status: Draft
 type: Standards
@@ -9,188 +9,262 @@ supersedes: []
 begun: [ ]
 ---
 
-# EIMP-5: Parallelized corpus signing — parallel machinery over the Merkle-structured CorpusSigner
+# EIMP-5: Merkle-tree corpus signing — faster to compute, cheaper to update
 
 EIMP numbering is little-endian; the full rules live in `eimp.md` at the
 repository root.
 
 ## Abstract
 
-Bring genuine parallel execution to `CorpusSigner` — the section-level
-post-quantum attestation object specified in `EIMP-1` §S.11 and shipped by
-`EIMP-1` as **single-threaded** — without regressing core `einmo`'s lean
-dependency tree (`EIMP-4` §S.1). This EIMP is deliberately the *second half*
-of a two-part split: `EIMP-1` ships correct-but-serial signing, a repo TODO
-carries the structural work (a Merkle-tree corpus shape: sign each file,
-then fold file digests up into a whole-tree digest) that makes parallelism
-a near-drop-in rather than a rewrite, and this EIMP adds the machinery that
-exploits that structure. Splitting it this way means einmo gets a correct,
-publishable, dependency-light `CorpusSigner` for the `0.0.6` release, and
-pays for parallel machinery only when corpus size actually demands it.
+Replace `CorpusSigner`'s section digest (`EIMP-1` §S.11) — a monolithic
+byte-join: concatenate every file's bytes in manifest order, hash the whole
+message — with a **Merkle tree**: digest each file independently into a
+leaf, fold the leaves upward, and sign the root. The restructuring and the
+parallel machinery that exploits it are one EIMP because they are one
+purpose: making corpus signing **faster to compute** (independent per-file
+work with an associative combine parallelizes trivially, where a byte-join
+does not) and **cheaper to update** (a changed file recomputes its own leaf
+and the `O(log n)` nodes above it, where a byte-join re-reads every byte of
+every file). The tree's shape is pinned by the filename collation `EIMP-1`
+§S.11a already specifies, which this EIMP inherits unchanged.
+
+`EIMP-1` ships the byte-join, single-threaded, first — it is correct, it is
+sufficient at current corpus sizes, and it is the baseline this EIMP's
+benefit is measured against.
 
 ## Motivation
 
-`EIMP-1` §S.11 originally specified `CorpusSigner`'s read pass as a
-bounded worker pool (`ReadStrategy::ParallelBuffer`, the default) with a
-sequential `ReadStrategy::Stream` alternative as a cross-check oracle. The
-worker-pool implementation was resolved (2026-07-30) to use `tokio`'s
-blocking pool — a reasonable choice at the time, because `tokio` was
-already a dependency of the single `einmo` crate via the review server.
+`EIMP-1` §S.11's byte-join is correct and deterministic. Its costs are
+structural, and both grow with corpus size:
 
-`EIMP-4` then split the repository into a lean core `einmo` and a separate
-`einmo-review-server`, moving the entire HTTP stack — `tokio` included —
-out of core. `CorpusSigner` is corpus-integrity code and belongs in core.
-That leaves the original decision self-defeating: implementing it with
-`tokio` would drag an async runtime back into the very crate the split
-exists to keep lean, for a workload (reading files into disjoint buffer
-slices) that has no async character at all.
+**1. It is expensive to compute, and awkward to parallelize.** The only way
+to parallelize a byte-join is the two-pass metadata→offsets→disjoint-slice
+scheme `EIMP-1` §S.11 originally sketched: stat every file to compute its
+offset in one large buffer, allocate the buffer, then have workers
+`read_exact` into disjoint sub-slices. It works, but the two passes can
+disagree — a file that changes size between the stat and the read is a
+correctness hazard the code must actively defend against — and it couples
+read parallelism to one fixed buffer layout. A Merkle fold has no shared
+buffer, no offsets, and no such race: each worker digests one file into one
+leaf, and the combine is associative, so workers can finish in any order.
 
-Rather than relitigate the machinery under time pressure while `EIMP-1` is
-mid-flight, the work is split:
+**2. Every re-sign is a full re-read.** Changing a single file invalidates
+the entire section digest, so re-signing reads every byte of every file
+again. On a large corpus this makes re-signing the kind of multi-minute
+operation people stop running — and an integrity mechanism that is not run
+provides no integrity. With a tree, a changed file recomputes its leaf and
+its ancestors; every untouched subtree's digest is reused.
 
-- **`EIMP-1` ships single-threaded.** `CorpusSigner::digest` reads the
-  section in manifest order and feeds the hasher. Correct, deterministic,
-  zero new dependencies, and — critically — it establishes the digest that
-  any parallel implementation must reproduce bit-for-bit.
-- **`EIMP-6` carries the structural design** (`docs/eimp/EIMP-6.md`):
-  restructure corpus signing around a Merkle tree — sign/digest each file
-  independently, then fold those digests into a tree digest. This is the
-  part that makes parallelism *cheap*: independent per-file work with a
-  cheap associative combine, rather than one monolithic byte-join that
-  needs careful disjoint-slice choreography to parallelize at all.
-- **This EIMP adds the machinery**, over whatever structure that design
-  settles on.
+**A third benefit, not a cost of the byte-join but a capability it cannot
+offer:** a tree mismatch is *walkable*. Descend into whichever child's
+digest disagrees and arrive at the specific file. A monolithic hash can only
+report "something under this section changed." For a mechanism whose job is
+telling a human what went wrong, that is a difference in kind, not degree.
 
-**The ordering matters.** Parallelizing the *current* byte-join design
-means the two-pass metadata/offset scheme of `EIMP-1` §S.11 — workable, but
-it couples read parallelism to a fixed buffer layout and makes
-short/long-read races a correctness hazard the code must actively defend
-against. Parallelizing a *Merkle* design means mapping an independent
-digest over each file and folding — no shared buffer, no offset
-choreography, no read-race hazard, and incremental re-signing (only the
-changed file's leaf and its ancestors need recomputing) comes almost free.
-Doing the structural work first is what makes the machinery small.
+**Why this is one EIMP and not two.** An earlier draft split the
+restructuring (`EIMP-6`) from the parallel machinery (`EIMP-5`). Merged on
+2026-07-30: the restructuring's *purpose* is the speed and the cheap
+updates, so separating them would leave a first EIMP that changes the digest
+format and delivers no measurable benefit, followed by a second that
+delivers all of it. They are one change.
 
 ## Specification
 
-**This EIMP is a Draft placeholder with deliberately unfrozen internals.**
-Specifying the parallel machinery in detail now would be specifying it
-against a corpus-signing structure that the TODO is expected to change.
-What *is* fixed here are the constraints any implementation must satisfy:
+### S.1 Ordering — inherited, not redefined
 
-### S.1 Constraints on any implementation
+Leaf order is `EIMP-1` §S.11a's configurable `Collation`, unchanged —
+defaulting to `PathBytes` (mirror-relative paths, compared component-wise,
+byte-wise within each component, no locale, no normalization, no case
+folding, ties a hard error), with the chosen collation's identifier recorded
+in `.section.sig` so a verifier never mistakes a configuration difference
+for tampering.
 
-1. **Bit-identical digests.** The parallel path must produce byte-identical
-   digests to `EIMP-1`'s single-threaded path for every input, and a test
-   must assert this on shared fixtures. The serial implementation is the
-   oracle; parallelism is an optimization over a result that is already
-   defined.
-2. **Core stays lean, or the machinery is optional.** Core `einmo`'s
-   dependency-tree assertion (`EIMP-4` §Test Plan) must still pass. That
-   admits several shapes — a small `std::thread` pool with no new
-   dependency; a feature-gated `rayon`/`tokio` path off by default; or the
-   parallel implementation living outside core. Which one is chosen is an
-   Open Question below, to be answered against the structure the TODO
-   produces, not guessed now.
-3. **Determinism is structural, not incidental.** Whatever the machinery,
-   the digest must not depend on thread count, scheduling, or completion
-   order. Under a Merkle design this is nearly automatic (the fold order is
-   fixed by the tree shape); under the byte-join design it requires the
-   manifest to pin offsets before any read starts.
-4. **Bounded parallelism.** A pathologically large corpus must not spawn
-   unbounded workers; the worker count is capped and configurable.
-5. **Failure is loud.** A short read, a long read, or a file changing
-   underneath the signer is a hard error that aborts the signature — never
-   a silently truncated or partially-read digest. `EIMP-1` §S.11's
-   concurrency caveat carries forward unchanged.
+This matters more here than it did for the byte-join. A tree's *shape* —
+which leaves are siblings, hence which internal nodes exist — is a function
+of the ordering, and the root is a function of the shape. Because §S.11a
+already fixes ordering as a recorded, signed parameter computed from paths
+alone, tree shape is reproducible across machines and filesystems for free,
+and a suite that configures a non-default collation gets a correspondingly
+different — but well-defined and self-describing — tree.
 
-### S.2 Scope boundary
+### S.2 Tree construction
 
-In scope: the parallel read/digest machinery, its worker-count
-configuration, its determinism and equivalence tests, and any benchmark
-demonstrating it is actually faster than serial on a realistic corpus (an
-optimization that is not measured is not an optimization).
+- **Leaf digest**: `H(leaf_domain || mirror_path_bytes || file_bytes)` —
+  the file's whole signed envelope as it sits on disk (matching `EIMP-1`
+  §S.11's "the whole artifact, not just its body"). Binding the path into
+  the leaf means renaming a file changes the digest even when its bytes are
+  identical, which is correct for a corpus whose paths are meaningful.
+- **Internal node**: `H(node_domain || left_digest || right_digest)`.
+- **Domain separation is mandatory.** Leaf and internal hashes use distinct
+  domain prefixes, so no internal node's digest can be presented as a leaf
+  digest or vice versa — the classic second-preimage attack on naive Merkle
+  constructions.
+- **Odd-node rule** must be specified exactly and pinned by fixture. The two
+  common choices — promote the unpaired node unchanged, or duplicate it and
+  pair it with itself — produce different roots, and duplication has known
+  second-preimage subtleties. An Open Question below, not guessed here.
+- **Empty section** has a specified root (a constant derived from the domain
+  prefix — not a zero digest, not an error), so signing an empty stage is
+  well-defined.
+- **The manifest header still binds in**: stage name and parameter-set id
+  are folded into the root, so a `checked/` tree cannot be replayed as a
+  `verified/` signature.
 
-Out of scope: the Merkle restructuring itself (the repo TODO — likely its
-own EIMP once designed), the SLH-DSA primitive (`EIMP-1` §S.11, unchanged),
-and wiring section signatures into the live promotion flow (`EIMP-1` §S.11
-explicitly defers that too).
+### S.3 Parallel computation
+
+Leaf digests are independent, so they parallelize with no shared mutable
+state and no offset choreography. Constraints:
+
+1. **Determinism is structural.** The digest must not depend on worker
+   count, scheduling, or completion order — the collation fixes leaf order
+   and the tree shape fixes the fold, so parallelism cannot affect the
+   result. Assert it with a test across varying worker counts rather than
+   relying on the argument.
+2. **Core stays lean.** Core `einmo`'s dependency-tree assertion (`EIMP-4`
+   §Test Plan) must still pass — `EIMP-4` split the crate specifically to
+   keep an HTTP stack and an async runtime out of it. That admits a small
+   hand-rolled `std::thread` pool (no new dependency), or a feature-gated
+   `rayon`, but not an unconditional heavyweight runtime. Open Question.
+3. **Bounded parallelism.** A pathologically large corpus must not spawn
+   unbounded workers; the count is capped and configurable.
+4. **Failure is loud.** A short read, a long read, or a file changing
+   underneath the signer aborts the signature — never a silently truncated
+   or partially-read digest.
+
+### S.4 Incremental re-signing
+
+The payoff for "cheaper to update": cache leaf digests keyed by path plus a
+cheap change-indicator, so re-signing recomputes only changed leaves and
+their ancestors.
+
+**The change-indicator is the entire correctness question.** Keying on
+mtime/size is fast and *wrong under adversarial conditions* — a tampered
+file can preserve both. Keying on content hash is correct but requires
+reading the file, which is the cost the cache exists to avoid. The
+resolution must be explicit, and the safe default is that **verification
+never trusts the cache**: `verify` always recomputes leaves from bytes,
+while `sign` may use the cache to skip work on files the local process
+just wrote. An optimization that can be induced to sign stale content is a
+vulnerability, not a speedup.
+
+### S.5 This changes the digest — a format break
+
+Any corpus signed under the byte-join has a root this construction will not
+reproduce. `.section.sig` files are not forward-compatible across this
+change. Two mitigations:
+
+1. **`EIMP-1` §S.11 explicitly writes `.section.sig` only to fixtures and
+   tempdirs**, never a real corpus — deliberately deferred as "a later
+   step." So there should be no real signed sections to migrate when this
+   lands. Verify that assumption rather than assuming it.
+2. **The signature file records its construction** (alongside the
+   parameter-set id), so a verifier reading an old file fails with
+   "unknown/obsolete construction" rather than "signature mismatch." A
+   wrong-algorithm error and a tampered-corpus error must never look alike.
 
 ## Test Plan
 
-- **Equivalence, serial vs parallel**: the same fixtures digested both
-  ways must agree bit-for-bit. This is the load-bearing test — everything
-  else is performance.
-- **Determinism under varying worker counts**: digesting with 1, 2, and N
-  workers yields identical results.
-- **Failure propagation**: a file that shrinks/grows/disappears mid-read
-  aborts the signature with a hard error rather than producing a digest.
-- **Benchmark**: parallel vs serial on a corpus large enough for the
-  difference to be real, recorded in the plan. If parallel is not
-  meaningfully faster, that is a finding worth recording — and possibly
-  grounds for cancelling this EIMP rather than merging machinery that buys
-  nothing.
-- Comprehensive test: sign a realistic corpus in parallel, verify it with
-  the serial path, tamper one file, and confirm verification fails —
-  proving the parallel path produces signatures the serial verifier
-  accepts and that the tamper detection survives the optimization.
+- **Benchmark first, and again after** (see the plan's Phase A): serial
+  byte-join vs. the tree, on a corpus large enough for the difference to be
+  real. Both the *estimate* and the *achieved* number are recorded. An
+  optimization that is not measured is not an optimization, and "the gain
+  does not justify the change" is a legitimate outcome.
+- **Tree shape**: fixtures with 0, 1, 2, 3, 4, and 5 leaves, each pinning an
+  expected root, locking the odd-node rule by test rather than by comment.
+- **Determinism across worker counts**: 1, 2, and N workers yield identical
+  roots.
+- **Ordering independence from discovery order**: the same file set fed in
+  several shuffled orders produces one root. The property the whole EIMP
+  rests on.
+- **Domain separation**: an input attempting to present an internal node's
+  digest as a leaf must not verify.
+- **Digest changes on**: content alteration, addition, removal, and
+  **rename with bytes unchanged** — the last confirming the path is truly
+  bound into the leaf.
+- **Localized tamper reporting**: tamper one file in a many-file section and
+  assert the verifier names *that file*. A headline benefit, tested as a
+  feature rather than assumed to fall out of the structure.
+- **Incremental re-sign equivalence**: re-signing after a change yields the
+  same root as a full from-scratch sign — and, critically, a test that a
+  file altered *behind the cache's back* is still caught by `verify`
+  (§S.4).
+- Comprehensive test: build a realistic multi-directory corpus, sign it,
+  verify it, then in one run alter one file, rename another, add a third,
+  and remove a fourth — asserting the root changes for each, that each is
+  localized to the right path, and that the incremental path agrees with a
+  full re-sign.
 
 ## Rejected Alternatives
 
-### A. Implement parallel signing directly in EIMP-1 (the original plan)
+### A. Keep the byte-join and parallelize it with the two-pass offset scheme
 
-Keep `EIMP-1` §S.11's `ParallelBuffer`-by-default design and implement it
-now. Rejected: it would either drag `tokio` back into core `einmo` —
-undoing `EIMP-4`'s split — or force an immediate machinery decision under
-`EIMP-1`'s schedule, before the Merkle restructuring that would make the
-machinery much simpler. Shipping serial-and-correct first costs einmo
-nothing at current corpus sizes and preserves every option.
+Implement `EIMP-1` §S.11's original sketch: stat for offsets, allocate one
+buffer, parallel `read_exact` into disjoint slices. Rejected as the
+long-term structure, though it remains the fallback if this EIMP is
+declined: it buys compute parallelism only, at the cost of a stat/read race
+the code must actively defend against, and it forecloses both incremental
+re-signing and localized tamper reporting entirely.
 
-### B. Never parallelize; serial signing is enough
+### B. Do nothing — corpus signing is rare, so its cost does not matter
 
-Rejected as premature: corpus signing is explicitly the "rarely run, buy
-the biggest security margin" operation (`EIMP-1` §S.11), so it is *tolerant*
-of being slow — but "rarely" is not "never," and a whole-corpus re-sign on
-a large suite is exactly the kind of multi-minute operation that stops
-being run at all. Keeping this EIMP open (rather than declaring serial
-sufficient) preserves the option; the benchmark in the Test Plan is what
-will actually decide whether it is worth merging.
+`EIMP-1` §S.11 explicitly frames section attestation as the "runs rarely,
+buy the biggest security margin" operation, so it is *tolerant* of being
+slow. Rejected: "rarely" is not "never," and a whole-corpus re-sign that
+takes minutes is one people stop running — an integrity mechanism nobody
+runs provides no integrity. Localized tamper reporting is additionally a
+correctness-of-diagnosis issue that no amount of tolerating slowness
+produces. That said, this alternative stays live: the plan's Phase A
+benchmarks *before* implementing, and a poor measured gain is grounds for
+cancelling rather than merging machinery that buys nothing.
 
-### C. Parallelize the existing byte-join design without restructuring
+### C. Split the restructuring and the parallelism into two EIMPs
 
-Implement `EIMP-1` §S.11's two-pass metadata/offset scheme as specified,
-just with `std` threads instead of `tokio`. Rejected as the *default* path,
-though it remains viable if the Merkle work stalls: it couples read
-parallelism to a fixed buffer layout, requires active defense against
-short/long-read races, and buys none of the incremental-re-signing benefit
-that falls out of a tree structure for free.
+The original 2026-07-30 drafting had `EIMP-6` (Merkle restructuring) and
+`EIMP-5` (parallel machinery) as separate documents with a STOP-gate
+dependency. Rejected and merged the same day: the restructuring exists *for*
+the speed and the cheap updates, so splitting them would produce a first
+EIMP that breaks the digest format while delivering no measurable benefit,
+followed by a second delivering all of it. One purpose, one EIMP.
+
+### D. Normalize filenames (NFC) before ordering
+
+Rejected in `EIMP-1` §S.11a, and inherited here: normalization maps distinct
+byte sequences to one key, so on a filesystem where both forms coexist as
+separate files, two different files would compare equal — the tie §S.11a
+makes a hard error. Cross-platform filename portability is real, but belongs
+at the corpus-authoring layer, not inside a signature's ordering rule.
 
 ## Open Questions
 
-- Which machinery: a small hand-rolled `std::thread` pool (no new
-  dependency, keeps core lean unconditionally), a feature-gated `rayon`,
-  or a feature-gated `tokio` blocking pool. **Deliberately unanswered** —
-  it should be decided against the corpus-signing structure the repo TODO
-  produces, since a Merkle fold and a byte-join want quite different
-  machinery.
-- Whether the Merkle restructuring is large enough to deserve its own EIMP
-  (likely) or lands as part of this one. Depends on how far the TODO's
-  design pass reaches.
-- Whether parallel signing is worth merging at all — the Test Plan's
-  benchmark decides, and "no" is an acceptable outcome that would see this
-  EIMP cancelled rather than forced through (`EIMP-0`'s cancellation
-  procedure).
+- **Odd-node rule**: promote the unpaired node, or duplicate it? Different
+  roots; duplication has known second-preimage subtleties. Decide at
+  begun-time and pin with a fixture.
+- **Parallel machinery**: hand-rolled `std::thread` pool (no new dependency,
+  keeps core lean unconditionally) or a feature-gated `rayon`. An
+  unconditional async runtime is ruled out by `EIMP-4`'s dependency-tree
+  assertion.
+- **Leaf granularity**: whole file per leaf, or ranged chunks for very large
+  files? Chunking parallelizes within one huge file and localizes tamper
+  reports below file level, at the cost of a more complex tree. Whole-file
+  is the simpler default; revisit if a corpus with very large individual
+  artifacts appears.
+- **Are per-file leaves independently signed, or only the root?** Signing
+  each leaf would let one file's attestation be verified in isolation, but
+  multiplies SLH-DSA signing cost by file count — and the conservative
+  parameter set is deliberately slow. Root-only is the expected answer;
+  record the reasoning.
+- **Incremental cache change-indicator** (§S.4) — the correctness question
+  of this EIMP.
+- **Confirm no real `.section.sig` files exist** when this lands, so §S.5's
+  format break costs nothing.
 
 ## References
 
-- `EIMP-1` (`docs/eimp/EIMP-1.md`) §S.11 — the `CorpusSigner` design this
-  EIMP optimizes; ships single-threaded, with its parallel read strategies
-  deferred here.
-- `EIMP-4` (`docs/eimp/EIMP-4.md`) §S.1 — the crate split that removed
-  `tokio` from core `einmo` and thereby invalidated the original
-  worker-pool choice; §Test Plan's dependency-tree assertion is the
-  constraint this EIMP must not break.
-- `EIMP-6` (`docs/eimp/EIMP-6.md`) — the Merkle-tree corpus-signing
-  restructuring this EIMP builds on; its deterministic filename ordering
-  (§S.1) is what makes the tree shape — and therefore the parallel fold —
-  reproducible. This EIMP's second STOP gate blocks on it.
+- `EIMP-1` (`docs/eimp/EIMP-1.md`) §S.11 — the byte-join construction this
+  EIMP replaces and benchmarks against; §S.11a — the filename collation this
+  EIMP inherits unchanged and which pins the tree's shape.
+- `EIMP-4` (`docs/eimp/EIMP-4.md`) §Test Plan — the core dependency-tree
+  assertion that constrains §S.3's machinery choice.
+- `EIMP-2` (`docs/eimp/EIMP-2.md`) §0 — `EinmoId` and the mirror-relative
+  path form the collation operates on.
+- Code: `src/stage.rs` (`walk_input_tree`, `mirror_input_path`, `EinmoId`).

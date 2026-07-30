@@ -449,8 +449,8 @@ touches `einmo_suite.rs`'s test-run path — a different layer from the
 review session — and would invalidate existing tests
 (`crash_crumb_survives_stack_overflow` in `zweimomo`, einmo's
 `catastrophe_crumb_*` tests). It is carried as a follow-up logging EIMP in
-`EIMP-7` (`docs/eimp/EIMP-7.md`), alongside the broader logging design.
-Per `EIMP-7` §S.3, crash-crumb work is frozen as of 2026-07-30: the
+`EIMP-6` (`docs/eimp/EIMP-6.md`), alongside the broader logging design.
+Per `EIMP-6` §S.3, crash-crumb work is frozen as of 2026-07-30: the
 mechanism keeps working untouched, but gains no new features or consumers
 while it is scheduled for removal.
 
@@ -668,15 +668,88 @@ work. Verification (CLI `einmo verify`, the server, the review script) calls
 deterministically:
 
 1. A **manifest** header: the stage name, the parameter set id, and the
-   ordered list of included mirror-paths. Order is einmo's existing sorted
-   walk (`walk_input_tree` sorts; deterministic), so the manifest is
-   reproducible.
+   ordered list of included mirror-paths, ordered by the collation
+   specified in §S.11a below.
 2. Then, in manifest order, each file's **bytes byte-joined** onto the
    running message (the signed envelope bytes as they sit on disk — the
    whole artifact, not just its body).
 3. The whole thing is **hashed**, and SPHINCS+ signs that digest. The
    section signature + its manifest live in one file per stage (e.g.
    `checked/.section.sig` — dot-named, so einmo's walkers skip it).
+
+#### S.11a The manifest collation — configurable, with a sensible default (resolved 2026-07-30)
+
+The digest is a concatenation in manifest order, so **the order is part of
+the signature**: two machines that order the same corpus differently compute
+different digests for identical content. Earlier drafts leaned on "einmo's
+existing sorted walk (`walk_input_tree` sorts; deterministic)". That is not
+enough — a walk's sort is an implementation detail of directory traversal,
+free to change under a refactor, a different walk crate, or a
+locale-sensitive comparator, and any such change would silently invalidate
+every previously computed digest.
+
+The collation is therefore an **explicit, configurable parameter of the
+signature**, with one default that suites get without asking:
+
+```rust
+/// How a section's files are ordered before digesting. Part of the signed
+/// parameters -- see "recorded in the signature" below.
+#[non_exhaustive]
+pub enum Collation {
+    /// DEFAULT. Component-wise, byte-wise within a component. No locale,
+    /// no normalization, no case folding. Reproducible on every machine.
+    PathBytes,
+    // Future variants are additive; each gets its own stable identifier.
+}
+```
+
+**`Collation::PathBytes` (the default), normatively:**
+
+1. **Path form**: each file's mirror-relative path (what `EinmoId` denotes,
+   `EIMP-2` §0), as a sequence of path components. Never an absolute path,
+   never `readdir` order.
+2. **Component-wise comparison**: compare paths by comparing components
+   pairwise in order; the first differing component decides. If one path's
+   components are a prefix of the other's, the shorter sorts first. This
+   orders by structure, so a directory boundary can never be confused with
+   a character inside a name (`a/b` vs `a-b/c` sort by their real
+   relationship, not by the byte value of `/` vs `-`).
+3. **Byte-wise within a component**: compare components as raw UTF-8 byte
+   sequences (`[u8]` lexicographic). Never locale collation — that varies
+   by machine, by environment variable, and by libc version.
+4. **No Unicode normalization, no case folding.** Paths compare exactly as
+   their bytes appear on disk. Normalizing would make two *distinct* files
+   on a case-sensitive filesystem compare equal, which an ordering must
+   never do.
+5. **Ties are a hard error** in every collation, not just this one. Two
+   distinct files whose paths compare equal is impossible on a sane
+   filesystem; if observed, abort the signature rather than applying a
+   tiebreak. A silent tiebreak is a way for two different corpora to
+   produce one digest — so a collation that *can* produce ties (a
+   case-folding one, say) is only admissible if it errors on them.
+
+**Configurability's real consequence: the collation must be recorded in the
+signature.** Because the ordering determines the digest, a verifier that
+does not know which collation was used cannot distinguish "signed under a
+different ordering" from "the corpus was tampered with" — it would just see
+a mismatch. So the collation's stable identifier is written into
+`.section.sig` alongside the parameter-set id and is part of the signed
+manifest header. A verifier encountering an unknown identifier fails with
+*that*, never with a generic signature mismatch. **A wrong-configuration
+error and a tampered-corpus error must never look alike.**
+
+Configuration follows einmo's existing precedence for suite settings
+(`einmo.toml`, as `[signing] collation = "path-bytes"`), defaulting to
+`PathBytes` when unset. Changing a suite's collation re-orders its manifest
+and therefore invalidates existing section signatures — the same class of
+event as changing the parameter set, and treated the same way.
+
+**Filesystem enumeration is a source, never an authority**: the walk decides
+*which* files exist, the collation alone decides their order. Any code path
+consuming walk order directly is a bug. Collations are testable without
+reading a single file byte, and `EIMP-5`'s Merkle restructuring inherits
+this mechanism unchanged — the ordering outlives the digest construction
+built on it.
 
 **Reading the section — SINGLE-THREADED for this EIMP (resolved
 2026-07-30).** Earlier drafts of this section specified a two-pass
@@ -707,15 +780,14 @@ for path in manifest.paths() {
 }
 ```
 
-This serial digest is the **oracle**: any future parallel implementation
-must reproduce it bit-for-bit. Parallelizing it is deferred to `EIMP-5`,
-and the structural work that makes parallelism cheap — restructuring the
-corpus digest around a Merkle tree rather than a monolithic byte-join — is
-specified by `EIMP-6` (`docs/eimp/EIMP-6.md`). Doing
-the structure first is deliberate: mapping an independent digest over each
-file and folding the results needs no shared buffer, no offset
-choreography, and no defense against files changing size between two
-passes.
+This serial byte-join digest is the **correctness reference and the
+performance baseline**. `EIMP-5` (`docs/eimp/EIMP-5.md`) restructures the
+digest around a Merkle tree *and* parallelizes it — one EIMP, because
+making hashing faster and cheaper to update is the whole point of the
+restructuring — and measures its benefit against what ships here. Note
+that `EIMP-5` therefore *changes* this digest rather than reproducing it;
+what carries forward unchanged is §S.11a's collation, not the
+construction.
 
 **Concurrency caveat (carried forward).** A file changing underneath the
 signer must be a hard error that aborts the signature, never a silently
@@ -871,16 +943,23 @@ All resolved at begun-time (2026-07-30) — design is frozen:
   §S.6.
 - **`ReviewOpts` mode default**: not a boolean — a runtime-selectable
   `ReviewMode` (`Full` default, plus `Random` and `NewOrBroken`). See §S.2.
-- **Parallel section-read (§S.11)**: superseded. `CorpusSigner` ships
-  **single-threaded** here; the parallel machinery moves to `EIMP-5`, and
-  the Merkle-tree restructuring that makes it cheap is a design TODO. The
-  earlier "use `tokio`" resolution is withdrawn — `EIMP-4`'s crate split
-  removes `tokio` from core `einmo`, which is where `CorpusSigner` lives.
-  See §S.11.
+- **Parallel section-read (§S.11)**: superseded. `CorpusSigner` ships the
+  **existing byte-join construction, single-threaded**, here. Both the
+  Merkle restructuring and the parallel machinery move to `EIMP-5` (merged
+  into one EIMP, since making hashing faster *and* cheaper to update is the
+  point of restructuring). The earlier "use `tokio`" resolution is
+  withdrawn — `EIMP-4`'s crate split removes `tokio` from core `einmo`,
+  which is where `CorpusSigner` lives. See §S.11.
+- **Manifest collation (§S.11a)**: a configurable `Collation`, defaulting
+  to `PathBytes` — component-wise, byte-wise within a component, no locale,
+  no Unicode normalization, no case folding, ties a hard error. Because
+  ordering determines the digest, the chosen collation's identifier is
+  recorded in `.section.sig`; a verifier must never mistake a configuration
+  difference for tampering.
 - **Phase A2 (`CorpusSigner`) scope**: confirmed in-scope for this EIMP
   (crypto core + tests only, per §S.11's existing "not wired into the live
   promotion flow yet" boundary — that boundary is unchanged), now
-  explicitly single-threaded.
+  explicitly byte-join and single-threaded.
 - **Crate boundary**: `EinmoReview` and every frontend ship in
   `einmo-review-server`; core `einmo` keeps the test runner, signing, and
   `CorpusSigner`. See §S.1 and `EIMP-4` §S.1.

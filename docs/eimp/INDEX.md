@@ -20,9 +20,8 @@ ls docs/eimp | rev | sort -V | rev
 | [EIMP-2](EIMP-2.md) | einmo-review-server — a minimal HTTP prototype of the review/sign/promote/flag loop | complete | 2026-07-29 | Claude Code (Sonnet 5) |
 | [EIMP-3](EIMP-3.md) | Output-stage drift fails the run; explicit regenerate; multi-signer output stamps | complete | 2026-07-30 | Claude Code (Sonnet 5) |
 | [EIMP-4](EIMP-4.md) | Split einmo into core + einmo-review-server, publish both to crates.io at 0.0.6 | Draft | 2026-07-30 | Claude Code (Opus 5) |
-| [EIMP-5](EIMP-5.md) | Parallelized corpus signing — parallel machinery over the Merkle-structured CorpusSigner | Draft | 2026-07-30 | Claude Code (Opus 5) |
-| [EIMP-6](EIMP-6.md) | Merkle-tree corpus signing with a deterministic filename ordering | Draft | 2026-07-30 | Claude Code (Opus 5) |
-| [EIMP-7](EIMP-7.md) | Structured JSONL logging, and retiring the crash crumb | Draft | 2026-07-30 | Claude Code (Opus 5) |
+| [EIMP-5](EIMP-5.md) | Merkle-tree corpus signing — faster to compute, cheaper to update | Draft | 2026-07-30 | Claude Code (Opus 5) |
+| [EIMP-6](EIMP-6.md) | Structured JSONL logging, and retiring the crash crumb | Draft | 2026-07-30 | Claude Code (Opus 5) |
 
 ---
 
@@ -37,7 +36,8 @@ The sprint's EIMPs, in execution order:
 1. **`EIMP-1`** (Implementing) — finish the review loop: the remaining
    `EinmoReview` surface, `ReviewMode`, multi-signer promote, flag
    semantics, the journal, the TUI-owned private server, the dhtml
-   frontend, `CorpusSigner` (single-threaded).
+   frontend, and `CorpusSigner` using the **existing** byte-join
+   construction (§S.11) with the new configurable collation (§S.11a).
 2. **maintainer performance-verifies the review loop** — an explicit STOP
    in `EIMP-1.plan.md`, and `EIMP-4`'s first gate.
 3. **`EIMP-4`** (Draft) — split into `einmo` + `einmo-review-server`,
@@ -45,16 +45,13 @@ The sprint's EIMPs, in execution order:
    at the published crate, delete the vendored copy.
 
 Explicitly **outside** the sprint, each with its own specification so
-nothing is dropped — all three land after `EIMP-1`, and none has a plan
-file yet because their shape depends on what `EIMP-1` produces:
+nothing is dropped — both land after `EIMP-1`:
 
-- **`EIMP-6`** — Merkle-tree corpus signing with a deterministic filename
-  ordering. `EIMP-5` blocks on it.
-- **`EIMP-5`** — parallel corpus signing. The serial implementation ships
-  in `EIMP-1` and is sufficient at current corpus sizes; its plan
-  benchmarks *before* implementing, with "not worth merging" a legitimate
-  outcome.
-- **`EIMP-7`** — structured JSONL logging, and retiring the crash crumb.
+- **`EIMP-5`** — Merkle-tree corpus signing: faster to compute, cheaper to
+  update. `EIMP-1` ships the byte-join construction, which is correct and
+  sufficient at current corpus sizes; this EIMP's plan benchmarks *before*
+  implementing, with "not worth merging" a legitimate outcome.
+- **`EIMP-6`** — structured JSONL logging, and retiring the crash crumb.
   Per its §S.3, **crash-crumb work is frozen as of 2026-07-30**: the
   mechanism keeps working untouched but gains no new features or consumers
   while scheduled for removal.
@@ -63,18 +60,21 @@ file yet because their shape depends on what `EIMP-1` produces:
 
 ## Last Updated
 
-**Date**: 2026-07-30 (4)
+**Date**: 2026-07-30 (5)
 **Updated By**: Claude Code (Opus 5)
-**Changes**: Promoted the two remaining design TODOs to full EIMPs, both
-without plan files by design (they land after `EIMP-1` and their shape
-depends on it). `EIMP-6` specifies Merkle-tree corpus signing, including
-the deterministic filename ordering that pins the tree's shape: a total
-order computed from mirror-relative paths alone — component-wise, byte-wise
-within a component, no locale collation, no Unicode normalization, no case
-folding — so filesystem enumeration order can never change a root digest.
-`EIMP-7` specifies structured JSONL logging and the crash crumb's
-retirement, and freezes further crumb work as of today. `EIMP-5`'s STOP
-gate now blocks on `EIMP-6` rather than on a TODO.
+**Changes**: Corpus signing re-scoped. `EIMP-1` keeps the **existing**
+byte-join construction (concatenate in manifest order, hash) — no
+restructuring inside the sprint — but gains §S.11a, a **configurable
+`Collation`** defaulting to `PathBytes` (component-wise, byte-wise within a
+component, no locale, no normalization, no case folding, ties a hard
+error). Because ordering determines the digest, the chosen collation's
+identifier is recorded in `.section.sig`, so a verifier never mistakes a
+configuration difference for tampering. The former `EIMP-5` (parallel
+machinery) and `EIMP-6` (Merkle restructuring) are **merged into one
+`EIMP-5`** — making hashing faster *and* cheaper to update is the whole
+point of the restructuring, so splitting them would have left one EIMP
+breaking the digest format for no measurable benefit. The logging EIMP
+renumbered `EIMP-7` → `EIMP-6`.
 
 **Date**: 2026-07-30 (3)
 **Updated By**: Claude Code (Opus 5)

@@ -11,10 +11,11 @@ and `EIMP-2` then implemented a substantial fraction of it while prototyping
 the review server. Phase 0's drift re-survey (below) has now been performed;
 every item `EIMP-2` already delivered is checked off with attribution, so
 the unchecked boxes below are the *genuinely* remaining work. Two structural
-resolutions also landed: `CorpusSigner` ships single-threaded (parallel
-machinery deferred to `EIMP-5`), and everything review-related will ship in
-the `einmo-review-server` crate (`EIMP-4` §S.1) — Phase B's verbs belong to
-that crate's binary, not core's `cli.rs`.
+resolutions also landed: `CorpusSigner` ships the **existing byte-join**
+construction, single-threaded, with a configurable collation (restructuring
+and parallelism both deferred to `EIMP-5`), and everything review-related
+will ship in the `einmo-review-server` crate (`EIMP-4` §S.1) — Phase B's
+verbs belong to that crate's binary, not core's `cli.rs`.
 
 - [x] STOP — preconditions: all workspace tests pass (`cargo test`,
       `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`). Do
@@ -38,11 +39,17 @@ that crate's binary, not core's `cli.rs`.
       `EIMP-1.md` stating that work has commenced
       (2026-07-30 06:05)
 - [x] Second resolution round (2026-07-30, after `EIMP-4`/`EIMP-5` were
-      drafted): `CorpusSigner` ships **single-threaded** and its parallel
-      machinery moves to `EIMP-5` (the earlier "use `tokio`" answer is
-      withdrawn — `EIMP-4`'s crate split removes `tokio` from core, which
-      is where `CorpusSigner` lives); `EinmoReview` and all frontends ship
-      in the `einmo-review-server` crate; the journal is keyed by `EinmoId`
+      drafted, and revised again after `EIMP-5`/`EIMP-6` were merged):
+      `CorpusSigner` keeps `EIMP-1` §S.11's **existing byte-join**
+      construction, single-threaded — no Merkle restructuring inside this
+      EIMP — with a new §S.11a configurable `Collation` (default
+      `PathBytes`) recorded in `.section.sig`. Restructuring *and* its
+      parallel machinery are `EIMP-5`, merged into one EIMP since making
+      hashing faster and cheaper to update is the point of the
+      restructuring. The earlier "use `tokio`" answer is withdrawn —
+      `EIMP-4`'s crate split removes `tokio` from core, which is where
+      `CorpusSigner` lives. `EinmoReview` and all frontends ship in the
+      `einmo-review-server` crate; the journal is keyed by `EinmoId`
       with verbosity levels and must be *capable* of the crash crumb's
       purpose without retiring the crumb here.
       (2026-07-30 07:40)
@@ -178,15 +185,16 @@ that crate's binary, not core's `cli.rs`.
 - [ ] All Phase A tests green; `cargo fmt` and `cargo clippy -D warnings`
       clean
 
-## Phase A2 — `CorpusSigner` (section PQ attestation), CRYPTO CORE ONLY, SINGLE-THREADED (EIMP-1.md §S.11)
+## Phase A2 — `CorpusSigner` (section PQ attestation), CRYPTO CORE ONLY, BYTE-JOIN + SINGLE-THREADED (EIMP-1.md §S.11, §S.11a)
 
 Self-contained `CorpusSigner` object — NOT mixed into `EinmoReview` (§S.11).
 NO real-corpus writes and NOT wired into the live promotion flow in this
 EIMP (that integration is a later step). Prove the object in isolation;
 `EinmoReview` will merely hold and call it later. **Single-threaded**
 (resolved 2026-07-30): this ships in core `einmo`, which `EIMP-4` keeps free
-of any async runtime; parallel machinery is `EIMP-5`, and the Merkle-tree
-restructuring that makes it cheap is a repo TODO.
+of any async runtime. The digest construction stays `EIMP-1` §S.11's
+byte-join — `EIMP-5` handles both the Merkle restructuring and the
+parallelism, as one change, after this ships.
 
 - [ ] Read §S.11 of `EIMP-1.md`; add `fips205` dep (feature
       `slh_dsa_sha2_256s` — conservative set) to `Cargo.toml`
@@ -195,13 +203,25 @@ restructuring that makes it cheap is a repo TODO.
       SLH-DSA sign→verify round-trip; tamper fails; same-passphrase
       dual-derivation determinism; empty-section manifest — all exercising
       `CorpusSigner` standalone (no `EinmoReview`)
+- [ ] Implement `EIMP-1.md` §S.11a's `Collation` — the configurable
+      ordering, defaulting to `PathBytes`. Tests FIRST, against the
+      variation it exists to eliminate: paths differing only by case; paths
+      differing by Unicode normalization (NFC vs NFD of one grapheme);
+      paths where a separator vs an in-name character would flip a naive
+      string sort (`a/b` vs `a-b`); nested vs flat paths sharing a prefix;
+      and that the ordering is identical for the same file set fed in
+      several shuffled discovery orders. Wire it to `einmo.toml`
+      (`[signing] collation = "path-bytes"`), and record its identifier in
+      `.section.sig` so an unknown collation fails as *that*, never as a
+      generic signature mismatch
 - [ ] Implement `CorpusSigner` skeleton (`new`/`manifest`/`digest`/`sign`/`verify`)
-      + the manifest builder (stage name + param-set id + sorted
-      mirror-path list via the existing deterministic walk)
+      + the manifest builder (stage name + param-set id + collation id +
+      the collation-ordered mirror-path list)
 - [ ] Implement the sequential streaming read: files in manifest order,
       hasher fed incrementally, bounded memory, no whole-section buffer.
-      This digest is the **oracle** `EIMP-5`'s parallel path must reproduce
-      bit-for-bit — write it to be the reference, not a placeholder
+      This digest is the correctness reference and the performance baseline
+      `EIMP-5` is measured against — write it to be the reference, not a
+      placeholder
 - [ ] Extend `Signer` (§S.4) to derive BOTH the Ed25519 stamp key and the
       section SLH-DSA key from one passphrase (Argon2id output expanded to
       the SLH-DSA seed; deterministic keygen)
