@@ -452,6 +452,18 @@ impl Stamps {
             .any(|s| s.pubkey_hex.starts_with(prefix))
     }
 
+    /// `true` if a stamp under `stage_key` (e.g. `"stage:output"`) exists
+    /// with exactly `pubkey_hex` — the multi-signer accumulation check
+    /// (`EIMP-3` §Specification, `EIMP-1` §S.4a): "is at least one of the
+    /// existing stamps mine," as opposed to [`Stamps::stamped_by`]'s prefix
+    /// search over every stamp regardless of role.
+    #[must_use]
+    pub(crate) fn has_stage_stamp_from(&self, stage_key: &str, pubkey_hex: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|s| s.key() == stage_key && s.pubkey_hex == pubkey_hex)
+    }
+
     /// Parse the STAMPS section: one JSON object per non-empty line.
     pub fn parse(section: &str) -> Result<Self> {
         let entries = section

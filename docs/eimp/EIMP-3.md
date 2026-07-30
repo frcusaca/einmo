@@ -97,7 +97,7 @@ existing file is treated as absent — this part is unchanged, `einmo_suite.rs:1
 | Existing file | Content sections match? | Running signer's key already among existing `stage:output` stamps? | Outcome |
 |---|---|---|---|
 | absent (or corrupt) | n/a | n/a | write fresh, sign, done (unchanged from today) |
-| present | no | n/a | **fail** this case (new `Status` — see below); `output/` is left untouched |
+| present | no | n/a | **fail** this case (`FileResult.drifted = true`, `written_and_verified = false` — see below); `output/` is left untouched |
 | present | yes | yes | no-op: restore original bytes untouched, no rewrite (unchanged from today's fast path, generalized past the fixed 3-key list — see below) |
 | present | yes | no | **append** this signer's `stage:output` stamp to the *existing* file in place; every prior stamp (including other signers') is preserved byte-for-byte; only the new STAMPS line is added |
 
@@ -106,6 +106,22 @@ existing file is treated as absent — this part is unchanged, `einmo_suite.rs:1
 count, same names, same bodies, in order. STAMPS is never part of this
 comparison (signature.rs's stamp chain is deliberately excluded from content
 identity, `compare.rs`'s existing `required_sections` convention).
+
+**Crash crumbs are not a baseline (found during implementation, 2026-07-30).**
+`write_crash_crumb` unconditionally overwrites `out_path` with a transient
+placeholder (`status: output-error`, `status_detail` starting `"TEST IN
+PROGRESS"`) at the *start* of every evaluation, before the real evaluator
+runs — so by the time `write_output` compares against `existing`, a crash
+crumb (if present) has *already* clobbered the file on disk once this run.
+Comparing fresh content against a crumb's placeholder OUTPUT (always empty)
+would misreport every single case as `drifted`, since a crumb is scaffolding
+this same run wrote moments ago, not a previously accepted result. Fix:
+`existing` is filtered to `None` whenever its own `status_detail` starts
+with `"TEST IN PROGRESS"` before the decision table runs at all — a crumb is
+treated exactly like "absent," never as something to drift against.
+(Confirms `einmo_suite.rs:1080`'s existing tampered→absent handling extends
+naturally to this case, since a crumb was never a legitimate baseline to
+begin with.)
 
 "Running signer's key already among existing stamps" replaces today's exact
 3-entry key-list equality (`einmo_suite.rs:1223-1241`) with: the existing
@@ -120,27 +136,49 @@ uniqueness constraint, `signature.rs:373-385` — appending a second
 `stage:output` stamp under a different pubkey is a legal wire form today,
 just never produced by any code path yet).
 
-### New `Status` variant: drift
+### New `FileResult` field: `drifted` (not a new `Status` variant)
+
+**Corrected during implementation** (2026-07-30): `format::Status`
+(`Normal`/`InputError`/`OutputError`) is the harness status *recorded in
+the envelope itself* (the `status:` metadata line of a real `.einmo`
+file) — it round-trips through `Status::parse`/`as_str` because real files
+carry it. A drifted case never writes a new envelope at all (the existing
+`output/` file is left untouched), so a `Status::Drifted` variant would be
+a wire-format value that can never actually appear on disk under normal
+operation — the wrong home for this signal.
+
+Suite-run pass/fail is *already* keyed off a different, orthogonal field:
+`TestResults::all_output_written_and_verified()` requires
+`written_and_verified || ignored` for every `FileResult` — `status` itself
+is never consulted for pass/fail (an `InputError`/`OutputError` case can
+still be `written_and_verified: true`; the envelope was written and
+verifies fine, it just records that the evaluator itself rejected the
+input or failed). So making a drifted case "fail the run" only requires
+`written_and_verified: false` for that case — no new `Status` variant
+needed at all.
 
 ```rust
-// status.rs (or wherever `Status` lives today)
-pub enum Status {
-    Normal,
-    InputError,
-    OutputError,
-    /// NEW: freshly evaluated content differs from the signed `output/`
-    /// baseline already on disk. The run did not overwrite anything; the
-    /// existing `output/` file is untouched. Distinct from `OutputError`
-    /// (an evaluator failure) — this is an evaluator *success* whose result
-    /// disagrees with the prior baseline.
-    Drifted,
+// einmo_suite.rs
+pub struct FileResult {
+    pub rel_path: PathBuf,
+    pub status: Status,               // unchanged variants; see below
+    pub written_and_verified: bool,   // false for a drifted case — this IS the failure signal
+    pub ignored: bool,
+    /// NEW: `true` if this case was left untouched because its freshly
+    /// evaluated content differs from the existing signed `output/`
+    /// baseline. Sibling to `ignored` — a second, independent reason a
+    /// case can be `written_and_verified: false` without being a harness
+    /// crash. `status` in this case is the *existing* file's own recorded
+    /// status (nothing new was written, so nothing new was recorded).
+    pub drifted: bool,
+    pub detail: Option<String>,       // explains the drift when `drifted` is true
 }
 ```
 
-A suite run reports `Drifted` cases as failures in its summary and exit
-code, the same way `OutputError`/`InputError` already are today — this
-EIMP does not change how the harness aggregates pass/fail, only adds one
-more case that counts as non-passing.
+A suite run's existing pass/fail aggregation (`all_output_written_and_verified`)
+already treats a drifted case as a failure once `written_and_verified` is
+`false` for it — no change to that method or to exit-code logic is needed;
+this EIMP only needs to make `write_output` populate the field correctly.
 
 ### New CLI verb: explicit regenerate
 
@@ -149,12 +187,12 @@ einmo regenerate-output <suite> [--filter <glob>] [--files <path>...]
 ```
 
 Re-runs evaluation for the matching inputs exactly as a normal suite run
-would, but for any case in the `Drifted` outcome, **replaces** `output/`
+would, but for any case that would come back `drifted` (§Specification's decision table), **replaces** `output/`
 with the freshly evaluated content and a fresh stamp chain (today's
 existing unconditional-overwrite behavior, preserved here under an
 explicit, deliberately-named verb instead of being every run's silent
 default). Cases that would no-op or append-a-stamp behave identically to a
-normal run — this verb only changes what happens to the `Drifted` case.
+normal run — this verb only changes what happens to a drifted case.
 Requires the same `output`-stage signing key a normal run already uses (no
 new key material, no passphrase prompt beyond what `einmo run` already
 needs) — this is a deliberate-intent gate on the *verb choice*, not a
@@ -199,15 +237,17 @@ naturally; forcing one prematurely is not a goal.
     existing stamps preserved, new stamp appended, content sections
     untouched, timestamp of the file changes (a write occurred) but no
     section body changes.
-  - Existing `output/` present, content **differs** → `Status::Drifted`,
-    existing `output/` file byte-for-byte untouched on disk.
+  - Existing `output/` present, content **differs** → `FileResult.drifted =
+    true`, `written_and_verified = false`, existing `output/` file
+    byte-for-byte untouched on disk.
   - Existing `output/` present but tampered/corrupt → treated as absent,
     fresh write (regression test — `einmo_suite.rs:1080`'s `.ok()` already
     does this; pin it explicitly against the new code path).
 - Unit — `Stamps::stamped_by`-style exact-pubkey lookup for `stage:output`
   (new or reused helper), including the two-signers-present case.
 - Integration — `einmo regenerate-output`: a suite with one drifted case;
-  confirm normal run reports it as `Drifted` and leaves `output/` untouched;
+  confirm normal run reports it as `drifted` (and failing) and leaves
+  `output/` untouched;
   confirm `regenerate-output` replaces it, re-verifies, and that a
   subsequent normal run now reports it clean (content matches, same
   signer).
