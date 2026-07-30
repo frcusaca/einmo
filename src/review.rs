@@ -150,6 +150,52 @@ impl VerifiedCache {
     }
 }
 
+/// How [`EinmoReview::items`] selects and orders the worklist (`EIMP-1` §S.2).
+///
+/// Not a boolean: the old `differing_only` idea generalizes into a mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ReviewMode {
+    /// Every item in the worklist, in scan order. The default — matches
+    /// `EIMP-2`'s original unfiltered list behavior, so a script that has
+    /// always shown everything sees no surprise narrowing.
+    #[default]
+    Full,
+    /// The worklist in randomized order (sampling a large suite). Freshly
+    /// shuffled on every [`EinmoReview::items`] call using OS entropy — not
+    /// a fixed seed — since `items()` already rescans the suite from
+    /// scratch each call (no cached worklist exists to keep a stable order
+    /// consistent with); a reviewer who wants "the same random order again"
+    /// should record it via decisions, not rely on order stability.
+    Random,
+    /// Only items with no baseline yet, or a content mismatch between
+    /// stages (`ReviewItem::differing`) — the old `differing_only`
+    /// boolean's actual predicate, generalized into its own mode.
+    NewOrBroken,
+}
+
+/// Options controlling what [`EinmoReview::open_with`] considers "the
+/// worklist" (`EIMP-1` §S.2).
+#[derive(Debug, Clone, Default)]
+pub struct ReviewOpts {
+    /// Selection/ordering mode.
+    pub mode: ReviewMode,
+    /// Restrict to cases whose id contains this substring (same semantics
+    /// as `scan_tests`'s existing filter).
+    pub filter: Option<String>,
+}
+
+/// Fisher-Yates, OS-entropy seeded. `ReviewMode::Random`'s only consumer —
+/// reuses the `rand_core`/`OsRng` primitive `signature.rs` already depends
+/// on rather than adding `rand` as a new dependency (`EIMP-4` §S.1 keeps
+/// core `einmo` dependency-light).
+fn shuffle<T>(items: &mut [T]) {
+    use rand_core::{OsRng, RngCore};
+    for i in (1..items.len()).rev() {
+        let j = (OsRng.next_u32() as usize) % (i + 1);
+        items.swap(i, j);
+    }
+}
+
 /// One row of the worklist: a case and where it currently stands.
 #[derive(Debug, Clone)]
 pub struct ReviewItem {
@@ -238,34 +284,47 @@ pub struct ExecutionReport {
 /// (EIMP-2 §2). Holds no key material — see [`SignerSet`].
 pub struct EinmoReview {
     config: TestConfig,
+    opts: ReviewOpts,
     cache: VerifiedCache,
     decisions: RwLock<DecisionBook>,
     exec: Mutex<()>,
 }
 
 impl EinmoReview {
-    /// Open a review session over `suite`.
+    /// Open a review session over `suite` with the default options
+    /// (`ReviewMode::Full`, no filter — `EIMP-2`'s original unfiltered
+    /// behavior).
     #[must_use]
     pub fn open(suite: impl Into<std::path::PathBuf>) -> Self {
+        Self::open_with(suite, ReviewOpts::default())
+    }
+
+    /// Open a review session over `suite` with explicit [`ReviewOpts`]
+    /// (`EIMP-1` §S.2).
+    #[must_use]
+    pub fn open_with(suite: impl Into<std::path::PathBuf>, opts: ReviewOpts) -> Self {
         let config = TestConfig::new(suite, crate::einmo_suite::ValidationLevel::Output);
         EinmoReview {
             config,
+            opts,
             cache: VerifiedCache::default(),
             decisions: RwLock::new(DecisionBook::default()),
             exec: Mutex::new(()),
         }
     }
 
-    /// The worklist: every case, its per-stage status, and the reviewer's
-    /// current decision (if any).
+    /// The worklist: every case matching `self.opts`, its per-stage status,
+    /// and the reviewer's current decision (if any).
     ///
     /// # Errors
     ///
     /// Returns an error if the suite's directories cannot be walked.
     pub fn items(&self) -> Result<Vec<ReviewItem>> {
-        let rows: Vec<TestRow> = scan_tests(&self.config, None)?;
+        let rows: Vec<TestRow> = scan_tests(&self.config, self.opts.filter.as_deref())?;
         let decisions = self.decisions.read().expect("decisions lock poisoned");
-        rows.into_iter()
+        let mut items: Vec<ReviewItem> = rows
+            .into_iter()
+            .filter(|row| self.opts.mode != ReviewMode::NewOrBroken || row.differing)
             .map(|row| {
                 let id = EinmoId::from_input_rel(&strip_einmo_suffix(&row.rel))?;
                 let decision = decisions.get(&id).cloned();
@@ -276,7 +335,11 @@ impl EinmoReview {
                     decision,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        if self.opts.mode == ReviewMode::Random {
+            shuffle(&mut items);
+        }
+        Ok(items)
     }
 
     /// The verified body of `id` at `stage` (single-flight cached).
@@ -619,6 +682,129 @@ mod tests {
         for item in &items {
             assert!(item.decision.is_none());
         }
+    }
+
+    // EIMP-1 S.2: ReviewOpts/ReviewMode.
+
+    #[test]
+    fn default_review_opts_is_full_mode_no_filter() {
+        let opts = ReviewOpts::default();
+        assert_eq!(opts.mode, ReviewMode::Full);
+        assert_eq!(opts.filter, None);
+    }
+
+    #[test]
+    fn open_matches_open_with_default_opts() {
+        let tmp = seeded_suite();
+        let plain = EinmoReview::open(tmp.path()).items().unwrap();
+        let explicit = EinmoReview::open_with(tmp.path(), ReviewOpts::default())
+            .items()
+            .unwrap();
+        let mut plain_ids: Vec<_> = plain.iter().map(|i| i.id.as_str().to_string()).collect();
+        let mut explicit_ids: Vec<_> = explicit.iter().map(|i| i.id.as_str().to_string()).collect();
+        plain_ids.sort();
+        explicit_ids.sort();
+        assert_eq!(plain_ids, explicit_ids);
+    }
+
+    #[test]
+    fn filter_restricts_items_by_substring() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open_with(
+            tmp.path(),
+            ReviewOpts {
+                mode: ReviewMode::Full,
+                filter: Some("a.foo".to_string()),
+            },
+        );
+        let items = review.items().unwrap();
+        let ids: Vec<_> = items.iter().map(|i| i.id.as_str().to_string()).collect();
+        assert_eq!(ids, vec!["a.foo".to_string()]);
+    }
+
+    #[test]
+    fn new_or_broken_mode_excludes_a_fully_matching_case() {
+        let tmp = seeded_suite();
+        // Fully promote a.foo through checked AND verified with matching
+        // content at every stage -- this case is NOT differing.
+        promote_output_to_checked(tmp.path());
+        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        transitions::promote(
+            &config,
+            Stage::Checked,
+            Stage::Verified,
+            &KeySource::from_passphrase(""),
+            Some("a.foo"),
+            None,
+        )
+        .unwrap();
+        transitions::promote(
+            &config,
+            Stage::Output,
+            Stage::Checked,
+            &KeySource::from_passphrase(""),
+            Some("a.foo"),
+            None,
+        )
+        .unwrap();
+        transitions::promote(
+            &config,
+            Stage::Checked,
+            Stage::Verified,
+            &KeySource::from_passphrase(""),
+            Some("a.foo"),
+            None,
+        )
+        .unwrap();
+
+        // b.foo stays output-only: no checked/verified baseline at all, so
+        // it qualifies as "new" under NewOrBroken.
+        let review = EinmoReview::open_with(
+            tmp.path(),
+            ReviewOpts {
+                mode: ReviewMode::NewOrBroken,
+                filter: None,
+            },
+        );
+        let items = review.items().unwrap();
+        let ids: Vec<_> = items.iter().map(|i| i.id.as_str().to_string()).collect();
+        assert!(
+            !ids.contains(&"a.foo".to_string()),
+            "a fully-matching, fully-promoted case must not appear under NewOrBroken: {ids:?}"
+        );
+        assert!(ids.contains(&"b.foo".to_string()));
+    }
+
+    #[test]
+    fn random_mode_returns_the_same_set_as_full() {
+        let tmp = seeded_suite();
+        let full = EinmoReview::open_with(
+            tmp.path(),
+            ReviewOpts {
+                mode: ReviewMode::Full,
+                filter: None,
+            },
+        )
+        .items()
+        .unwrap();
+        let random = EinmoReview::open_with(
+            tmp.path(),
+            ReviewOpts {
+                mode: ReviewMode::Random,
+                filter: None,
+            },
+        )
+        .items()
+        .unwrap();
+        let mut full_ids: Vec<_> = full.iter().map(|i| i.id.as_str().to_string()).collect();
+        let mut random_ids: Vec<_> = random.iter().map(|i| i.id.as_str().to_string()).collect();
+        assert_eq!(full_ids.len(), random_ids.len());
+        full_ids.sort();
+        random_ids.sort();
+        assert_eq!(
+            full_ids, random_ids,
+            "Random must be a reordering, never a different set"
+        );
     }
 
     #[test]

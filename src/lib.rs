@@ -43,7 +43,7 @@ pub use error::EinmoError;
 pub use format::{EinmoFile, Metadata, Section, Status};
 pub use review::{
     Decision, EinmoReview, Executed, ExecutionPlan, ExecutionReport, PlannedAction, ReviewItem,
-    SignerSet, VerifiedBody,
+    ReviewMode, ReviewOpts, SignerSet, VerifiedBody,
 };
 pub use review_server::{ApiError, AppState, SessionId, router, serve_uds};
 pub use signature::{Stamp, StampRole, Stamps};

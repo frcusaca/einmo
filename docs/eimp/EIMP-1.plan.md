@@ -131,11 +131,25 @@ verbs belong to that crate's binary, not core's `cli.rs`.
       exec mutex and the `undecide` pass after execute. `execute_one` and
       the retract cascade *within execute* remain; `retract_now` covers the
       cascade for the atomic path.
-- [ ] `ReviewOpts` + `ReviewMode` (`Full` default / `Random` /
+- [x] `ReviewOpts` + `ReviewMode` (`Full` default / `Random` /
       `NewOrBroken`) on `open`, with `filter` (`EIMP-1.md` §S.2). Note
       `ReviewItem.differing` already exists, so `NewOrBroken`'s predicate is
       available; `Random` needs a seed decision (record it — a fixed seed is
       reproducible, an entropy seed is a genuinely different sample per run)
+      (2026-07-30 17:38) — added `ReviewOpts`/`ReviewMode` to `review.rs`;
+      `EinmoReview::open` unchanged (defaults to `ReviewOpts::default()` —
+      `Full`, no filter, zero churn for ~20 existing test call sites), new
+      `EinmoReview::open_with(suite, opts)` for the configurable path.
+      `NewOrBroken` filters `items()` on the existing `TestRow.differing`.
+      `Random` seed decision: **OS entropy, not a fixed seed** — `items()`
+      already rescans from scratch every call (no cached worklist to keep a
+      stable order consistent with, per the Phase 0 drift finding), so a
+      fixed seed would buy fake reproducibility over state that isn't
+      stable anyway; a reviewer wanting a repeatable sample should record
+      it via decisions, not order. Implemented as a small Fisher-Yates over
+      `rand_core::OsRng` (already a dependency via `signature.rs`) rather
+      than adding the `rand` crate. 5 new tests; exported from `lib.rs`.
+      194 workspace tests, clippy/fmt clean.
 - [ ] `EinmoReview::diff(id, left, right) -> DiffHunks` + the server
       endpoint that exposes it; today the client renders whole panes with
       no server-computed diff (`similar` is already a dependency)
