@@ -67,16 +67,36 @@ bottom. Work happens directly on `main` (`EIMP-0` §8).
 
 ## Phase B — `einmo regenerate-output` verb (EIMP-3.md §Specification)
 
-- [ ] Write endpoint/CLI tests FIRST: a suite with one drifted case; normal
-      run reports `Drifted` and leaves `output/` untouched; `regenerate-output`
-      replaces it, re-verifies, re-signs; a subsequent normal run then
-      reports it clean
-- [ ] Implement the `einmo regenerate-output <suite> [--filter <glob>]
-      [--files <path>...]` CLI subcommand (`cli.rs`): re-evaluate matching
-      inputs; for `Drifted` cases only, perform today's pre-EIMP-3
-      unconditional-overwrite (fresh content + fresh stamp chain); all other
-      cases behave exactly as a normal run (no-op / append-stamp / fresh-if-absent)
-- [ ] Phase B tests green; `cargo fmt` / `cargo clippy -D warnings` clean
+- [x] Write library-level tests FIRST for the force-replace primitive: a
+      suite with one drifted case; normal `evaluate` reports `drifted` and
+      leaves `output/` untouched; `regenerate_output` replaces it,
+      re-verifies, re-signs; a subsequent normal `evaluate` then reports it
+      clean. Plus a CLI parse smoke test for the new subcommand shape
+      (`cli_parses_subcommands`, matching this file's existing
+      one-assert-per-subcommand convention — CLI tests elsewhere in this
+      file don't exercise `cmd_evaluate`'s shell-out behavior end-to-end
+      either, so `regenerate-output` follows the same precedent rather than
+      introducing a new test shape)
+      (2026-07-30 06:50) — `regenerate_output_replaces_drifted_content_and_a_subsequent_run_is_clean`
+      in `einmo_suite.rs`; parse assertion added to `cli_parses_subcommands`
+      in `cli.rs`.
+- [x] Implement `EinmoSuite::regenerate_output` (library primitive):
+      `evaluate`/`regenerate_output` now share one `evaluate_impl(..., force:
+      bool)`, which threads `force` into `write_output`'s (now 6-arg)
+      signature — `force` only changes the outcome of the `!sections_same`
+      branch (replace instead of drift-fail-and-restore); every other branch
+      (no-op / co-sign / fresh-if-absent) is unchanged and shared by both
+      callers
+      (2026-07-30 06:50)
+- [x] Implement the `einmo regenerate-output <work-dir> --command <cmd>
+      [--filter <substr>]` CLI subcommand (`cli.rs`): reuses `EvaluateArgs`
+      verbatim (same shape as `evaluate`) and a shared `run_evaluate_like`
+      driver parameterized by `force` and the summary verb word, rather than
+      duplicating `cmd_evaluate`'s ~50-line walk/filter/report loop
+      (2026-07-30 06:50)
+- [x] Phase B tests green; `cargo fmt` / `cargo clippy -D warnings` clean
+      (2026-07-30 06:55) — 189 einmo tests (was 188) + 4 zweimomo, clippy/fmt
+      clean.
 
 ## Comprehensive test + completion
 

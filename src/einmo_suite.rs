@@ -761,6 +761,33 @@ impl EinmoSuite {
     /// Returns [`EinmoError::Io`] on read/write failure, or
     /// [`EinmoError::SeparatorCollision`] if a body contains the separator.
     pub fn evaluate(&self, input_rel: &Path, evaluator: &dyn Evaluator) -> Result<FileResult> {
+        self.evaluate_impl(input_rel, evaluator, false)
+    }
+
+    /// Like [`EinmoSuite::evaluate`], but a content mismatch against the
+    /// existing `output/` baseline is deliberately **replaced** instead of
+    /// failing as drift (`EIMP-3` §Specification "New CLI verb: explicit
+    /// regenerate") — the `einmo regenerate-output` verb's library
+    /// primitive. Every other outcome (no-op, co-sign, fresh-if-absent)
+    /// behaves identically to a normal `evaluate` call.
+    ///
+    /// # Errors
+    ///
+    /// As [`EinmoSuite::evaluate`].
+    pub fn regenerate_output(
+        &self,
+        input_rel: &Path,
+        evaluator: &dyn Evaluator,
+    ) -> Result<FileResult> {
+        self.evaluate_impl(input_rel, evaluator, true)
+    }
+
+    fn evaluate_impl(
+        &self,
+        input_rel: &Path,
+        evaluator: &dyn Evaluator,
+        force: bool,
+    ) -> Result<FileResult> {
         let source = self.read_input(input_rel)?;
         let out_path = self
             .config
@@ -772,7 +799,7 @@ impl EinmoSuite {
         let existing = EinmoFile::from_file(&out_path).ok();
         let _ = self.write_crash_crumb(input_rel, &source, &out_path);
         let outcome = evaluate_capturing(evaluator, &source);
-        self.write_output(input_rel, &source, outcome, None, existing.as_ref())
+        self.write_output(input_rel, &source, outcome, None, existing.as_ref(), force)
     }
 
     /// Evaluate an inlined input (a string in code, not a file on disk).
@@ -799,7 +826,7 @@ impl EinmoSuite {
         }
         let _ = self.write_crash_crumb(input_rel, input, &out_path);
         let outcome = evaluate_capturing(evaluator, input);
-        self.write_output(input_rel, input, outcome, None, None)
+        self.write_output(input_rel, input, outcome, None, None, false)
     }
 
     /// Discover all inputs, evaluate them (parallel or serial per config),
@@ -893,7 +920,14 @@ impl EinmoSuite {
         }
         for (rel, source, outcome, existing) in &raw {
             let dependent = self.dependent_context(rel, &raw);
-            match self.write_output(rel, source, outcome.clone(), dependent, existing.as_ref()) {
+            match self.write_output(
+                rel,
+                source,
+                outcome.clone(),
+                dependent,
+                existing.as_ref(),
+                false,
+            ) {
                 Ok(result) => results.files.push(result),
                 Err(e) => results.files.push(FileResult {
                     rel_path: mirror_input_path(rel),
@@ -969,9 +1003,14 @@ impl EinmoSuite {
         let mut results = TestResults::default();
         for (name, input) in pairs {
             let outcome = evaluate_capturing(evaluator, input);
-            results
-                .files
-                .push(self.write_output(Path::new(name), input, outcome, None, None)?);
+            results.files.push(self.write_output(
+                Path::new(name),
+                input,
+                outcome,
+                None,
+                None,
+                false,
+            )?);
         }
         Ok(results)
     }
@@ -1148,6 +1187,7 @@ impl EinmoSuite {
         outcome: EvalOutcome,
         dependent: Option<DependentContext>,
         existing: Option<&EinmoFile>,
+        force: bool,
     ) -> Result<FileResult> {
         self.config.ensure_stage_dirs()?;
         let rel = mirror_input_path(input_rel);
@@ -1245,13 +1285,13 @@ impl EinmoSuite {
                     .zip(file.sections().iter())
                     .all(|(e, f)| e.name() == f.name() && e.body() == f.body());
 
-            if !sections_same {
+            if !sections_same && !force {
                 // Genuine drift: restore the existing baseline (the crash
                 // crumb written at the top of `evaluate()` already clobbered
                 // `out_path` — "leave output/ untouched" means undo that, not
                 // leave the crumb in place) and fail this case.
-                // `einmo regenerate-output` is the deliberate opt-in to
-                // replace it (EIMP-3.md §Specification).
+                // `einmo regenerate-output` (force = true) is the deliberate
+                // opt-in to replace it instead (EIMP-3.md §Specification).
                 let bytes = existing.serialize()?;
                 ensure_parent_dir(&out_path)?;
                 std::fs::write(&out_path, &bytes).map_err(|e| EinmoError::io(&out_path, e))?;
@@ -1269,53 +1309,59 @@ impl EinmoSuite {
                 });
             }
 
-            let output_pass = self.config.stage_passphrase(Stage::Output).unwrap_or("");
-            let keypair = StageKeypair::derive(output_pass);
-            let already_signed_by_me = existing
-                .stamps()
-                .has_stage_stamp_from(Stage::Output.stamp_key(), &keypair.pubkey_hex());
+            if sections_same {
+                let output_pass = self.config.stage_passphrase(Stage::Output).unwrap_or("");
+                let keypair = StageKeypair::derive(output_pass);
+                let already_signed_by_me = existing
+                    .stamps()
+                    .has_stage_stamp_from(Stage::Output.stamp_key(), &keypair.pubkey_hex());
 
-            if already_signed_by_me {
-                // True no-op: restore the original bytes untouched (also
-                // covers "a crash crumb overwrote the file mid-run").
-                let bytes = existing.serialize()?;
+                if already_signed_by_me {
+                    // True no-op: restore the original bytes untouched (also
+                    // covers "a crash crumb overwrote the file mid-run").
+                    let bytes = existing.serialize()?;
+                    ensure_parent_dir(&out_path)?;
+                    std::fs::write(&out_path, &bytes).map_err(|e| EinmoError::io(&out_path, e))?;
+                    return Ok(FileResult {
+                        rel_path: rel,
+                        status: existing.metadata().status,
+                        written_and_verified: true,
+                        ignored: false,
+                        drifted: false,
+                        detail: None,
+                    });
+                }
+
+                // Content matches but this is a new signer: append their
+                // stage:output stamp to the EXISTING file in place — every
+                // prior stamp (including other signers') survives untouched
+                // (EIMP-3.md §Specification, multi-signer accumulation).
+                let mut appended = existing.clone();
+                let pubkey = appended.append_stage_stamp_with(Stage::Output.stamp_key(), &keypair);
                 ensure_parent_dir(&out_path)?;
+                let bytes = appended.serialize()?;
                 std::fs::write(&out_path, &bytes).map_err(|e| EinmoError::io(&out_path, e))?;
+                let written_and_verified = EinmoFile::from_file(&out_path).is_ok();
                 return Ok(FileResult {
                     rel_path: rel,
-                    status: existing.metadata().status,
-                    written_and_verified: true,
+                    status: appended.metadata().status,
+                    written_and_verified,
                     ignored: false,
                     drifted: false,
-                    detail: None,
+                    detail: if written_and_verified {
+                        Some(format!("co-signed by a new signer ({})", &pubkey[..16]))
+                    } else {
+                        Some("re-verification after co-signing failed".into())
+                    },
                 });
             }
-
-            // Content matches but this is a new signer: append their
-            // stage:output stamp to the EXISTING file in place — every prior
-            // stamp (including other signers') survives untouched
-            // (EIMP-3.md §Specification, multi-signer accumulation).
-            let mut appended = existing.clone();
-            let pubkey = appended.append_stage_stamp_with(Stage::Output.stamp_key(), &keypair);
-            ensure_parent_dir(&out_path)?;
-            let bytes = appended.serialize()?;
-            std::fs::write(&out_path, &bytes).map_err(|e| EinmoError::io(&out_path, e))?;
-            let written_and_verified = EinmoFile::from_file(&out_path).is_ok();
-            return Ok(FileResult {
-                rel_path: rel,
-                status: appended.metadata().status,
-                written_and_verified,
-                ignored: false,
-                drifted: false,
-                detail: if written_and_verified {
-                    Some(format!("co-signed by a new signer ({})", &pubkey[..16]))
-                } else {
-                    Some("re-verification after co-signing failed".into())
-                },
-            });
+            // else: !sections_same && force — fall through to the fresh
+            // write below, exactly as `einmo regenerate-output` intends
+            // (EIMP-3.md §Specification "New CLI verb: explicit regenerate").
         }
 
-        // No existing (or corrupt-treated-as-absent) baseline — fresh write.
+        // No existing (or corrupt/crumb-treated-as-absent, or forced-replace
+        // of drifted content) baseline — fresh write.
         let (configured, _) = derive_keypair(self.config.configured_passphrase());
         let output_pass = self.config.stage_passphrase(Stage::Output).unwrap_or("");
         let (stage_output, _) = derive_keypair(output_pass);
@@ -1858,6 +1904,42 @@ mod tests {
             bytes_before, bytes_after,
             "output/ must be left byte-for-byte untouched when content drifts"
         );
+    }
+
+    // EIMP-3's explicit opt-in: `regenerate_output` deliberately replaces a
+    // drifted case instead of failing it; every other case behaves like a
+    // normal `evaluate` (a plain rerun, unrelated to drift, must still no-op).
+    #[test]
+    fn regenerate_output_replaces_drifted_content_and_a_subsequent_run_is_clean() {
+        let (_tmp, suite) = suite();
+        std::fs::write(suite.config().input_path().join("a.foo"), "{5;}").unwrap();
+        let out = suite.config().stage_dir(Stage::Output).join("a.foo.einmo");
+
+        suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
+        std::fs::write(suite.config().input_path().join("a.foo"), "{6;}").unwrap();
+        let drifted = suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
+        assert!(drifted.drifted, "precondition: this run must have drifted");
+
+        let regenerated = suite.regenerate_output(Path::new("a.foo"), &Echo).unwrap();
+        assert!(
+            !regenerated.drifted,
+            "regenerate_output must not itself report drift"
+        );
+        assert!(regenerated.written_and_verified);
+        let file = EinmoFile::from_file(&out).unwrap();
+        assert_eq!(
+            file.section("OUTPUT").unwrap().body(),
+            "{6;}",
+            "the drifted content must now be the accepted baseline"
+        );
+
+        // A normal run afterward sees the regenerated content as a normal,
+        // matching baseline -- no drift, no rewrite.
+        let bytes_before_rerun = std::fs::read(&out).unwrap();
+        let clean = suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
+        assert!(!clean.drifted);
+        assert!(clean.written_and_verified);
+        assert_eq!(std::fs::read(&out).unwrap(), bytes_before_rerun);
     }
 
     // A corrupt/tampered existing file must be treated as absent -- fresh

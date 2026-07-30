@@ -198,6 +198,16 @@ new key material, no passphrase prompt beyond what `einmo run` already
 needs) — this is a deliberate-intent gate on the *verb choice*, not a
 signing gate.
 
+**Implementation note (2026-07-30):** `EinmoSuite::evaluate` and the new
+`EinmoSuite::regenerate_output` share one private `evaluate_impl(..., force:
+bool)`, which threads `force` into `write_output`'s signature. `force` only
+changes the `!sections_same` branch's outcome (replace instead of
+drift-fail-and-restore) — every other branch (no-op / co-sign /
+fresh-if-absent) is identical for both callers, so no logic is duplicated
+between `evaluate` and `regenerate-output`. The CLI subcommand reuses
+`EvaluateArgs` verbatim (identical shape to `evaluate`) and a shared driver
+parameterized by `force` and the summary wording.
+
 **Where review picks up.** After `regenerate-output` replaces a case's
 `output/` file, that file is a brand-new, freshly-signed `output/`
 candidate — indistinguishable from any other `output/` artifact. From here
