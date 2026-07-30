@@ -19,10 +19,54 @@ ls docs/eimp | rev | sort -V | rev
 | [EIMP-1](EIMP-1.md) | EinmoReview — a thread-safe review-session object; thin bash, server, and dhtml frontends | Implementing | 2026-07-19 | Atlas (ported by Claude Code (Sonnet 5)) |
 | [EIMP-2](EIMP-2.md) | einmo-review-server — a minimal HTTP prototype of the review/sign/promote/flag loop | complete | 2026-07-29 | Claude Code (Sonnet 5) |
 | [EIMP-3](EIMP-3.md) | Output-stage drift fails the run; explicit regenerate; multi-signer output stamps | complete | 2026-07-30 | Claude Code (Sonnet 5) |
+| [EIMP-4](EIMP-4.md) | Split einmo into core + einmo-review-server, publish both to crates.io at 0.0.6 | Draft | 2026-07-30 | Claude Code (Opus 5) |
+| [EIMP-5](EIMP-5.md) | Parallelized corpus signing — parallel machinery over the Merkle-structured CorpusSigner | Draft | 2026-07-30 | Claude Code (Opus 5) |
+
+---
+
+## The jia-sprint (current)
+
+**Goal**: a functioning einmo library and review system, ready for foolish to
+depend on it as a normal crates.io dependency instead of the stale vendored
+copy at `/yolo/src/einmo`.
+
+The sprint's EIMPs, in execution order:
+
+1. **`EIMP-1`** (Implementing) — finish the review loop: the remaining
+   `EinmoReview` surface, `ReviewMode`, multi-signer promote, flag
+   semantics, the journal, the TUI-owned private server, the dhtml
+   frontend, `CorpusSigner` (single-threaded).
+2. **maintainer performance-verifies the review loop** — an explicit STOP
+   in `EIMP-1.plan.md`, and `EIMP-4`'s first gate.
+3. **`EIMP-4`** (Draft) — split into `einmo` + `einmo-review-server`,
+   publish both at `0.0.6`, repoint `foolish-ubca` and `/yolo/src/zweimomo`
+   at the published crate, delete the vendored copy.
+
+Explicitly **outside** the sprint: `EIMP-5` (parallel corpus signing — the
+serial implementation ships in `EIMP-1` and is sufficient at current corpus
+sizes), the Merkle-tree restructuring design, and the logging EIMP that
+would retire the crash crumb. All three are recorded rather than dropped —
+see `docs/todo/AIAGENT-einmo-repo.todo.md`.
 
 ---
 
 ## Last Updated
+
+**Date**: 2026-07-30 (3)
+**Updated By**: Claude Code (Opus 5)
+**Changes**: Named the current sprint the **jia-sprint** (above) and added
+the two EIMPs that scope it. `EIMP-4` specifies splitting the repository
+into a lean core `einmo` and an `einmo-review-server` crate carrying
+`EinmoReview`, the server, the TUI, and the dhtml frontend, then publishing
+both at `0.0.6` — the split exists because `foolish-ubca` imports five
+symbols but would otherwise inherit a whole HTTP stack. `EIMP-5` takes
+`CorpusSigner`'s parallel machinery, deliberately split out so `EIMP-1` can
+ship it single-threaded and core can stay runtime-free. `EIMP-1` was
+re-baselined against reality: its Phase 0 drift survey is done, every item
+`EIMP-2` already delivered is checked off with attribution, Phase D is
+re-scoped (the reduction happened by replacement, not edit), and §S.7a now
+specifies the TUI-owned private server (which implies an axum 0.7→0.8
+upgrade that deletes `EIMP-2`'s hand-rolled UDS accept loop).
 
 **Date**: 2026-07-30 (2)
 **Updated By**: Claude Code (Sonnet 5)

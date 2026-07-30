@@ -148,13 +148,32 @@ three are the same refactor.
 ### S.1 The three layers
 
 ```
-einmo core (exists)   format · signature · verify · stage · transitions · compare · EinmoSuite
-einmo::review (NEW)   EinmoReview — session state, decisions, cache, plan/execute, journal
-frontends (thin)      CLI verbs · `einmo review serve` · experimental_reviewer.sh (thin) · dhtml
+einmo core (exists)   format · signature · verify · stage · transitions · compare · EinmoSuite · CorpusSigner
+review session (NEW)  EinmoReview — session state, decisions, cache, plan/execute, journal
+frontends (thin)      review CLI verbs · `einmo review serve` · einmo_review_client.sh · dhtml
 ```
 
 All frontends call the same `EinmoReview`; no frontend writes `.einmo` bytes
 or touches key material.
+
+**Crate boundary (resolved 2026-07-30, specified by `EIMP-4` §S.1).** These
+three layers do not all ship in one crate. `EIMP-4` splits the repository
+into published `einmo` (core: the top line above, `CorpusSigner` included)
+and published `einmo-review-server` (the bottom two lines: `EinmoReview`
+itself, the HTTP server, the TUI client script, and the dhtml frontend).
+Two consequences bind this EIMP's remaining work:
+
+- **Core must stay dependency-lean.** No `axum`/`tokio`/`hyper`/`tower` may
+  land in core — which is why §S.11's `CorpusSigner` ships single-threaded
+  here and its parallel machinery is deferred to `EIMP-5`.
+- **Phase B's `einmo review …` verbs belong to `einmo-review-server`.**
+  They operate on `EinmoReview`, which lives in that crate; they are that
+  crate's binary's subcommands, not core `einmo`'s `cli.rs`.
+
+The split itself is `EIMP-4`'s work, executed *after* this EIMP completes.
+This EIMP need only avoid building anything that would make the split
+harder — chiefly, keeping core free of the HTTP stack and of an async
+runtime.
 
 ### S.2 The `EinmoReview` object
 
@@ -400,6 +419,39 @@ file per session id. Contents: session id, reviewer, timestamp,
 produced_by, every decide/undecide/claim/execute with outcomes. Reopen =
 replay. This is the audit and crash-recovery substrate.
 
+**Keyed by `EinmoId` end to end (resolved 2026-07-30).** Every entry that
+concerns a case carries its `EinmoId` (§0) as the identifying field — not a
+path, not an index, not a display name. One identifier from the client's
+keystroke through the server's handler to the journal line means a journal
+can be joined against `items()`, against a plan, and against the corpus
+itself without any translation layer that could disagree.
+
+**Verbosity levels.** The journal writes at a configurable level, so a
+routine session stays readable while a debugging session records
+everything:
+
+| Level | Records |
+|---|---|
+| terse | session open/close, `execute` batches and their outcomes |
+| normal (default) | the above, plus every decide/undecide/claim |
+| fine | the above, plus **each case as it is read in and verified** — one entry per `EinmoId` per verification, which is what makes the journal able to answer "which case was in flight when this crashed?" |
+
+**Enough to serve the crash crumb's purpose — but not (yet) its
+replacement.** At `fine`, a case that begins verification and never records
+its completion leaves an unmatched entry, which identifies the in-flight
+case after a crash *strictly more precisely* than today's crash crumb does
+— and without the crumb's side effect of writing a placeholder `.einmo`
+into `output/`. (That side effect is not hypothetical: it is exactly what
+forced the `"TEST IN PROGRESS"` special-case into `EIMP-3`'s content/key
+decision table in `write_output`.) **This EIMP only makes the journal
+*capable* of that role; it does not retire the crash crumb.** Retirement
+touches `einmo_suite.rs`'s test-run path — a different layer from the
+review session — and would invalidate existing tests
+(`crash_crumb_survives_stack_overflow` in `zweimomo`, einmo's
+`catastrophe_crumb_*` tests). It is carried as a follow-up logging EIMP in
+`docs/todo/AIAGENT-einmo-repo.todo.md`, alongside the broader logging
+design.
+
 **Quorum policies are explicitly OUT of scope for this EIMP (resolved).**
 "Quorum" is not yet a defined concept in einmo — this EIMP only facilitates
 *multiple parties independently signing* the same stage (§S.4a's
@@ -416,6 +468,91 @@ already records every stamping event a quorum policy would need to read.
 discipline `scripts/experimental_reviewer.sh` already established), TCP on
 127.0.0.1 with a bearer token only when a browser needs it. Handlers are
 thin translations onto `Arc<EinmoReview>`.
+
+#### S.7a TUI-owned private server (resolved 2026-07-30)
+
+**The TUI starts its own server and kills it on exit.** Rather than the TUI
+attaching to a pre-existing, externally-managed daemon (`EIMP-2`'s shape,
+where the script fails fast if no server is found), the review script
+launches a server configured to listen on a **private socket of its own**,
+drives it for the session, and terminates it when the pass ends. Nothing
+else on the machine knows the socket path, so no other process can
+accidentally interfere with the TUI's session — the socket *is* the access
+control, and its lifetime is exactly the TUI's lifetime.
+
+Client side stays plain `curl` over that socket:
+
+```bash
+# GET
+curl --unix-socket /tmp/server.sock http://localhost/users
+
+# PUT
+curl --unix-socket /tmp/server.sock -X PUT \
+     -H "Content-Type: application/json" \
+     -d '{"name":"alice"}' http://localhost/users/1
+```
+
+Server side is the straightforward axum/`UnixListener` binding:
+
+```rust
+use axum::{routing::get, routing::put, Router};
+use std::fs;
+use std::path::Path;
+use tokio::net::UnixListener;
+
+#[tokio::main]
+async fn main() {
+    let socket_path = "/tmp/server.sock";
+
+    // 1. Remove old socket file if it exists
+    if Path::new(socket_path).exists() {
+        fs::remove_file(socket_path).unwrap();
+    }
+
+    // 2. Build your API routes
+    let app = Router::new()
+        .route("/users", get(|| async { "Get users output" }))
+        .route("/users", put(|| async { "Put users output" }));
+
+    // 3. Bind to the Unix Domain Socket
+    let listener = UnixListener::bind(socket_path).unwrap();
+    println!("Listening securely on Unix socket: {}", socket_path);
+
+    // 4. Run the server
+    axum::serve(listener, app).await.unwrap();
+}
+```
+
+**Implementation notes on adopting this shape:**
+
+- **It requires axum 0.8.** `axum::serve(listener, app)` accepting a
+  `tokio::net::UnixListener` is an 0.8 capability; this repo pins **0.7.9**,
+  where `serve()` is TCP-only — which is exactly why `EIMP-2` Phase D had to
+  hand-roll the accept loop out of `hyper`'s HTTP/1.1 builder, `hyper-util`'s
+  `TokioIo`/`TowerToHyperService`, and a manual `UnixListener` loop. Upgrading
+  to axum 0.8 (0.8.9 current as of 2026-07-30) lets that whole glue layer be
+  **deleted** in favor of the four-line binding above. Treat the upgrade as
+  part of this work, and verify the `Listener` impl is available in the
+  feature set actually enabled rather than assuming it.
+- **Socket path must not be `/tmp/server.sock`.** The snippet's fixed path is
+  illustrative; a private per-session socket needs an unpredictable path in a
+  mode-700 directory (the scratch-dir hardening
+  `einmo_review_client.sh` already performs). A fixed world-known path in
+  `/tmp` is the opposite of the isolation this design is for.
+- **`remove_file`-if-exists is not sufficient on its own.** Blindly unlinking
+  whatever sits at the path would let this server stomp a *live* server's
+  socket. `EIMP-2` Phase D already solved this: probe with `UnixStream::connect`
+  first — connect succeeds → a live server owns it, refuse to start; connect
+  fails → the file is stale, remove and rebind. Keep that logic.
+- **Termination must be reliable.** The script kills the server on exit; that
+  has to hold for `Ctrl-C` and for an abnormal exit too, or sockets and
+  orphaned servers accumulate. The client's existing `trap`-based cleanup is
+  the hook, paired with the server's own `ctrl_c` shutdown and socket removal.
+- **This does not remove the standalone-server mode.** A long-lived server
+  that several clients address remains meaningful (it is what makes
+  server-side session state observable across two script runs, which `EIMP-2`
+  Phase I used to prove decisions really live server-side). The TUI-owned
+  private server is an additional, *default* launch mode, not a replacement.
 
 | Method | Path | Meaning |
 |--------|------|---------|
@@ -539,88 +676,55 @@ deterministically:
    section signature + its manifest live in one file per stage (e.g.
    `checked/.section.sig` — dot-named, so einmo's walkers skip it).
 
-**Reading the section — parallel, one allocation (bandwidth-maximizing).**
-The byte-join is a "load many files into one contiguous buffer" workload; a
-naïve sequential `read` per file, growing a `Vec`, wastes both disk queue
-depth and memory bandwidth. Use the two-pass structure that makes the read
-both fast AND deterministic:
+**Reading the section — SINGLE-THREADED for this EIMP (resolved
+2026-07-30).** Earlier drafts of this section specified a two-pass
+metadata→offsets→disjoint-slice parallel read as the default, with the
+worker pool resolved to `tokio`. **That is no longer this EIMP's scope.**
+`EIMP-4` splits the repository into a lean core `einmo` and a separate
+`einmo-review-server`, moving `tokio` and the whole HTTP stack out of core
+— and `CorpusSigner` belongs in core. Implementing the parallel read with
+`tokio` would therefore drag an async runtime straight back into the crate
+the split exists to keep lean, for a workload with no async character.
 
-1. **Metadata pass** — `fs::metadata(len)` over the manifest-ordered paths
-   to compute each file's size and its **offset** in the final buffer; sum
-   to the total. One `vec![0u8; total]` allocation, no reallocation or
-   per-file heap churn.
-2. **Parallel read pass** — because every file's destination is a
-   **disjoint** `&mut` sub-slice (`buffer[offset..offset+len]`), N worker
-   tasks can `read_exact` into their slices with **no locking and no data
-   races** (Rust's borrow checker witnesses the disjointness via
-   `split_at_mut`/chunked slicing). This saturates disk queue depth on many
-   small files and memory bandwidth on large ones. **Worker pool: `tokio`
-   (resolved — not `rayon`, not a hand-rolled `std` thread pool).** `tokio`
-   is already a dependency (the `EIMP-2` server stack, §S.7); reusing its
-   blocking-task pool (`tokio::task::spawn_blocking` per disjoint chunk,
-   `try_join_all`/`JoinSet` to await them) avoids adding `rayon` as a new
-   dependency AND avoids hand-rolling a second thread pool implementation
-   for what `tokio`'s existing blocking pool already does — `CorpusSigner`
-   itself stays synchronous-callable (its methods are not `async fn`; they
-   internally build or reuse a small current-thread/multi-thread `tokio`
-   runtime just for this bounded read fan-out, so non-async callers like the
-   CLI are unaffected). A sketch of the sequential core (the parallel
-   version splits the `(path, slice)` pairs across `spawn_blocking` tasks
-   bounded by `read_workers`):
+So `CorpusSigner` ships here as the streaming, sequential implementation:
+read the files in manifest order and feed the hasher incrementally
+(`update(chunk)` per read block), never materializing the whole section in
+memory. Correct, deterministic, bounded-memory, and zero new dependencies.
+A sketch:
 
-   ```rust
-   // sizes/offsets from the metadata pass; `buffer` is one allocation.
-   let mut cur = 0;
-   for (path, &size) in paths.iter().zip(&sizes) {
-       File::open(path)?.read_exact(&mut buffer[cur..cur + size])?;
-       cur += size;
-   }
-   ```
+```rust
+// manifest order fixes the byte order; the hasher sees the same stream a
+// byte-join would have produced, without the intermediate buffer.
+for path in manifest.paths() {
+    let mut f = File::open(path)?;
+    loop {
+        let n = f.read(&mut chunk)?;
+        if n == 0 { break }
+        hasher.update(&chunk[..n]);
+    }
+}
+```
 
-**Determinism is preserved regardless of read order.** Offsets are fixed by
-the *manifest* order in the metadata pass, so which thread finishes first is
-irrelevant — the buffer's byte layout, and thus the hash, is identical every
-run. The parallelism is purely an I/O-throughput optimization over a layout
-the manifest already pinned.
+This serial digest is the **oracle**: any future parallel implementation
+must reproduce it bit-for-bit. Parallelizing it is deferred to `EIMP-5`,
+and the structural work that makes parallelism cheap — restructuring the
+corpus digest around a Merkle tree rather than a monolithic byte-join — is
+carried as a design TODO in `docs/todo/AIAGENT-einmo-repo.todo.md`. Doing
+the structure first is deliberate: mapping an independent digest over each
+file and folding the results needs no shared buffer, no offset
+choreography, and no defense against files changing size between two
+passes.
 
-**Concurrency caveat (why the metadata pass alone is not the integrity
-check).** Sizes read in pass 1 could disagree with bytes in pass 2 if the
-section changed underneath (a concurrent promotion). Guard it: a
-`read_exact` short read (file shrank) or leftover bytes (file grew) is a
-hard error that aborts the signature; and the section sign runs under
-`execute`'s write lock (S.2/S.4), which already excludes concurrent
-mutation. Verification re-reads the same way and re-checks — a mid-flight
-change simply fails verify, which is the correct outcome.
+**Concurrency caveat (carried forward).** A file changing underneath the
+signer must be a hard error that aborts the signature, never a silently
+truncated digest. The section sign runs under `execute`'s write lock
+(S.2/S.4), which already excludes concurrent mutation from within einmo;
+an external mutation mid-read simply fails verification later, which is the
+correct outcome.
 
-**Bounded, not unbounded, parallelism.** Cap the worker pool (e.g. a small
-multiple of CPU count, or a config knob) so a giant section does not spawn
-thousands of threads; huge individual files can be split into ranged reads
-across workers.
-
-**Two read strategies — DEFAULT is fast parallel-buffer; a streaming
-alternative is also implemented and tested.** `CorpusSigner` provides two
-`ReadStrategy` implementations behind one seam, so the same manifest yields
-the same digest either way:
-
-- **`ReadStrategy::ParallelBuffer` (default).** The two-pass, massively-
-  parallel read above: one allocation, disjoint-slice parallel
-  `read_exact`, then **hand the whole buffer to the signer at once**.
-  Maximizes disk/memory bandwidth; the signer (or hasher) sees one
-  contiguous message. This is what `sign`/`verify`/`digest` use unless told
-  otherwise.
-- **`ReadStrategy::Stream` (alternative).** Reads files sequentially in
-  manifest order and feeds the hasher **incrementally** (`update(chunk)` per
-  read block), never materializing the whole section in memory. Bounded
-  memory for pathologically large sections, and a cross-check oracle. It is
-  slower but must produce a **byte-identical digest** to `ParallelBuffer`.
-
-Both are implemented and unit-tested; a test asserts the two strategies
-agree bit-for-bit on the same fixtures (this also pins that a
-single-threaded path equals the parallel one). The default is
-`ParallelBuffer`; `Stream` is selectable (config/flag) for constrained
-environments or as the verification oracle. Semantically they are
-interchangeable — the manifest fixes the byte order, the strategy only
-chooses how the bytes reach the signer.
+**Determinism is structural.** The manifest's sorted walk fixes the byte
+order before any read begins, so the digest does not depend on read timing,
+buffering, or (later) worker count.
 
 **When it runs.** Whenever the section updates —
 `EinmoReview::execute`/`execute_one`, promoting into a stage, calls
@@ -765,13 +869,23 @@ All resolved at begun-time (2026-07-30) — design is frozen:
   §S.6.
 - **`ReviewOpts` mode default**: not a boolean — a runtime-selectable
   `ReviewMode` (`Full` default, plus `Random` and `NewOrBroken`). See §S.2.
-- **Parallel section-read worker pool (§S.11)**: `tokio` (already a
-  dependency via the server stack), not `rayon` and not a hand-rolled `std`
-  thread pool. See §S.11.
+- **Parallel section-read (§S.11)**: superseded. `CorpusSigner` ships
+  **single-threaded** here; the parallel machinery moves to `EIMP-5`, and
+  the Merkle-tree restructuring that makes it cheap is a design TODO. The
+  earlier "use `tokio`" resolution is withdrawn — `EIMP-4`'s crate split
+  removes `tokio` from core `einmo`, which is where `CorpusSigner` lives.
+  See §S.11.
 - **Phase A2 (`CorpusSigner`) scope**: confirmed in-scope for this EIMP
   (crypto core + tests only, per §S.11's existing "not wired into the live
-  promotion flow yet" boundary — that boundary is unchanged, only the
-  worker-pool choice above changed).
+  promotion flow yet" boundary — that boundary is unchanged), now
+  explicitly single-threaded.
+- **Crate boundary**: `EinmoReview` and every frontend ship in
+  `einmo-review-server`; core `einmo` keeps the test runner, signing, and
+  `CorpusSigner`. See §S.1 and `EIMP-4` §S.1.
+- **Journal**: keyed by `EinmoId` throughout, with verbosity levels
+  (finest level records each case as read in and verified), logging enough
+  to serve the crash crumb's purpose without retiring the crumb in this
+  EIMP. See §S.6.
 
 ## References
 

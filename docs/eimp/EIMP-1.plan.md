@@ -6,6 +6,16 @@ original `FOOP-25.plan.md` (in `foolish-rust`), with worktree/branch
 mechanics removed: einmo is a small, single-maintainer repository, so this
 plan executes directly on `main` with regular commits (`EIMP-0` §8).
 
+**Re-baselined 2026-07-30.** This plan was ported before `EIMP-2` existed,
+and `EIMP-2` then implemented a substantial fraction of it while prototyping
+the review server. Phase 0's drift re-survey (below) has now been performed;
+every item `EIMP-2` already delivered is checked off with attribution, so
+the unchecked boxes below are the *genuinely* remaining work. Two structural
+resolutions also landed: `CorpusSigner` ships single-threaded (parallel
+machinery deferred to `EIMP-5`), and everything review-related will ship in
+the `einmo-review-server` crate (`EIMP-4` §S.1) — Phase B's verbs belong to
+that crate's binary, not core's `cli.rs`.
+
 - [x] STOP — preconditions: all workspace tests pass (`cargo test`,
       `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`). Do
       not begin while any test is broken.
@@ -20,127 +30,299 @@ plan executes directly on `main` with regular commits (`EIMP-0` §8).
       (5 min, auto-reclaim, shown in `plan()`), quorum (out of scope
       entirely, not just deferred), `ReviewOpts` mode (runtime-selectable
       `Full`/`Random`/`NewOrBroken`, not a boolean default), and Phase A2's
-      parallel-read worker pool (`tokio`, not `rayon`/hand-rolled).
-      Additionally resolved and written into `EIMP-1.md` §S.4a: the
-      multi-signer content-then-key decision table for `checked`/`verified`
-      promotion (paired with the new `EIMP-3` for `output`'s analogue).
+      parallel-read worker pool. Additionally resolved and written into
+      `EIMP-1.md` §S.4a: the multi-signer content-then-key decision table
+      for `checked`/`verified` promotion (paired with `EIMP-3` for
+      `output`'s analogue).
 - [x] Begin work: check `begun: [x]` in `EIMP-1.md` frontmatter, commit
       `EIMP-1.md` stating that work has commenced
       (2026-07-30 06:05)
+- [x] Second resolution round (2026-07-30, after `EIMP-4`/`EIMP-5` were
+      drafted): `CorpusSigner` ships **single-threaded** and its parallel
+      machinery moves to `EIMP-5` (the earlier "use `tokio`" answer is
+      withdrawn — `EIMP-4`'s crate split removes `tokio` from core, which
+      is where `CorpusSigner` lives); `EinmoReview` and all frontends ship
+      in the `einmo-review-server` crate; the journal is keyed by `EinmoId`
+      with verbosity levels and must be *capable* of the crash crumb's
+      purpose without retiring the crumb here.
+      (2026-07-30 07:40)
 
 ## Phase 0 — drift re-survey (EIMP-1.md §S.10)
 
-- [ ] Read §S.10 of `EIMP-1.md`, then re-survey `src/einmo_suite.rs`,
+- [x] Read §S.10 of `EIMP-1.md`, then re-survey `src/einmo_suite.rs`,
       `transitions.rs`, `signature.rs`, `verify.rs`, `format.rs`,
       `compare.rs` for API drift since 2026-07-19 (the date this design was
       originally written, as `FOOP-25`)
-- [ ] Touch up `EIMP-1.md` §S.2–§S.7 sketches to match current einmo shapes;
+      (2026-07-30 07:45) — surveyed. The dominant finding is not drift in
+      those six files but that `EIMP-2` **already implemented much of this
+      plan's Phase A and Phase C**; see the per-item attributions below.
+- [x] Touch up `EIMP-1.md` §S.2–§S.7 sketches to match current einmo shapes;
       record notable drift in this plan as sub-tasks
+      (2026-07-30 07:45) — §S.1 gained the crate-boundary note, §S.2 the
+      `ReviewMode` resolution, §S.4a is new (multi-signer promote), §S.5/§S.6
+      gained the claim-TTL and journal resolutions, §S.11 was rewritten
+      single-threaded. Notable drift between §S.2's sketch and the shipped
+      `review.rs`, recorded as sub-tasks:
+  - [x] `MirrorPath` throughout the sketch is really `EinmoId` (`EIMP-2`
+        Phase A formalized it). The sketch's type name is stale everywhere.
+        (2026-07-30 07:45)
+  - [x] `open` is `open(suite: impl Into<PathBuf>) -> Self`, not
+        `open(&Path, ReviewOpts) -> Result<Self>` — no `ReviewOpts` exists
+        yet, so no `ReviewMode` and no filter. Adding it is Phase A work
+        below.
+        (2026-07-30 07:45)
+  - [x] No `ReviewerId` anywhere: a single implicit reviewer, deliberately
+        (`EIMP-2` §2). `decide`/`undecide` take no reviewer argument.
+        (2026-07-30 07:45)
+  - [x] `EinmoReview`'s fields are `config`/`cache`/`decisions`/`exec` —
+        **no `worklist: RwLock<Worklist>`** (`items()` rescans on every
+        call, so there is no cached worklist to `refresh()` and no `version`
+        for the sketch's If-Match story) and **no `journal`**.
+        (2026-07-30 07:45)
+  - [x] `body` returns `VerifiedBody`, not `Arc<VerifiedBody>`;
+        `VerifiedCache` caches `Result<VerifiedBody, String>` rather than
+        `Arc<OnceLock<VerifiedBody>>` (`EinmoError` isn't `Clone` —
+        `EIMP-2` Phase C recorded this).
+        (2026-07-30 07:45)
+  - [x] `SignerSet` wraps einmo's existing `KeySource` with fields
+        `to_checked`/`to_verified`, not the sketch's separate `Signer` type
+        with fields `checked`/`verified`.
+        (2026-07-30 07:45)
+  - [x] `EIMP-2` added two methods the sketch never had: `flag_now` and
+        `retract_now` (atomic, no decide/plan/execute ceremony). They stay.
+        (2026-07-30 07:45)
+  - [x] Absent entirely from the shipped code: `diff`, `execute_one`,
+        `refresh`, `decision`. All are Phase A work below.
+        (2026-07-30 07:45)
 
 ## Phase A — the session library (EIMP-1.md §S.2–§S.6)
 
-- [ ] Write the unit tests FIRST (`EIMP-1.md` §Test Plan: decisions, cache,
-      signer, execute, journal) as failing tests against the intended
+- [x] Write the unit tests FIRST (`EIMP-1.md` §Test Plan: decisions, cache,
+      signer, execute) as failing tests against the intended
       `einmo::review` surface
-- [ ] Implement `review::Decision` + `DecisionBook` (per-item, per-reviewer,
-      versioned; replace-not-stack)
-- [ ] Implement `review::VerifiedCache` (fingerprint → `Arc<OnceLock<VerifiedBody>>`,
+      (2026-07-29 17:38) — done by `EIMP-2` Phase C: 9 tests written first
+      in `src/review.rs`. Journal tests are NOT covered (no journal yet) —
+      see the journal task below.
+- [x] Implement `review::Decision` + `DecisionBook` (replace-not-stack)
+      (2026-07-29 17:38) — `EIMP-2` Phase C. **Not** per-reviewer and not
+      versioned: single implicit reviewer, no `version` field. Whether to
+      add either is deferred with claims/If-Match below.
+- [x] Implement `review::VerifiedCache` (fingerprint → cached body,
       single-flight; verify-count test hook)
-- [ ] Implement `review::Signer` / `SignerSet` (Argon2id→Ed25519
-      derive-once, zeroize on drop, computer key constructor) — §S.4 is the
-      authority for what does NOT go in `EinmoReview`
-- [ ] Implement `EinmoReview` (open/items/body/diff/decide/undecide/decision/refresh)
-      over the above
-- [ ] Implement `ExecutionPlan` + `execute`/`execute_one` (exec mutex,
-      fingerprint re-check, skip-and-report drift, retract cascade, confirm
-      token plumbed but enforced by frontends)
-- [ ] Flag = plaintext, concatenating (§S.3): `flagged/` is
+      (2026-07-29 17:38) — `EIMP-2` Phase C.
+- [x] Implement `review::Signer` / `SignerSet` — §S.4 is the authority for
+      what does NOT go in `EinmoReview`
+      (2026-07-29 17:38) — `EIMP-2` Phase C, as a `KeySource` wrapper.
+- [x] Implement `EinmoReview` (open/items/body/decide/undecide) over the
+      above
+      (2026-07-29 17:38) — `EIMP-2` Phase C. `diff`/`refresh`/`decision`
+      remain; see below.
+- [x] Implement `ExecutionPlan` + `execute` (exec mutex, fingerprint
+      re-check, skip-and-report drift, confirm token plumbed but enforced by
+      frontends)
+      (2026-07-29 17:38, fix 2026-07-29 18:xx) — `EIMP-2` Phase C, incl. the
+      exec mutex and the `undecide` pass after execute. `execute_one` and
+      the retract cascade *within execute* remain; `retract_now` covers the
+      cascade for the atomic path.
+- [ ] `ReviewOpts` + `ReviewMode` (`Full` default / `Random` /
+      `NewOrBroken`) on `open`, with `filter` (`EIMP-1.md` §S.2). Note
+      `ReviewItem.differing` already exists, so `NewOrBroken`'s predicate is
+      available; `Random` needs a seed decision (record it — a fixed seed is
+      reproducible, an entropy seed is a genuinely different sample per run)
+- [ ] `EinmoReview::diff(id, left, right) -> DiffHunks` + the server
+      endpoint that exposes it; today the client renders whole panes with
+      no server-computed diff (`similar` is already a dependency)
+- [ ] `EinmoReview::refresh()` — rescan and report changed cases. Note the
+      Phase 0 finding: `items()` currently rescans every call, so decide
+      first whether `refresh` means "invalidate a cache that does not yet
+      exist" (i.e. also add the cached worklist) or is unnecessary as
+      specified. Record the decision either way
+- [ ] `EinmoReview::execute_one(id, keys)` — per-item execution, and
+      `decision(id)` ("answer so far")
+- [ ] §S.4a multi-signer promote: apply the content-then-key decision table
+      to `checked`/`verified` inside `execute`/`execute_one` — content
+      matches + my key present → no-op; content matches + new signer →
+      append my stamp to the existing artifact; content differs → fresh
+      write. Reuse `Stamps::has_stage_stamp_from` (added by `EIMP-3`) rather
+      than writing a second lookup
+- [ ] Flag = plaintext, **concatenating** (§S.3): `flagged/` is
       PLAINTEXT/unsigned/transient; execute writes the annotated note as
       plaintext and CONCATENATES a dated block on top when re-flagging;
       concurrent flags serialize under the exec mutex; `flagged/` stays
-      exempt from verification; journal records each.
+      exempt from verification. **Today it replaces** — `transitions.rs`'s
+      `reflag_replaces_the_existing_flagged_file` test pins the current
+      behavior and must be rewritten, not deleted
 - [ ] New signed `notes/` stage (§S.3): a durable, attributed sibling to
       `flagged/`; a note is a valid signed `.einmo` (stamped,
       verify-on-inspect, participates in signature checks); support
       promoting a flag's concatenated content into `notes/` as a signed
-      note body.
+      note body
 - [ ] Flags break tests by default (§S.3): a flagged artifact fails the run
       (non-zero / red gate); `--flag-is-not-failure` downgrades to
       non-fatal but stderr STILL announces the flag count (no silent
       config); wire into the goal-state check (green = zero flags + signed
       + matching + valid signatures). Tests per §Test Plan "flag breaks
-      tests".
+      tests". Note today's `flagged_orphan_is_not_a_violation` encodes the
+      opposite policy for suite *shape* — reconcile the two deliberately
 - [ ] Implement `Journal` (append-only JSONL, replay, truncated-tail
-      tolerance)
+      tolerance) per the §S.6 resolution: keyed by `EinmoId`, verbosity
+      levels (terse/normal/fine), `fine` recording each case as it is read
+      in and verified. Must be *capable* of the crash crumb's purpose;
+      retiring the crumb is explicitly NOT this EIMP's work (follow-up
+      logging EIMP, see the repo TODO)
+- [ ] Soft claims (§S.5): `claim(id, ttl)`, 5-minute default,
+      auto-reclaimed on expiry, surfaced in `plan()` output. Advisory only —
+      cannot wedge. (Single implicit reviewer today, so this is
+      infrastructure for the multi-verifier story rather than something the
+      current client exercises — note that when implementing)
 - [ ] All Phase A tests green; `cargo fmt` and `cargo clippy -D warnings`
       clean
 
-## Phase A2 — `CorpusSigner` (section PQ attestation), CRYPTO CORE ONLY (EIMP-1.md §S.11)
+## Phase A2 — `CorpusSigner` (section PQ attestation), CRYPTO CORE ONLY, SINGLE-THREADED (EIMP-1.md §S.11)
 
 Self-contained `CorpusSigner` object — NOT mixed into `EinmoReview` (§S.11).
 NO real-corpus writes and NOT wired into the live promotion flow in this
 EIMP (that integration is a later step). Prove the object in isolation;
-`EinmoReview` will merely hold and call it later.
+`EinmoReview` will merely hold and call it later. **Single-threaded**
+(resolved 2026-07-30): this ships in core `einmo`, which `EIMP-4` keeps free
+of any async runtime; parallel machinery is `EIMP-5`, and the Merkle-tree
+restructuring that makes it cheap is a repo TODO.
 
 - [ ] Read §S.11 of `EIMP-1.md`; add `fips205` dep (feature
       `slh_dsa_sha2_256s` — conservative set) to `Cargo.toml`
-- [ ] Write tests FIRST (§Test Plan "CorpusSigner read strategies" +
-      section attestation): deterministic manifest; digest changes on
-      add/remove/alter/reorder; SLH-DSA sign→verify round-trip; tamper
-      fails; same-passphrase dual-derivation determinism; empty-section
-      manifest; the two read strategies agree bit-for-bit — all exercising
+- [ ] Write tests FIRST (§Test Plan "CorpusSigner" + section attestation):
+      deterministic manifest; digest changes on add/remove/alter/reorder;
+      SLH-DSA sign→verify round-trip; tamper fails; same-passphrase
+      dual-derivation determinism; empty-section manifest — all exercising
       `CorpusSigner` standalone (no `EinmoReview`)
 - [ ] Implement `CorpusSigner` skeleton (`new`/`manifest`/`digest`/`sign`/`verify`)
       + the manifest builder (stage name + param-set id + sorted
       mirror-path list via the existing deterministic walk)
-- [ ] Implement `ReadStrategy::ParallelBuffer` (DEFAULT): metadata→offsets→one
-      allocation; parallel `read_exact` into disjoint slices via `tokio`
-      `spawn_blocking` tasks bounded by `read_workers` (resolved: `tokio`,
-      not `rayon`/hand-rolled — `EIMP-1.md` §S.11); short/long-read hard
-      error; hand the whole buffer to the signer
-- [ ] Implement `ReadStrategy::Stream` (alternative): sequential
-      manifest-order read feeding the hasher incrementally, bounded memory;
-      assert byte-identical digest to `ParallelBuffer`
+- [ ] Implement the sequential streaming read: files in manifest order,
+      hasher fed incrementally, bounded memory, no whole-section buffer.
+      This digest is the **oracle** `EIMP-5`'s parallel path must reproduce
+      bit-for-bit — write it to be the reference, not a placeholder
 - [ ] Extend `Signer` (§S.4) to derive BOTH the Ed25519 stamp key and the
       section SLH-DSA key from one passphrase (Argon2id output expanded to
       the SLH-DSA seed; deterministic keygen)
 - [ ] Implement `sign`/`verify` over the digest; `.section.sig` file shape
       defined but written only to fixtures/tempdirs in tests, never the
       real corpus
+- [ ] Confirm core `einmo` gained no async runtime and no new heavy
+      dependency beyond `fips205` — the constraint `EIMP-4`'s split depends
+      on
 - [ ] Phase A2 tests green; `cargo fmt` / `cargo clippy -D warnings` clean;
       `#![forbid(unsafe_code)]` still holds (fips205 is pure Rust)
 
-## Phase B — CLI verbs
+## Phase B — review CLI verbs (in the `einmo-review-server` crate)
+
+Per `EIMP-4` §S.1 these operate on `EinmoReview` and therefore belong to
+`einmo-review-server`'s binary, not core `einmo`'s `cli.rs`. Until `EIMP-4`
+performs the split they land in this repo's existing binary; the split then
+moves them wholesale.
 
 - [ ] `einmo review plan|list|decide|undecide|execute` one-shot subcommands
       (journal-backed session identity) with endpoint-equivalent semantics;
       unit tests
 - [ ] Byte-for-byte equivalence test: `review execute` promotion == existing
       `einmo promote`
+      (note: `EIMP-2` Phase C already proved `EinmoReview::execute` ==
+      `transitions::promote` at the library level — this task is the *CLI*
+      surface's equivalent)
 
 ## Phase C — the server (EIMP-1.md §S.7)
 
-- [ ] `einmo review serve <suite>`: UDS listener by default; TCP 127.0.0.1 +
-      bearer token behind a flag; suite lockfile (second server refuses)
-- [ ] JSON endpoints per §S.7 table incl. If-Match/409 and SSE events;
-      endpoint tests against a tempdir suite; passphrase handled only
-      inside POST execute (derive-use-drop)
+- [x] UDS listener by default; suite session identity; the server calls
+      session-creation against itself at startup
+      (2026-07-29 18:26) — `EIMP-2` Phase D: `einmo-review-server` binds a
+      UDS at a configurable path, writes a `.session` sidecar, cleans both
+      up on exit, and refuses to start against a live socket (rebinding a
+      stale one).
+- [x] JSON endpoints: sessions, cases, case detail, body, flag, retract,
+      decision `PUT`/`DELETE`, plan, execute — with typed extractors and an
+      `ApiError`→HTTP-status mapping
+      (2026-07-29 18:26 → 2026-07-29, Phases D–I) — `EIMP-2`.
+- [ ] **TUI-owned private server mode (`EIMP-1.md` §S.7a)** — the default
+      launch shape: the client script starts its own server on a private,
+      unpredictable socket inside its mode-700 scratch dir, drives it, and
+      terminates it on exit (including `Ctrl-C`/abnormal exit, via the
+      script's existing `trap` cleanup plus the server's `ctrl_c` handler).
+      The standalone long-lived server stays available — this is an
+      additional default mode, not a replacement
+  - [ ] Upgrade `axum` 0.7.9 → 0.8.x and **delete** the hand-rolled UDS
+        accept loop (`hyper` HTTP/1.1 builder + `hyper-util` `TokioIo`/
+        `TowerToHyperService` + manual `UnixListener` loop) that `EIMP-2`
+        Phase D only needed because 0.7's `serve()` is TCP-only. Verify the
+        `Listener` impl for `tokio::net::UnixListener` is present in the
+        enabled feature set before deleting the glue, and re-check whether
+        `hyper`/`hyper-util` remain needed at all afterward
+  - [ ] Keep `EIMP-2` Phase D's stale-vs-live socket probe
+        (`UnixStream::connect` succeeds → refuse; fails → remove and
+        rebind). §S.7a's illustrative snippet unlinks unconditionally,
+        which would let a new server stomp a live one's socket
+  - [ ] Socket path is per-session and unpredictable inside the hardened
+        scratch dir — never a fixed world-known `/tmp` path
+- [ ] `einmo review serve` as a *subcommand* spelling (today it is a
+      standalone `einmo-review-server` binary); decide whether both spellings
+      survive the `EIMP-4` split or the subcommand form is dropped —
+      record the decision rather than doing it by default
+- [ ] TCP 127.0.0.1 + bearer token behind a flag (UDS remains the default).
+      Note `EIMP-2`'s standing caveat: the `checked to verified` passphrase
+      travels plaintext in the execute body, which is materially riskier
+      over TCP than over a UDS — resolve that *before* enabling TCP, not
+      after
+- [ ] Suite lockfile: a second server on the same suite refuses to start
+- [ ] The remaining §S.7 endpoints: `diff` (needs Phase A's `diff`),
+      claims, If-Match/409 (needs a `version` on items — see the Phase 0
+      finding that no cached worklist or version exists), and SSE events
 - [ ] Concurrency tests: N verifiers, single-flight verify counts, no lost
       updates, claims expire
 
-## Phase D — reduce `scripts/experimental_reviewer.sh` (EIMP-1.md §S.8)
+## Phase D — the thin client script (EIMP-1.md §S.8)
 
-- [ ] Add server discovery + `fetch_body`/decision/plan/execute thin-client
-      paths; keep the direct `einmo` fallback
-- [ ] Delete the superseded state machinery (decision arrays, undo/answer
+**Re-scoped 2026-07-30.** As written this phase said "reduce
+`scripts/experimental_reviewer.sh`". `EIMP-2` instead wrote a *new* thin
+client (`scripts/einmo_review_client.sh`, 352 lines vs the old script's
+1080) and deliberately left `experimental_reviewer.sh` untouched as
+reference material and fallback (`EIMP-2` §6). The reduction this phase
+existed to achieve has therefore already happened, by replacement rather
+than by edit.
+
+- [x] Server discovery + `fetch_body`/decision/plan/execute thin-client
+      paths
+      (2026-07-29) — `EIMP-2` Phases E–I, in the new client. No direct
+      `einmo` fallback: the new script fails fast if no server is reachable
+      (`EIMP-2` §6, a deliberate departure from this phase's original
+      "keep the direct fallback" instruction).
+- [x] Delete the superseded state machinery (decision arrays, undo/answer
       bookkeeping, results rendering, stats computation)
-- [ ] Pty-driven end-to-end tests (stub-vim technique): promote,
-      note→flag, u-revisit keeps answer, gate confirm/skip,
-      fallback-without-server
-- [ ] Measure and record here: line count and per-test spawn/verification
-      counts, before vs after
+      (2026-07-29) — achieved by not carrying it into the new script;
+      `experimental_reviewer.sh` retains it and is untouched by design.
+- [x] Pty-driven end-to-end tests: promote, flag, kick, u-revisit,
+      gate confirm, fail-fast-without-server
+      (2026-07-29) — `EIMP-2` Phases E–J and its comprehensive test.
+- [x] Measure and record here: line count, before vs after
+      (2026-07-29) — 1080 → 352 lines (a *new* script, not a reduction of
+      the old one). Per-test spawn/verification counts were not measured;
+      `VerifiedCache`'s single-flight hook exists for it if wanted later.
+- [ ] Decide the fate of `scripts/experimental_reviewer.sh`: keep as
+      fallback/reference, or delete now that the new client covers the loop.
+      `EIMP-4` §S.1 already excludes it from both published crates either
+      way — this is a repo-hygiene decision, not a packaging one
+- [ ] Client side of the TUI-owned private server (`EIMP-1.md` §S.7a):
+      launch the server on a private socket in the hardened scratch dir,
+      wait for it to be reachable, hold the session for the pass, and tear
+      it down on exit via the existing `trap` cleanup. Replaces today's
+      fail-fast-if-no-server startup check as the *default* path — keep an
+      opt-in flag for attaching to an already-running standalone server,
+      since `EIMP-2` Phase I's cross-invocation revisit test depends on
+      that mode existing
+- [ ] Wire the new client to whatever Phase A/C adds that it should surface:
+      `diff` hunks, `ReviewMode` selection, claims
 
 ## Phase E — dhtml frontend (EIMP-1.md §S.9)
+
+Ships in `einmo-review-server` (`EIMP-4` §S.1).
 
 - [ ] Single embedded page: 4-pane view, server diff hunks, verb buttons,
       notes→Flag, plan view with typed-PROMOTE gate, SSE refresh
@@ -151,8 +333,11 @@ EIMP (that integration is a later step). Prove the object in isolation;
 
 - [ ] Comprehensive test, per `EIMP-1.md` §Test Plan: scripted
       multi-verifier end-to-end session (two reviewers, mixed
-      individual/batch signing, crash-resume, drift) over a fixture suite;
-      stamp chains asserted with `einmo verify`.
+      individual/batch signing, crash-resume via the journal, drift) over a
+      fixture suite; stamp chains asserted with `einmo verify`.
+- [ ] STOP — maintainer performance-verifies the review loop end to end.
+      `EIMP-4` (publish) gates on this having happened, not merely on the
+      tests being green
 - [ ] Verify all work is committed on `main` and all tests pass
       (`cargo test`, `cargo clippy --all-targets -- -D warnings`,
       `cargo fmt --check`)
