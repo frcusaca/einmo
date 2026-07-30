@@ -87,6 +87,61 @@ alone, tree shape is reproducible across machines and filesystems for free,
 and a suite that configures a non-default collation gets a correspondingly
 different — but well-defined and self-describing — tree.
 
+### S.1a Collation conformance: the permutation-invariance test (normative)
+
+`EIMP-1` ships one sensible collation (`PathBytes`) and no tie-detection
+harness, because `PathBytes` compares raw bytes with no folding and
+therefore *cannot* tie among distinct paths. That changes the moment a
+**lossy** collation becomes possible — case-folding, Unicode-normalizing,
+or any ordering built on a key that discards information. `EIMP-1` §S.11a
+item 5 makes ties a hard error in every collation; this section supplies
+the test that can actually catch a violation, and makes passing it
+**normative for every `Collation` variant**, present and future.
+
+```rust
+// `sort_by` is STABLE (not `sort_unstable_by`) -- the stability is what
+// makes this a tie detector rather than a coin flip.
+let mut forward = alphabet.to_vec();
+forward.sort_by(|a, b| collation.cmp(a, b));
+
+let mut reversed: Vec<_> = alphabet.iter().rev().cloned().collect();
+reversed.sort_by(|a, b| collation.cmp(a, b));
+
+assert_eq!(forward, reversed);
+```
+
+**Why it works.** A stable sort preserves the input order of elements the
+comparator calls `Equal`. So if the collation is a genuine total order over
+the alphabet — no ties among distinct elements — every permutation of the
+input sorts to the same unique output, and forward and reversed agree. The
+instant the comparator returns `Equal` for two *distinct* elements, those
+two land in input order, which the reversal flips, and the assertion fails.
+One assertion catches the entire class of two-way folding bugs without
+enumerating pairs.
+
+Two properties not to weaken:
+
+- **The sort must be stable.** With `sort_unstable_by`, tied elements land
+  in an arbitrary order, so the test would fail *sometimes* — a flaky test
+  is worse than none, and would likely be "fixed" by deletion.
+- **It only catches ties among the elements actually present.** The
+  alphabet must *contain* the pairs that would collide under a lossy
+  collation: `'a'` and `'A'` for case folding, and the NFC and NFD
+  encodings of one grapheme for normalization. An ASCII-lowercase-only
+  alphabet would pass under a case-folding collation and prove nothing.
+
+Written as a **reusable harness every `Collation` variant is run through**,
+not a one-off — its value is constraining collations that do not exist yet.
+It complements rather than replaces §S.11a item 5's runtime error: the test
+proves totality over a representative alphabet, the runtime error catches
+what a real corpus produces that the alphabet did not anticipate.
+
+**Why this belongs here rather than in `EIMP-1`.** Ordering determines the
+byte-join's digest, but it determines a tree's *shape* — and a collation
+that ties would make the shape depend on discovery order, silently, in a
+way the byte-join would merely reorder. The stakes rise with this EIMP, so
+the harness lands with it.
+
 ### S.2 Tree construction
 
 - **Leaf digest**: `H(leaf_domain || mirror_path_bytes || file_bytes)` —

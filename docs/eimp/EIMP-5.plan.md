@@ -62,6 +62,16 @@ implementation of a wrong tree is worthless.
 - [ ] Write the ordering-independence test FIRST: the same file set fed in
       several shuffled discovery orders produces one root. The property the
       whole EIMP rests on
+- [ ] Write the **collation conformance harness** FIRST (`EIMP-5.md`
+      §S.1a): stable-sort an alphabet, stable-sort its reverse, assert they
+      agree — a tie detector that catches the whole class of two-way
+      folding bugs in one assertion. Build it as a reusable harness every
+      `Collation` variant is run through, not a one-off for `PathBytes`;
+      its value is constraining collations that do not exist yet. Two
+      things not to weaken: the sort must be `sort_by` (**stable**), since
+      `sort_unstable_by` makes it flaky rather than diagnostic; and the
+      alphabet must *contain* the colliding pairs (`'a'`/`'A'`, NFC/NFD of
+      one grapheme), or it proves nothing about a lossy collation
 - [ ] Write the domain-separation test FIRST: an input presenting an
       internal node's digest as a leaf must not verify (`EIMP-5.md` §S.2)
 - [ ] Write the digest-sensitivity tests FIRST: content alteration,

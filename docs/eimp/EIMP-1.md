@@ -728,6 +728,15 @@ pub enum Collation {
    produce one digest — so a collation that *can* produce ties (a
    case-folding one, say) is only admissible if it errors on them.
 
+**Conformance testing for future collations is `EIMP-5`'s job.** The
+default `PathBytes` cannot tie among distinct paths — it compares raw bytes
+with no folding, so distinct byte sequences compare distinct — which is why
+this EIMP ships it without a tie-detection harness. The moment a *lossy*
+collation becomes possible (case-folding, normalizing), item 5's rule needs
+a test that can actually catch a violation. `EIMP-5` §S.1a specifies that
+harness (stable-sort an alphabet, stable-sort its reverse, assert they
+agree) and makes passing it normative for every `Collation` variant.
+
 **Configurability's real consequence: the collation must be recorded in the
 signature.** Because the ordering determines the digest, a verifier that
 does not know which collation was used cannot distinguish "signed under a

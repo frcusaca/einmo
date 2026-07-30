@@ -50,7 +50,10 @@ nothing is dropped — both land after `EIMP-1`:
 - **`EIMP-5`** — Merkle-tree corpus signing: faster to compute, cheaper to
   update. `EIMP-1` ships the byte-join construction, which is correct and
   sufficient at current corpus sizes; this EIMP's plan benchmarks *before*
-  implementing, with "not worth merging" a legitimate outcome.
+  implementing, with "not worth merging" a legitimate outcome. Also carries
+  the collation conformance harness (§S.1a) — stable-sort an alphabet,
+  stable-sort its reverse, assert they agree — normative for every present
+  and future `Collation`.
 - **`EIMP-6`** — structured JSONL logging, and retiring the crash crumb.
   Per its §S.3, **crash-crumb work is frozen as of 2026-07-30**: the
   mechanism keeps working untouched but gains no new features or consumers
