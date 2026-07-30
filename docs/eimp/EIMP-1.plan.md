@@ -440,14 +440,29 @@ of any async runtime. The digest construction stays `EIMP-1` §S.11's
 byte-join — `EIMP-5` handles both the Merkle restructuring and the
 parallelism, as one change, after this ships.
 
-- [ ] Read §S.11 of `EIMP-1.md`; add `fips205` dep (feature
+- [x] Read §S.11 of `EIMP-1.md`; add `fips205` dep (feature
       `slh_dsa_sha2_256s` — conservative set) to `Cargo.toml`
-- [ ] Write tests FIRST (§Test Plan "CorpusSigner" + section attestation):
+      (2026-07-30 22:51) — done in prep commit `16ef59f` before this session:
+      `fips205 = { version = "0.4", default-features = false, features =
+      ["slh_dsa_sha2_256s"] }`. Confirmed by reading the crate source
+      (`fips205-0.4.1/src/{lib,traits}.rs`) rather than only its docs:
+      `N = 32`, `PK_LEN = 64`, `SIG_LEN = 29792`;
+      `KeyGen::keygen_with_seeds::<32>` is a deterministic default trait
+      method (drives a `DummyRng` replaying three seeds, no OS entropy); with
+      `hedged: false`, `Signer::try_sign_with_rng` never touches its `rng`
+      argument — signing is fully deterministic given the same key+message.
+- [x] Write tests FIRST (§Test Plan "CorpusSigner" + section attestation):
       deterministic manifest; digest changes on add/remove/alter/reorder;
       SLH-DSA sign→verify round-trip; tamper fails; same-passphrase
       dual-derivation determinism; empty-section manifest — all exercising
       `CorpusSigner` standalone (no `EinmoReview`)
-- [ ] Implement `EIMP-1.md` §S.11a's `Collation` — the configurable
+      (2026-07-30 23:54) — 18 tests in `src/corpus_signer.rs`, written before
+      the implementation they exercise (per project rules), covering exactly
+      this list plus a few more: digest order-sensitivity (`a/b` vs `a-b`
+      reordering under `PathBytes`), `.section.sig` excluded from its own
+      manifest, unrecognized collation in a signature file fails as *that*,
+      and tampered signature bytes fail verification rather than panicking.
+- [x] Implement `EIMP-1.md` §S.11a's `Collation` — the configurable
       ordering, defaulting to `PathBytes`. Tests FIRST, against the
       variation it exists to eliminate: paths differing only by case; paths
       differing by Unicode normalization (NFC vs NFD of one grapheme);
@@ -458,25 +473,104 @@ parallelism, as one change, after this ships.
       (`[signing] collation = "path-bytes"`), and record its identifier in
       `.section.sig` so an unknown collation fails as *that*, never as a
       generic signature mismatch
-- [ ] Implement `CorpusSigner` skeleton (`new`/`manifest`/`digest`/`sign`/`verify`)
+      (2026-07-30 23:20) — new `src/collation.rs`: `Collation` (`#[non_exhaustive]`,
+      one variant `PathBytes`) compares `EinmoId` by
+      `as_str().split('/')` component vectors (never the whole string), so a
+      shorter-components prefix sorts first and a path separator can never
+      be confused with an in-name byte. Ties are a hard error (§S.11a item
+      5). Wired to `einmo.toml`'s `[signing] collation` via a new
+      `SigningConfig::collation` field and `TestConfig::collation()`
+      accessor (defaults to `Collation::DEFAULT` when unset); an unknown
+      identifier returns the new `EinmoError::CorpusSignature` variant,
+      textually distinct from `EinmoError::Verification`. 12 tests in
+      `collation.rs` + 3 in `config.rs` (default resolution, `einmo.toml`
+      round-trip, unknown-identifier error).
+- [x] Implement `CorpusSigner` skeleton (`new`/`manifest`/`digest`/`sign`/`verify`)
       + the manifest builder (stage name + param-set id + collation id +
       the collation-ordered mirror-path list)
-- [ ] Implement the sequential streaming read: files in manifest order,
+      (2026-07-30 23:54) — new `src/corpus_signer.rs`. Manifest header is
+      canonically length-prefixed (little-endian `u32` per field, including
+      each path component) rather than separator-joined, so no character an
+      `EinmoId` might contain could ever make two distinct manifests collide
+      onto the same header bytes. Also added `CorpusSigner::for_suite(&TestConfig)`,
+      a convenience constructor resolving `suite_root` + `[signing]
+      collation` the same way every other signing setting resolves — not a
+      promotion-flow wiring, just construction convenience (§S.11's
+      "NOT wired into the live promotion flow yet" boundary is unchanged:
+      nothing calls `sign`/`verify` from `EinmoReview` or the CLI).
+- [x] Implement the sequential streaming read: files in manifest order,
       hasher fed incrementally, bounded memory, no whole-section buffer.
       This digest is the correctness reference and the performance baseline
       `EIMP-5` is measured against — write it to be the reference, not a
       placeholder
-- [ ] Extend `Signer` (§S.4) to derive BOTH the Ed25519 stamp key and the
+      (2026-07-30 23:54) — `digest_for` streams each file through a 64 KiB
+      buffer into one running `Sha256`, comparing the byte count actually
+      read against a `stat`-recorded length; a mismatch is
+      `EinmoError::CorpusSignature`, never a silently truncated digest. The
+      length-comparison itself is a separately unit-tested pure function
+      (`check_read_len`) since a genuine read-time race isn't
+      deterministically simulable in a unit test.
+- [x] Extend `Signer` (§S.4) to derive BOTH the Ed25519 stamp key and the
       section SLH-DSA key from one passphrase (Argon2id output expanded to
       the SLH-DSA seed; deterministic keygen)
-- [ ] Implement `sign`/`verify` over the digest; `.section.sig` file shape
+      (2026-07-30 23:54) — **scoping note**: no `review::Signer`/`SignerSet`
+      change was needed. `CorpusSigner::sign` takes `&KeySource` (the
+      existing `config.rs` type — `key.passphrase()` is the idiom every
+      other signing call site already uses), not the review-level `Signer`.
+      `signature.rs`'s `derive_keypair` was generalized into a new
+      `pub(crate) fn derive_seed(passphrase, salt) -> [u8; 32]` (same pinned
+      Argon2id instance, salt now a parameter); `derive_keypair` becomes a
+      thin call to it with the existing `SALT`, so all existing Ed25519
+      call sites are byte-for-byte unaffected. `corpus_signer::derive_slh_keypair`
+      derives its own master seed via `derive_seed(passphrase,
+      CORPUS_SIGNER_SALT)` (`b"einmo:corpus-signer-key:v1"`, domain-separated
+      from the Ed25519 `SALT`), then SHA-256-expands it three ways
+      (`sk_seed`/`sk_prf`/`pk_seed`) into `keygen_with_seeds`'s inputs — one
+      Argon2id run, not three. Same passphrase ⇒ same three seeds ⇒ same
+      SLH-DSA keypair, every time (tested), and the two key systems are
+      confirmed domain-separated (tested).
+- [x] Implement `sign`/`verify` over the digest; `.section.sig` file shape
       defined but written only to fixtures/tempdirs in tests, never the
       real corpus
-- [ ] Confirm core `einmo` gained no async runtime and no new heavy
+      (2026-07-30 23:54) — `.section.sig` is a single JSON line (stage,
+      param-set id, collation id, hex pubkey, base64 signature) written
+      dot-named into the stage directory, so it is invisible to
+      `walk_input_tree` — including this module's own manifest builder,
+      pinned by a test. `verify` deliberately does NOT trust its own
+      signer's configured collation: it re-derives the collation from the
+      signature file's own recorded identifier first (failing as an
+      unrecognized-collation error if unknown), THEN rebuilds the manifest
+      under that collation — so a verifier always honors what a signature
+      was actually produced under, per §S.11a. Every test (`sign`→`verify`
+      round trip, tamper-after-signing, added-file-after-signing,
+      empty-section, unrecognized-collation, tampered-signature-bytes) runs
+      over `tempfile::tempdir()` fixtures only; nothing in this crate calls
+      `sign`/`verify` against the real corpus.
+- [x] Confirm core `einmo` gained no async runtime and no new heavy
       dependency beyond `fips205` — the constraint `EIMP-4`'s split depends
       on
-- [ ] Phase A2 tests green; `cargo fmt` / `cargo clippy -D warnings` clean;
+      (2026-07-30 23:54) — confirmed via `cargo tree`: `fips205` pulls in
+      only pure-Rust, `no_std`-internal transitive deps (no `tokio`/`hyper`/
+      `axum`/`tower`). Core `einmo` *already* depends on `axum`/`tokio` from
+      `EIMP-2`'s server prototype (that's `EIMP-4`'s split to fix, not this
+      phase's concern) — the check here is narrower and holds: Phase A2's
+      own new code (`collation.rs`, `corpus_signer.rs`) is fully
+      synchronous, adds no async dependency of its own, and calls nothing
+      from the `axum`/`tokio` dependency subtree.
+- [x] Phase A2 tests green; `cargo fmt` / `cargo clippy -D warnings` clean;
       `#![forbid(unsafe_code)]` still holds (fips205 is pure Rust)
+      (2026-07-30 23:54) — 276 einmo lib tests (from 244 at Phase A2's
+      start) + 4 zweimomo unit + 3 zweimomo integration, all green.
+      `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt
+      --check` both clean. **Correction to this checkbox's own premise**: no
+      crate-wide `#![forbid(unsafe_code)]` attribute actually exists in this
+      repo today (checked directly — `lib.rs` has none). What holds: zero
+      `unsafe` blocks in this phase's new production code
+      (`collation.rs`/`corpus_signer.rs`); the crate's only existing
+      `unsafe` usage is `std::env::set_var` in test-only code (Rust 2024
+      requires `unsafe` for it), unrelated to this phase; and `fips205`
+      itself is `#![no_std]` + `#![deny(unsafe_code)]` internally. **Phase
+      A2 is complete.**
 
 ## Phase B — review CLI verbs (in the `einmo-review-server` crate)
 

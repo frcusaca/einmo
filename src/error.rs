@@ -64,6 +64,15 @@ pub enum EinmoError {
     /// No key material could be resolved for a signing operation.
     #[error("no signing key available: {0}")]
     NoKey(String),
+
+    /// Section-level post-quantum attestation (`CorpusSigner`, EIMP-1 §S.11)
+    /// failed: an unrecognized collation, a manifest/digest inconsistency, or
+    /// an SLH-DSA signature that did not verify. Deliberately distinct from
+    /// [`EinmoError::Verification`] (the per-file Ed25519 stamp-chain
+    /// checker) — a wrong-configuration error (e.g. an unknown collation
+    /// identifier) must never look like a tampered-corpus mismatch.
+    #[error("corpus signature error: {0}")]
+    CorpusSignature(String),
 }
 
 impl EinmoError {

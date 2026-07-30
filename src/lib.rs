@@ -20,8 +20,10 @@
 //! lives in [`verify`] with no filesystem/tty/Argon2 dependency (WASM-ready).
 
 mod cli;
+mod collation;
 mod compare;
 mod config;
+mod corpus_signer;
 mod einmo_suite;
 mod error;
 mod format;
@@ -34,8 +36,10 @@ mod transitions;
 mod verify;
 
 pub use cli::cli_main;
+pub use collation::Collation;
 pub use compare::{ComparisonResult, DiffEntry, MatchSections, compare};
 pub use config::{KeySource, Perspective, PerspectiveOf, StageDirs, TestConfig, resolve_stage_key};
+pub use corpus_signer::{CorpusSigner, SectionDigest, SectionManifest, SectionSig};
 pub use einmo_suite::{
     EinmoSuite, Evaluator, FailurePolicy, FileResult, Problem, SuiteIntegrity, TestResults,
     ValidationLevel, check_suite_integrity, count_flagged,

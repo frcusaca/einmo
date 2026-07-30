@@ -62,16 +62,28 @@ fn argon2_instance() -> Argon2<'static> {
 /// same Argon2id path so no raw secret bytes live in source.
 const COMPILED_KEY_SEED_PASSPHRASE: &str = "einmo-stock-compiled-key";
 
+/// Derive a 32-byte seed from `passphrase` via the pinned Argon2id instance,
+/// domain-separated by `salt`. The primitive both [`derive_keypair`] (the
+/// Ed25519 stamp key, salted with [`SALT`]) and `corpus_signer::CorpusSigner`
+/// (the section SLH-DSA key, `EIMP-1` §S.11, salted independently) build on
+/// — same expensive KDF step, different salts, so the two key systems never
+/// collide even when derived from the same passphrase.
+#[must_use]
+pub(crate) fn derive_seed(passphrase: &str, salt: &[u8]) -> [u8; 32] {
+    let mut seed = [0u8; 32];
+    argon2_instance()
+        .hash_password_into(passphrase.as_bytes(), salt, &mut seed)
+        .expect("Argon2id derivation cannot fail for valid pinned parameters");
+    seed
+}
+
 /// Derive a deterministic Ed25519 keypair from a passphrase via Argon2id.
 ///
 /// The empty passphrase (`""`) yields the **well-known computer/AI-agent key**.
 /// Same passphrase ⇒ same keypair, so keys are reproducible from a passphrase.
 #[must_use]
 pub(crate) fn derive_keypair(passphrase: &str) -> (SigningKey, VerifyingKey) {
-    let mut seed = [0u8; 32];
-    argon2_instance()
-        .hash_password_into(passphrase.as_bytes(), SALT, &mut seed)
-        .expect("Argon2id derivation cannot fail for valid pinned parameters");
+    let seed = derive_seed(passphrase, SALT);
     let signing = SigningKey::from(&seed);
     let verifying = signing.verifying_key();
     (signing, verifying)
