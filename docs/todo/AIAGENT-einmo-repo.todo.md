@@ -78,52 +78,23 @@
   Passphrase goes in the config file only, never in prose (per the first
   open item above).
 
-- [ ] **Design pass (2026-07-30): restructure corpus signing around a Merkle
-  tree** — digest/sign each file independently, then fold the per-file
-  digests up into a whole-tree digest, instead of `EIMP-1` §S.11's current
-  monolithic byte-join (concatenate every file's bytes in manifest order,
-  hash the whole buffer). This is the *structural* half of a two-part
-  split the maintainer called for on 2026-07-30: get the shape right so
-  that parallelism becomes near-drop-in (independent per-file work plus a
-  cheap associative combine) **without** committing to any heavy
-  parallelization machinery yet. The machinery itself is `EIMP-5`, which
-  explicitly waits on this design.
-  Why the tree shape is worth the restructuring, beyond parallelism:
-  - **Incremental re-signing.** Changing one file currently invalidates the
-    whole section digest, forcing a full re-read of every file. With a
-    tree, only the changed file's leaf and its ancestors need recomputing.
-  - **No offset choreography.** The byte-join design parallelizes only via
-    a two-pass metadata→offsets→disjoint-slice scheme, where a file
-    changing size between the two passes is a correctness hazard the code
-    must actively defend against (`EIMP-1` §S.11's "concurrency caveat").
-    A tree has no shared buffer and therefore no such race.
-  - **Localized tamper reporting.** A tree digest can identify *which*
-    file's subtree diverged; a monolithic hash can only say "something in
-    this section changed."
-  Open at design time: leaf granularity (whole file vs ranged chunks for
-  very large files), the internal-node combine function, how the tree shape
-  is pinned deterministically (it must not depend on discovery order), and
-  whether the per-file leaf digests are themselves independently signed or
-  only the root is. Likely deserves its own EIMP once sketched — record the
-  decision either way, since `EIMP-5.plan.md`'s second STOP gate blocks on
-  this being resolved *or* explicitly declined.
-
-- [ ] **Enhanced logging EIMP (2026-07-30)**: `EIMP-1`'s journal is
-  specified to log *enough* to serve the crash-crumb purpose, no more. A
-  follow-up EIMP should design einmo's logging properly: verbosity levels
-  (at the finest level, a record for each einmo case as it is read in and
-  verified), keyed by `EinmoId` end to end, and — the payoff — **retiring
-  the crash crumb entirely** in favor of journal entries. The crumb today
-  writes a placeholder `.einmo` into `output/` before every evaluation,
-  which pollutes the output tree; that pollution is exactly what forced the
-  `"TEST IN PROGRESS"` special-case into `EIMP-3`'s content/key decision
-  table (`einmo_suite.rs`'s `write_output`). An unmatched `case_start` with
-  no `case_end` in the journal carries strictly more information than a
-  placeholder file and leaves `output/` clean. Retiring it touches
-  `einmo_suite.rs`'s test-run path and existing tests (notably
-  `zweimomo`'s `crash_crumb_survives_stack_overflow` and einmo's
-  `catastrophe_crumb_*` tests), so it is deliberately *not* folded into
-  `EIMP-1`.
+- [x] Promoted to their own EIMPs (2026-07-30). Two items previously carried
+  here as design TODOs now have specifications of their own, so they are not
+  tracked in this list any more:
+  - **Merkle-tree corpus signing** → `EIMP-6` (`docs/eimp/EIMP-6.md`).
+    Includes the deterministic filename ordering the maintainer asked for
+    (§S.1): a total order computed from the mirror-relative paths
+    themselves — component-wise, byte-wise within a component, no locale
+    collation, no Unicode normalization, no case folding — so the tree's
+    shape never depends on filesystem enumeration order. `EIMP-5`'s second
+    STOP gate blocks on this EIMP.
+  - **Structured JSONL logging + retiring the crash crumb** → `EIMP-7`
+    (`docs/eimp/EIMP-7.md`). Per its §S.3, **crash-crumb work is frozen as
+    of 2026-07-30**: no new crumb features, config knobs, or consumers of
+    the `"TEST IN PROGRESS"` prefix. The existing mechanism keeps working
+    untouched until `EIMP-7` retires it.
+  Neither has a plan file yet, deliberately — both land after `EIMP-1`, and
+  their shape depends on what it produces.
 
 - [ ] Design pass (2026-07-30): `Perspective`/`PerspectiveOf` currently live
   as a `TestConfig`-level list of `(name, extract: fn(&str) -> String)`

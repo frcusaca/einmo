@@ -6,7 +6,7 @@ bottom. Work happens directly on `main` (`EIMP-0` §8).
 **Deferred by design.** This plan is written now so the deferral is
 tracked rather than forgotten, but it does not begin until its
 dependencies land — `EIMP-1`'s single-threaded `CorpusSigner` (the
-correctness oracle) and the Merkle-tree corpus-signing design TODO (the
+correctness oracle) and `EIMP-6`'s Merkle-tree restructuring (the
 structure that makes the machinery small). The STOP gates below enforce
 both.
 
@@ -14,11 +14,11 @@ both.
       exists: `manifest`/`digest`/`sign`/`verify` implemented and tested.
       That serial implementation is this EIMP's correctness oracle; without
       it there is nothing to prove equivalence against
-- [ ] STOP — the Merkle-tree corpus-signing design TODO
-      (`docs/todo/AIAGENT-einmo-repo.todo.md`) has been resolved, either as
-      its own EIMP or as an accepted decision not to restructure. If the
-      answer is "no restructuring," re-read `EIMP-5.md` Rejected
-      Alternative C — this plan's shape changes materially
+- [ ] STOP — `EIMP-6` (Merkle-tree corpus signing) is `complete`, or has
+      been explicitly declined. If declined, re-read `EIMP-5.md` Rejected
+      Alternative C — parallelizing the byte-join is a materially different
+      (and larger) job than parallelizing a tree, and this plan's Phase B
+      changes shape accordingly
 - [ ] STOP — preconditions: `cargo test --workspace`, `cargo clippy
       --workspace --all-targets -- -D warnings`, `cargo fmt --check` all
       clean

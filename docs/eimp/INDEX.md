@@ -21,6 +21,8 @@ ls docs/eimp | rev | sort -V | rev
 | [EIMP-3](EIMP-3.md) | Output-stage drift fails the run; explicit regenerate; multi-signer output stamps | complete | 2026-07-30 | Claude Code (Sonnet 5) |
 | [EIMP-4](EIMP-4.md) | Split einmo into core + einmo-review-server, publish both to crates.io at 0.0.6 | Draft | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-5](EIMP-5.md) | Parallelized corpus signing — parallel machinery over the Merkle-structured CorpusSigner | Draft | 2026-07-30 | Claude Code (Opus 5) |
+| [EIMP-6](EIMP-6.md) | Merkle-tree corpus signing with a deterministic filename ordering | Draft | 2026-07-30 | Claude Code (Opus 5) |
+| [EIMP-7](EIMP-7.md) | Structured JSONL logging, and retiring the crash crumb | Draft | 2026-07-30 | Claude Code (Opus 5) |
 
 ---
 
@@ -42,15 +44,37 @@ The sprint's EIMPs, in execution order:
    publish both at `0.0.6`, repoint `foolish-ubca` and `/yolo/src/zweimomo`
    at the published crate, delete the vendored copy.
 
-Explicitly **outside** the sprint: `EIMP-5` (parallel corpus signing — the
-serial implementation ships in `EIMP-1` and is sufficient at current corpus
-sizes), the Merkle-tree restructuring design, and the logging EIMP that
-would retire the crash crumb. All three are recorded rather than dropped —
-see `docs/todo/AIAGENT-einmo-repo.todo.md`.
+Explicitly **outside** the sprint, each with its own specification so
+nothing is dropped — all three land after `EIMP-1`, and none has a plan
+file yet because their shape depends on what `EIMP-1` produces:
+
+- **`EIMP-6`** — Merkle-tree corpus signing with a deterministic filename
+  ordering. `EIMP-5` blocks on it.
+- **`EIMP-5`** — parallel corpus signing. The serial implementation ships
+  in `EIMP-1` and is sufficient at current corpus sizes; its plan
+  benchmarks *before* implementing, with "not worth merging" a legitimate
+  outcome.
+- **`EIMP-7`** — structured JSONL logging, and retiring the crash crumb.
+  Per its §S.3, **crash-crumb work is frozen as of 2026-07-30**: the
+  mechanism keeps working untouched but gains no new features or consumers
+  while scheduled for removal.
 
 ---
 
 ## Last Updated
+
+**Date**: 2026-07-30 (4)
+**Updated By**: Claude Code (Opus 5)
+**Changes**: Promoted the two remaining design TODOs to full EIMPs, both
+without plan files by design (they land after `EIMP-1` and their shape
+depends on it). `EIMP-6` specifies Merkle-tree corpus signing, including
+the deterministic filename ordering that pins the tree's shape: a total
+order computed from mirror-relative paths alone — component-wise, byte-wise
+within a component, no locale collation, no Unicode normalization, no case
+folding — so filesystem enumeration order can never change a root digest.
+`EIMP-7` specifies structured JSONL logging and the crash crumb's
+retirement, and freezes further crumb work as of today. `EIMP-5`'s STOP
+gate now blocks on `EIMP-6` rather than on a TODO.
 
 **Date**: 2026-07-30 (3)
 **Updated By**: Claude Code (Opus 5)

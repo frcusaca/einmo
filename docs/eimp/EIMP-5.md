@@ -52,7 +52,7 @@ mid-flight, the work is split:
   section in manifest order and feeds the hasher. Correct, deterministic,
   zero new dependencies, and — critically — it establishes the digest that
   any parallel implementation must reproduce bit-for-bit.
-- **A repo TODO carries the structural design** (`docs/todo/AIAGENT-einmo-repo.todo.md`):
+- **`EIMP-6` carries the structural design** (`docs/eimp/EIMP-6.md`):
   restructure corpus signing around a Merkle tree — sign/digest each file
   independently, then fold those digests into a tree digest. This is the
   part that makes parallelism *cheap*: independent per-file work with a
@@ -190,5 +190,7 @@ that falls out of a tree structure for free.
   `tokio` from core `einmo` and thereby invalidated the original
   worker-pool choice; §Test Plan's dependency-tree assertion is the
   constraint this EIMP must not break.
-- `docs/todo/AIAGENT-einmo-repo.todo.md` — the Merkle-tree corpus-signing
-  design TODO that this EIMP builds on.
+- `EIMP-6` (`docs/eimp/EIMP-6.md`) — the Merkle-tree corpus-signing
+  restructuring this EIMP builds on; its deterministic filename ordering
+  (§S.1) is what makes the tree shape — and therefore the parallel fold —
+  reproducible. This EIMP's second STOP gate blocks on it.

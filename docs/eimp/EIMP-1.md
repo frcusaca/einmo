@@ -449,8 +449,10 @@ touches `einmo_suite.rs`'s test-run path — a different layer from the
 review session — and would invalidate existing tests
 (`crash_crumb_survives_stack_overflow` in `zweimomo`, einmo's
 `catastrophe_crumb_*` tests). It is carried as a follow-up logging EIMP in
-`docs/todo/AIAGENT-einmo-repo.todo.md`, alongside the broader logging
-design.
+`EIMP-7` (`docs/eimp/EIMP-7.md`), alongside the broader logging design.
+Per `EIMP-7` §S.3, crash-crumb work is frozen as of 2026-07-30: the
+mechanism keeps working untouched, but gains no new features or consumers
+while it is scheduled for removal.
 
 **Quorum policies are explicitly OUT of scope for this EIMP (resolved).**
 "Quorum" is not yet a defined concept in einmo — this EIMP only facilitates
@@ -709,7 +711,7 @@ This serial digest is the **oracle**: any future parallel implementation
 must reproduce it bit-for-bit. Parallelizing it is deferred to `EIMP-5`,
 and the structural work that makes parallelism cheap — restructuring the
 corpus digest around a Merkle tree rather than a monolithic byte-join — is
-carried as a design TODO in `docs/todo/AIAGENT-einmo-repo.todo.md`. Doing
+specified by `EIMP-6` (`docs/eimp/EIMP-6.md`). Doing
 the structure first is deliberate: mapping an independent digest over each
 file and folding the results needs no shared buffer, no offset
 choreography, and no defense against files changing size between two
