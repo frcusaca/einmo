@@ -97,6 +97,21 @@
   Neither has a plan file yet, deliberately — both land after `EIMP-1`, and
   their shape depends on what it produces.
 
+- [ ] Promote `scripts/experimental_reviewer.sh` to be the default
+  `cargo einmo review` program (added 2026-07-30). Today it is reference
+  material / a fallback (`EIMP-1.plan.md` Phase D already carries "decide
+  the fate of `scripts/experimental_reviewer.sh`" as an open checkbox); this
+  item goes further and proposes it become the actual default entry point
+  for `cargo einmo review` once the new thin client
+  (`scripts/einmo_review_client.sh`, from `EIMP-2`) covers its loop. Likely
+  needs **suite auto-discovery**: today a suite is named explicitly on the
+  command line, but a default `cargo einmo review` invoked with none given
+  would need to find all einmo suites in the current project (walk for
+  `einmo.toml` / stage-directory shape) rather than requiring the caller to
+  point at one. Noted here so it isn't lost; not acted on yet — likely folds
+  into `EIMP-1` Phase D or its own small follow-up EIMP once Phase D's
+  existing "decide the fate of the script" checkbox is reached.
+
 - [ ] Design pass (2026-07-30): `Perspective`/`PerspectiveOf` currently live
   as a `TestConfig`-level list of `(name, extract: fn(&str) -> String)`
   closures (`src/config.rs`), applied ad hoc inside `write_output`
