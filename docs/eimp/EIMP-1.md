@@ -2,11 +2,11 @@
 eimp: 1
 title: EinmoReview — a thread-safe review-session object; thin bash, server, and dhtml frontends
 author: Atlas <hc.busy@gmail.com> (ported by Claude Code (Sonnet 5) <noreply@anthropic.com>)
-status: Draft
+status: Implementing
 type: Standards
 created: 2026-07-19
 supersedes: []
-begun: [ ]
+begun: [x]
 ---
 
 # EIMP-1: EinmoReview — a thread-safe review-session object; thin bash, server, and dhtml frontends
@@ -30,11 +30,15 @@ with the following adaptations from the original:
   since they explain the design's provenance, but they are not actionable
   EIMPs here — if this repository ever needs their content, it should be
   ported the same way this document was.
-- The status is left as `Draft`/`begun: [ ]`, matching the original: this
-  design has **not been implemented**. No `einmo::review` module exists in
-  `src/` today.
+- The status was left as `Draft`/`begun: [ ]` when first ported (2026-07-29):
+  the design had not been implemented and no `einmo::review` module existed
+  in `src/`. As of 2026-07-30, the Open Questions below are resolved and
+  work has begun (`status: Implementing`, `begun: [x]`) — see
+  `EIMP-1.plan.md` for progress.
 
-Everything else below is the original specification, unchanged in substance.
+Everything else below is the original specification (adjusted only where
+the Open Questions section below records a resolution), unchanged in
+substance otherwise.
 
 ## Abstract
 
@@ -168,7 +172,7 @@ pub struct EinmoReview {
 }
 
 impl EinmoReview {
-    pub fn open(suite: &Path, opts: ReviewOpts) -> Result<Self>;   // opts: differing_only, filter
+    pub fn open(suite: &Path, opts: ReviewOpts) -> Result<Self>;   // opts: mode, filter
     pub fn items(&self) -> Vec<ReviewItem>;                        // worklist rows + current decisions
     pub fn body(&self, m: &MirrorPath, s: Stage) -> Result<Arc<VerifiedBody>>;
     pub fn diff(&self, m: &MirrorPath, l: Stage, r: Stage) -> Result<DiffHunks>;
@@ -181,6 +185,26 @@ impl EinmoReview {
     pub fn refresh(&self) -> Vec<MirrorPath>;                      // rescan; stale decisions flagged
 }
 ```
+
+**`ReviewOpts.mode` (resolved — was "does `differing_only` default on?").**
+Not a boolean: a runtime-selectable `ReviewMode`.
+
+```rust
+pub enum ReviewMode {
+    Full,               // every item in the worklist
+    Random,             // worklist in randomized order (sampling a large suite)
+    NewOrBroken,        // only items with no baseline yet, or a content mismatch
+}
+```
+
+`NewOrBroken` is what the old `differing_only` boolean was reaching for,
+generalized: an item qualifies when its candidate stage's content doesn't
+match the next stage up (the same content-section comparison `compare.rs`
+already performs — INPUT/OUTPUT[*]/PERSPECTIVE/DIFF sections, never STAMPS),
+OR when the next stage has no artifact at all yet. `Full` is the default
+(matches `EIMP-2`'s existing unfiltered list behavior — no surprise
+narrowing for a script that's always shown everything); `NewOrBroken` and
+`Random` are opt-in via `ReviewOpts`.
 
 **Single-flight verification**: `VerifiedCache` maps
 `Fingerprint → Arc<OnceLock<VerifiedBody>>`. The map lock is held only to
@@ -311,14 +335,53 @@ the durable home of "promote several stages in one go, one passphrase."
 Ordered-apply-under-one-key lives in the library so every frontend (bash,
 server, MCP) inherits it.
 
+### S.4a Content-then-key decision for `execute`'s promote (multi-signer accumulation)
+
+**Resolved — replaces `transitions::promote`'s always-fresh-copy behavior
+for the `EinmoReview::execute` path.** Today's `transitions::promote`
+(`src/transitions.rs`) always copies the source stage's file to the
+destination and appends exactly one stamp — it never inspects whatever
+might already be sitting at the destination. `EinmoReview::execute`
+promoting into `checked`/`verified` instead applies the same
+content-then-key decision table this EIMP's sibling, `EIMP-3`, gives the
+core test-run path for `output` (`EIMP-3.md` §Specification "Content/key
+decision table") — restated here for `checked`/`verified`:
+
+| Existing destination file | Content sections match the promotion candidate? | Promoting signer's key already among existing `stage:<dest>` stamps? | Outcome |
+|---|---|---|---|
+| absent (or corrupt) | n/a | n/a | write fresh, sign, done (today's behavior, unchanged) |
+| present | no | n/a | this is a genuine new baseline: write fresh content, fresh stamp chain from scratch (old stamps do not carry over onto different content) |
+| present | yes | yes | no-op: destination file stays byte-for-byte untouched, no rewrite, no timestamp change |
+| present | yes | no | **append** the promoting signer's `stage:<dest>` stamp to the *existing* destination file in place; every prior stamp (including other signers') is preserved |
+
+"Was it signed by me" (today's implicit single-signer assumption) becomes
+"is at least one of the existing stamps mine — others may also be present
+and are left alone." This is the semantics `S.5` below already describes in
+prose ("Multiple `verified` stamps are accumulated attestation"); this
+subsection makes it a concrete, implementable decision table and extends it
+to `checked` as well as `verified` (previously only `verified` was
+described as accumulating). Content comparison and the exact-pubkey stamp
+lookup are the same primitives `EIMP-3` introduces (`Stamps`'s exact-pubkey
+lookup, alongside the existing prefix-based `stamped_by`) — implementers
+should share that helper between the two EIMPs where it falls out naturally
+rather than duplicating it, per `EIMP-3.md`'s own scope-boundary note.
+
 ### S.5 Concurrency semantics for multiple verifiers
 
 - Per-reviewer decisions coexist; replace-not-stack holds *within* a
   reviewer. Executing appends that reviewer's stamps; a second verifier
-  executing later appends theirs. Multiple `verified` stamps are accumulated
-  attestation, surfaced via `Stamps::stamped_by`.
+  executing later appends theirs (§S.4a's decision table). Multiple
+  `checked`/`verified` stamps are accumulated attestation, surfaced via
+  `Stamps::stamped_by`.
 - Soft claims (`claim(m, ttl)`) advertise "I'm on this one" in listings;
-  advisory only, cannot wedge.
+  advisory only, cannot wedge. **Default TTL: 5 minutes (resolved)** —
+  short enough to suit an interactive review pass; an expired claim is
+  reclaimed automatically (silently released back to the pool, no action
+  needed from the original claimant) rather than requiring an explicit
+  release call. **Active claims ARE surfaced in `plan()`'s output
+  (resolved)** — a reviewer sees what another reviewer currently holds (and
+  its remaining TTL) before deciding, so two reviewers don't collide on the
+  same item.
 - The `exec` mutex serializes disk mutation; each write re-checks the file
   fingerprint first — anything drifted since planning is skipped-and-
   reported, never clobbered.
@@ -327,12 +390,24 @@ server, MCP) inherits it.
 
 ### S.6 The journal
 
-Append-only JSONL per session (dot-named inside the suite or under a scratch
-dir — decided at implementation; einmo's walkers skip dot entries): session
-id, reviewer, timestamp, produced_by, every decide/undecide/claim/execute
-with outcomes. Reopen = replay. This is the audit and crash-recovery
-substrate, and what a later quorum policy ("verified needs 2 distinct human
-stamps") reads.
+Append-only JSONL per session, under a **scratch/state directory** (resolved
+— not a suite dot-file: the journal is ephemeral session/process state, not
+part of the reviewed corpus, and should not travel with it or show up in
+`git status` for the suite's own repository). Path follows the same
+scratch-dir hardening `EIMP-2`'s client script already established
+(`einmo_review_client.sh`'s `umask 077`/`harden_dir` pattern) — one journal
+file per session id. Contents: session id, reviewer, timestamp,
+produced_by, every decide/undecide/claim/execute with outcomes. Reopen =
+replay. This is the audit and crash-recovery substrate.
+
+**Quorum policies are explicitly OUT of scope for this EIMP (resolved).**
+"Quorum" is not yet a defined concept in einmo — this EIMP only facilitates
+*multiple parties independently signing* the same stage (§S.4a's
+accumulation), with no N-of-M policy engine deciding when that's "enough."
+Whether some future gate should require e.g. 2 distinct human stamps before
+treating `verified` as complete is left for a follow-up EIMP if and when
+it's needed; nothing here blocks building it later, since the journal
+already records every stamping event a quorum policy would need to read.
 
 ### S.7 The server — one running review
 
@@ -476,12 +551,22 @@ both fast AND deterministic:
    per-file heap churn.
 2. **Parallel read pass** — because every file's destination is a
    **disjoint** `&mut` sub-slice (`buffer[offset..offset+len]`), N worker
-   threads can `read_exact` into their slices with **no locking and no data
+   tasks can `read_exact` into their slices with **no locking and no data
    races** (Rust's borrow checker witnesses the disjointness via
    `split_at_mut`/chunked slicing). This saturates disk queue depth on many
-   small files and memory bandwidth on large ones. A sketch of the
-   sequential core (the parallel version splits the `(path, slice)` pairs
-   across a small thread pool / `rayon`):
+   small files and memory bandwidth on large ones. **Worker pool: `tokio`
+   (resolved — not `rayon`, not a hand-rolled `std` thread pool).** `tokio`
+   is already a dependency (the `EIMP-2` server stack, §S.7); reusing its
+   blocking-task pool (`tokio::task::spawn_blocking` per disjoint chunk,
+   `try_join_all`/`JoinSet` to await them) avoids adding `rayon` as a new
+   dependency AND avoids hand-rolling a second thread pool implementation
+   for what `tokio`'s existing blocking pool already does — `CorpusSigner`
+   itself stays synchronous-callable (its methods are not `async fn`; they
+   internally build or reuse a small current-thread/multi-thread `tokio`
+   runtime just for this bounded read fan-out, so non-async callers like the
+   CLI are unaffected). A sketch of the sequential core (the parallel
+   version splits the `(path, slice)` pairs across `spawn_blocking` tasks
+   bounded by `read_workers`):
 
    ```rust
    // sizes/offsets from the metadata pass; `buffer` is one allocation.
@@ -664,23 +749,36 @@ every future frontend would re-implement review semantics.
 
 ## Open Questions
 
-- HTTP stack for `serve`: `tiny_http`-class minimal (fits UDS-first,
-  dependency-light) vs a fuller framework like axum. Decide at begun-time.
-- Journal location: dot-file inside the suite (travels with the corpus,
-  git-visible) vs scratch/state dir (ephemeral). Leaning suite-dot-file for
-  auditability; confirm with human.
-- Claim lease TTL default and whether claims appear in `plan()` output.
-- Quorum policies (N-of-M human stamps for `verified`) — in scope here or a
-  follow-up EIMP?
-- Whether `ReviewOpts.differing_only` defaults on.
-- Parallel section-read (§S.11): `rayon` (ergonomic, another dep) vs a small
-  hand-rolled std thread-pool (keeps the crate leaner). Either way the
-  single-threaded fallback must be byte-identical. Also: worker-count
-  default / config knob, and whether to range-split individual very large
-  files.
+All resolved at begun-time (2026-07-30) — design is frozen:
+
+- **HTTP stack**: `axum` (0.7.9) + `hyper`/`hyper-util`/`tower`, matching
+  `EIMP-2`'s already-proven stack over a unix-domain socket. No switch to a
+  more minimal framework — reuse what's already working.
+- **Journal location**: a scratch/state directory (not a suite dot-file).
+  See §S.6.
+- **Claim lease TTL**: 5 minutes, auto-reclaimed on expiry; active claims
+  ARE surfaced in `plan()`. See §S.5.
+- **Quorum policies**: out of scope for this EIMP entirely (not deferred as
+  "maybe later in this EIMP" — genuinely not a defined concept yet). This
+  EIMP only facilitates multi-party signature accumulation (§S.4a); a
+  quorum policy engine, if ever needed, is a distinct follow-up EIMP. See
+  §S.6.
+- **`ReviewOpts` mode default**: not a boolean — a runtime-selectable
+  `ReviewMode` (`Full` default, plus `Random` and `NewOrBroken`). See §S.2.
+- **Parallel section-read worker pool (§S.11)**: `tokio` (already a
+  dependency via the server stack), not `rayon` and not a hand-rolled `std`
+  thread pool. See §S.11.
+- **Phase A2 (`CorpusSigner`) scope**: confirmed in-scope for this EIMP
+  (crypto core + tests only, per §S.11's existing "not wired into the live
+  promotion flow yet" boundary — that boundary is unchanged, only the
+  worker-pool choice above changed).
 
 ## References
 
+- **EIMP-3** — the core-test-run (`output`-stage) analogue of this EIMP's
+  §S.4a multi-signer content-then-key decision table; the two EIMPs share
+  the same decision shape over separate code paths (`transitions::promote`
+  here, `write_output` there).
 - **FOOP-25** (`foolish-rust`) — the original specification this EIMP is
   ported from.
 - **FOOP-15** (`foolish-rust`) — secured interactive einmo review: the

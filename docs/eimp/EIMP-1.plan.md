@@ -6,15 +6,27 @@ original `FOOP-25.plan.md` (in `foolish-rust`), with worktree/branch
 mechanics removed: einmo is a small, single-maintainer repository, so this
 plan executes directly on `main` with regular commits (`EIMP-0` §8).
 
-- [ ] STOP — preconditions: all workspace tests pass (`cargo test`,
+- [x] STOP — preconditions: all workspace tests pass (`cargo test`,
       `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`). Do
       not begin while any test is broken.
-- [ ] Sanity check: consult human to resolve `EIMP-1.md` §Open Questions
+      (2026-07-30 06:05) — 190 workspace tests, clippy/fmt clean.
+- [x] Sanity check: consult human to resolve `EIMP-1.md` §Open Questions
       (HTTP stack, journal location, differing default) enough to start
       Phase A. Remind them: "Above message comes from EIMP-1 working to
       build the EinmoReview session object; changes are on `main`. PTAL"
-- [ ] Begin work: check `begun: [x]` in `EIMP-1.md` frontmatter, commit
+      (2026-07-30 06:05) — all six Open Questions resolved via direct
+      conversation with the human (not just the three named above): HTTP
+      stack (keep axum), journal location (scratch/state dir), claim TTL
+      (5 min, auto-reclaim, shown in `plan()`), quorum (out of scope
+      entirely, not just deferred), `ReviewOpts` mode (runtime-selectable
+      `Full`/`Random`/`NewOrBroken`, not a boolean default), and Phase A2's
+      parallel-read worker pool (`tokio`, not `rayon`/hand-rolled).
+      Additionally resolved and written into `EIMP-1.md` §S.4a: the
+      multi-signer content-then-key decision table for `checked`/`verified`
+      promotion (paired with the new `EIMP-3` for `output`'s analogue).
+- [x] Begin work: check `begun: [x]` in `EIMP-1.md` frontmatter, commit
       `EIMP-1.md` stating that work has commenced
+      (2026-07-30 06:05)
 
 ## Phase 0 — drift re-survey (EIMP-1.md §S.10)
 
@@ -82,10 +94,10 @@ EIMP (that integration is a later step). Prove the object in isolation;
       + the manifest builder (stage name + param-set id + sorted
       mirror-path list via the existing deterministic walk)
 - [ ] Implement `ReadStrategy::ParallelBuffer` (DEFAULT): metadata→offsets→one
-      allocation; parallel `read_exact` into disjoint slices, bounded
-      worker pool; short/long-read hard error; hand the whole buffer to the
-      signer (add `rayon` OR a small std thread-pool — decide at
-      begun-time, see Open Q)
+      allocation; parallel `read_exact` into disjoint slices via `tokio`
+      `spawn_blocking` tasks bounded by `read_workers` (resolved: `tokio`,
+      not `rayon`/hand-rolled — `EIMP-1.md` §S.11); short/long-read hard
+      error; hand the whole buffer to the signer
 - [ ] Implement `ReadStrategy::Stream` (alternative): sequential
       manifest-order read feeding the hasher incrementally, bounded memory;
       assert byte-identical digest to `ParallelBuffer`
