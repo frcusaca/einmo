@@ -149,8 +149,10 @@ pub fn promote(
 }
 
 /// Move every matching file from `stage` into `flagged/`, appending an unsigned
-/// advisory line. Re-flagging the same test REPLACES its flagged file (flags
-/// are plaintext, transient dev-process markers — FOOP-25 §S.3).
+/// advisory block. Re-flagging the same test CONCATENATES a new dated block
+/// on top of whatever is already flagged there, rather than replacing it
+/// (flags are plaintext, transient dev-process markers, but they accumulate
+/// a history — `EIMP-1` §S.3).
 ///
 /// # Errors
 ///
@@ -172,13 +174,27 @@ pub fn flag(
         let src = from_dir.join(&rel);
         // Verify-on-inspect before moving.
         let mut file = EinmoFile::from_file(&src)?;
-        let advisory = format!("# flagged: {reason} {timestamp}");
+        let new_block = format!("# flagged: {reason} {timestamp}");
+
+        // Flags are plaintext, transient dev-process markers (EIMP-1 §S.3),
+        // but re-flagging the same test CONCATENATES: the new dated block
+        // goes on top, any already-flagged content (itself possibly already
+        // concatenated) stays below. Flags accumulate a history — they
+        // never silently replace one another. The existing flagged file, if
+        // any, is still a fully signed `.einmo` envelope (its stamps came
+        // from whichever stage it was originally flagged from); only its
+        // unsigned trailing advisory line is read here, so this never
+        // touches signed content.
+        let dst = flagged_dir.join(&rel);
+        let advisory = match EinmoFile::from_file(&dst)
+            .ok()
+            .and_then(|existing| existing.advisory().map(str::to_string))
+        {
+            Some(existing) => format!("{new_block}\n{existing}"),
+            None => new_block,
+        };
         file.set_advisory(advisory);
 
-        // Flags are plaintext, transient dev-process markers (FOOP-25 §S.3):
-        // re-flagging the same test REPLACES the existing flagged file rather
-        // than accumulating suffixed copies. Plain overwrite at the mirror path.
-        let dst = flagged_dir.join(&rel);
         ensure_parent_dir(&dst)?;
         let bytes = file.serialize()?;
         std::fs::write(&dst, &bytes).map_err(|e| EinmoError::io(&dst, e))?;
@@ -648,10 +664,11 @@ mod tests {
     }
 
     #[test]
-    fn reflag_replaces_the_existing_flagged_file() {
-        // Flags are plaintext, transient dev-process markers (FOOP-25 §S.3):
-        // re-flagging the same test REPLACES the flagged file, it does not
-        // accumulate suffixed files.
+    fn reflag_concatenates_with_the_existing_flagged_note() {
+        // Flags are plaintext, transient dev-process markers (EIMP-1 §S.3),
+        // but they accumulate a HISTORY: re-flagging the same test
+        // CONCATENATES a new dated block on top of whatever is already
+        // flagged there — it never silently discards an earlier note.
         let (_tmp, config) = suite();
         write_output(&config, "a.foo", "5");
         flag(&config, Stage::Output, None, "first", None).unwrap();
@@ -659,15 +676,42 @@ mod tests {
         write_output(&config, "a.foo", "5");
         flag(&config, Stage::Output, None, "second", None).unwrap();
         let flagged_dir = config.stage_dir(Stage::Flagged);
-        // Exactly one flagged file — the re-flag overwrote, not suffixed.
+        // Exactly one flagged file — re-flagging still lands at the one
+        // mirror path, it does not suffix a second file.
         let count = fs::read_dir(&flagged_dir).unwrap().count();
-        assert_eq!(count, 1, "re-flag must replace, not add a suffixed file");
-        // And it carries the newest note.
+        assert_eq!(
+            count, 1,
+            "re-flag must land at one mirror path, not a suffixed file"
+        );
         let flagged = flagged_dir.join("a.foo.einmo");
         let file = EinmoFile::from_file(&flagged).unwrap();
+        let advisory = file.advisory().unwrap();
         assert!(
-            file.advisory().unwrap().starts_with("# flagged: second"),
-            "the replacing flag's advisory must win"
+            advisory.starts_with("# flagged: second"),
+            "the newest flag's block goes on top: {advisory:?}"
+        );
+        assert!(
+            advisory.contains("# flagged: first"),
+            "the earlier flag's note must survive, not be discarded: {advisory:?}"
+        );
+    }
+
+    #[test]
+    fn triple_reflag_preserves_every_prior_block_in_order() {
+        let (_tmp, config) = suite();
+        for reason in ["first", "second", "third"] {
+            write_output(&config, "a.foo", "5");
+            flag(&config, Stage::Output, None, reason, None).unwrap();
+        }
+        let flagged = config.stage_dir(Stage::Flagged).join("a.foo.einmo");
+        let file = EinmoFile::from_file(&flagged).unwrap();
+        let advisory = file.advisory().unwrap();
+        let first = advisory.find("# flagged: first").unwrap();
+        let second = advisory.find("# flagged: second").unwrap();
+        let third = advisory.find("# flagged: third").unwrap();
+        assert!(
+            third < second && second < first,
+            "blocks must appear newest-first, all three surviving: {advisory:?}"
         );
     }
 

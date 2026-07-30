@@ -249,13 +249,41 @@ verbs belong to that crate's binary, not core's `cli.rs`.
       equivalence test still passes unmodified (first-time promotion is
       the same "absent dest → fresh write" path as before). 214 workspace
       tests, clippy/fmt clean.
-- [ ] Flag = plaintext, **concatenating** (§S.3): `flagged/` is
+- [x] Flag = plaintext, **concatenating** (§S.3): `flagged/` is
       PLAINTEXT/unsigned/transient; execute writes the annotated note as
       plaintext and CONCATENATES a dated block on top when re-flagging;
       concurrent flags serialize under the exec mutex; `flagged/` stays
       exempt from verification. **Today it replaces** — `transitions.rs`'s
       `reflag_replaces_the_existing_flagged_file` test pins the current
       behavior and must be rewritten, not deleted
+      (2026-07-30 18:22) — `transitions::flag` now reads the existing
+      `flagged/<rel>` file's advisory (if any — verify-on-inspect still
+      applies, only the unsigned trailing advisory is read) and writes
+      `{new_block}\n{existing}` (newest on top). `reflag_replaces_...`
+      rewritten to `reflag_concatenates_with_the_existing_flagged_note`
+      (rewritten, not deleted, per the checkbox's own instruction) plus a
+      new `triple_reflag_preserves_every_prior_block_in_order`.
+      `flag_now` gained the `exec` mutex for the same reason `execute`
+      holds it for its whole duration: concatenation is a
+      read-then-write, and two concurrent flags racing that window could
+      lose one's block.
+      **Found and fixed a real format bug while testing this**:
+      `format.rs`'s `split_advisory` used `rfind` on the *whole file text*
+      to find "the last line starting with `# flagged:`", which was only
+      ever correct for a single-block advisory — a concatenated ≥2-block
+      advisory got split at the WRONG "# flagged:" occurrence, corrupting
+      the STAMPS/advisory boundary and breaking verification entirely (the
+      first failure surfaced as a stamp-JSON parse error, not something
+      that looked like an advisory bug at first). Fixed by scoping the
+      search to the STAMPS-and-after tail (everything after the last
+      section `separator`) and taking the FIRST match within that tail,
+      not the last — STAMPS is JSON-lines and never starts a line with
+      `#`, so this is unambiguous and immune to body-section content that
+      might coincidentally contain `# flagged:` text. Pinned with a new
+      `format.rs` test,
+      `concatenated_advisory_round_trips_and_keeps_the_chain_valid`.
+      6 new/rewritten tests total across `format.rs`/`transitions.rs`/
+      `review.rs`. 217 workspace tests, clippy/fmt clean.
 - [ ] New signed `notes/` stage (§S.3): a durable, attributed sibling to
       `flagged/`; a note is a valid signed `.einmo` (stamped,
       verify-on-inspect, participates in signature checks); support

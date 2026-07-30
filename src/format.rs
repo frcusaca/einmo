@@ -474,9 +474,9 @@ impl EinmoFile {
             .ok_or_else(|| EinmoError::Parse("missing header line".into()))?;
         let (encoding, separator) = parse_header(header)?;
 
-        // Split off the optional advisory line, which sits after the STAMPS
+        // Split off the optional advisory block, which sits after the STAMPS
         // section and is not part of the separated body.
-        let (main, advisory) = split_advisory(rest);
+        let (main, advisory) = split_advisory(rest, &separator);
 
         let parts: Vec<&str> = main.split(&separator).collect();
         if parts.len() < 3 {
@@ -563,20 +563,29 @@ fn parse_header(header: &str) -> Result<(String, String)> {
     ))
 }
 
-/// Split the trailing unsigned advisory line off the main (separated) content.
+/// Split the trailing unsigned advisory block off the main (separated)
+/// content.
 ///
-/// The advisory, if present, is the final line beginning with `# flagged:`.
-/// Everything up to it is the separated body; the advisory is returned
-/// separately so verification never sees it.
-fn split_advisory(main: &str) -> (&str, Option<&str>) {
-    // The advisory is the last line and starts with "# flagged:".
-    if let Some(idx) = main.rfind("\n# flagged:") {
-        let (body, adv) = main.split_at(idx);
+/// The advisory, if present, sits after STAMPS and may itself be several
+/// concatenated `# flagged: …` lines (re-flagging concatenates rather than
+/// replacing, `EIMP-1` §S.3) — so this is not "the last line", it is
+/// "everything from the first `# flagged:`-prefixed line onward, within the
+/// STAMPS-and-after tail". Searching is deliberately scoped to that tail
+/// (everything after the last `separator`) rather than the whole file: a
+/// body section's own content could coincidentally contain a line starting
+/// with `# flagged:`, and STAMPS itself never does (it is JSON lines), so
+/// scanning only the tail — and taking the *first* match within it, not the
+/// last — is what makes a multi-block advisory round-trip correctly.
+fn split_advisory<'a>(main: &'a str, separator: &str) -> (&'a str, Option<&'a str>) {
+    let tail_start = main.rfind(separator).map_or(0, |i| i + separator.len());
+    let tail = &main[tail_start..];
+    if let Some(idx) = tail.find("\n# flagged:") {
+        let (body, adv) = main.split_at(tail_start + idx);
         // adv starts with "\n# flagged:…"; strip the leading LF.
         (body, Some(adv.trim_start_matches('\n')))
-    } else if main.starts_with("# flagged:") {
-        // Degenerate: advisory with no preceding content.
-        ("", Some(main))
+    } else if tail.starts_with("# flagged:") {
+        // Degenerate: advisory with no preceding STAMPS content.
+        (&main[..tail_start], Some(tail))
     } else {
         (main, None)
     }
@@ -776,6 +785,37 @@ mod tests {
         assert!(
             parsed.chain_valid(),
             "advisory must not be part of signed bytes"
+        );
+    }
+
+    /// `EIMP-1` §S.3: re-flagging concatenates a new dated block on top of
+    /// an existing advisory rather than replacing it — the advisory can
+    /// therefore be multiple `# flagged: …` lines, not just one. This pins
+    /// `split_advisory`'s round-trip: it must recover the WHOLE
+    /// concatenated block, not just its first line.
+    #[test]
+    fn concatenated_advisory_round_trips_and_keeps_the_chain_valid() {
+        let mut file = signed_file(
+            DEFAULT_SEPARATOR,
+            vec![
+                Section::new("INPUT", "{5;}"),
+                Section::new("OUTPUT", "5"),
+                Section::new("COMMENTS", ""),
+            ],
+        );
+        let concatenated = "# flagged: second 2026-07-30T00:00:00Z\n\
+                             # flagged: first 2026-07-11T07:00:00Z";
+        file.set_advisory(concatenated);
+        let bytes = file.serialize().unwrap();
+        let parsed = EinmoFile::parse(&bytes).unwrap();
+        assert_eq!(
+            parsed.advisory(),
+            Some(concatenated),
+            "the whole concatenated block must survive round-tripping, not just its first line"
+        );
+        assert!(
+            parsed.chain_valid(),
+            "a multi-block advisory must not be mistaken for signed content"
         );
     }
 

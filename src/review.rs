@@ -512,6 +512,13 @@ impl EinmoReview {
     /// Returns an error if `stage` holds nothing for `id`, or the
     /// underlying artifact fails verify-on-inspect.
     pub fn flag_now(&self, id: &EinmoId, stage: Stage, reason: &str) -> Result<()> {
+        // Flags CONCATENATE (EIMP-1 §S.3): a re-flag reads whatever is
+        // already at `flagged/<id>` and writes on top of it. Two
+        // concurrent flags on the same case must serialize through this
+        // read-then-write, or one's dated block can be lost to the other's
+        // write — the same `exec` mutex `execute` already holds for its
+        // whole duration.
+        let _guard = self.exec.lock().expect("exec lock poisoned");
         let rel = crate::stage::mirror_input_path(std::path::Path::new(id.as_str()));
         let files = [rel];
         let report = transitions::flag(&self.config, stage, None, reason, Some(&files))?;
@@ -1788,6 +1795,39 @@ mod tests {
         assert!(!tmp.path().join("output/a.foo.einmo").exists());
         let flagged = std::fs::read_to_string(tmp.path().join("flagged/a.foo.einmo")).unwrap();
         assert!(flagged.contains("# flagged: looks wrong"));
+    }
+
+    #[test]
+    fn flag_now_concatenates_with_an_existing_flagged_note() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+
+        review.flag_now(&id, Stage::Output, "first").unwrap();
+        // flag_now moves output/a.foo.einmo away; regenerate it so there is
+        // something to flag again.
+        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        suite
+            .evaluate(std::path::Path::new("a.foo"), &Echo)
+            .unwrap();
+        review.flag_now(&id, Stage::Output, "second").unwrap();
+
+        let flagged = std::fs::read_to_string(tmp.path().join("flagged/a.foo.einmo")).unwrap();
+        assert!(
+            flagged.contains("# flagged: first"),
+            "the earlier flag must survive: {flagged:?}"
+        );
+        assert!(
+            flagged.contains("# flagged: second"),
+            "the new flag must be present: {flagged:?}"
+        );
+        let first_pos = flagged.find("# flagged: first").unwrap();
+        let second_pos = flagged.find("# flagged: second").unwrap();
+        assert!(
+            second_pos < first_pos,
+            "the newest flag's block goes on top: {flagged:?}"
+        );
     }
 
     #[test]
