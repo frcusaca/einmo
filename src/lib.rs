@@ -37,7 +37,7 @@ pub use compare::{ComparisonResult, DiffEntry, MatchSections, compare};
 pub use config::{KeySource, Perspective, PerspectiveOf, StageDirs, TestConfig, resolve_stage_key};
 pub use einmo_suite::{
     EinmoSuite, Evaluator, FailurePolicy, FileResult, Problem, SuiteIntegrity, TestResults,
-    ValidationLevel, check_suite_integrity,
+    ValidationLevel, check_suite_integrity, count_flagged,
 };
 pub use error::EinmoError;
 pub use format::{EinmoFile, Metadata, Section, Status};

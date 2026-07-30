@@ -195,6 +195,12 @@ struct VerifyArgs {
     /// Emit machine-readable JSON.
     #[arg(long)]
     json: bool,
+    /// Downgrade a flagged artifact from failing the gate to advisory-only
+    /// (`EIMP-1` §S.3). A flagged artifact still ALWAYS produces stderr
+    /// output announcing its presence — this flag changes the exit code,
+    /// never the visibility.
+    #[arg(long)]
+    flag_is_not_failure: bool,
 }
 
 #[derive(Args, Debug)]
@@ -603,6 +609,14 @@ fn cmd_verify(args: VerifyArgs) -> Result<ExitCode> {
     } else {
         crate::SuiteIntegrity::default()
     };
+    // The goal-state flag check (EIMP-1 S.3), same whole-suite-only scope as
+    // integrity: a file-scoped or single-stage verify isn't making a claim
+    // about the suite as a whole.
+    let flagged = if files.is_empty() && stage.is_none() {
+        crate::count_flagged(&config)?
+    } else {
+        Vec::new()
+    };
     if args.json {
         let violations: Vec<String> = integrity
             .problems
@@ -619,10 +633,11 @@ fn cmd_verify(args: VerifyArgs) -> Result<ExitCode> {
             })
             .collect();
         println!(
-            "{{\"files\":{},\"failures\":{},\"integrity_violations\":[{}]}}",
+            "{{\"files\":{},\"failures\":{},\"integrity_violations\":[{}],\"flagged\":{}}}",
             report.files.len(),
             report.failures(),
-            violations.join(",")
+            violations.join(","),
+            flagged.len()
         );
     } else {
         println!(
@@ -642,11 +657,38 @@ fn cmd_verify(args: VerifyArgs) -> Result<ExitCode> {
             eprint!("{}", integrity.report());
         }
     }
-    Ok(if report.all_ok() && integrity.is_clean() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    })
+    // A flag ALWAYS produces stderr output announcing its presence, in
+    // EITHER json or text mode -- `--flag-is-not-failure` only changes the
+    // exit code below, never whether this is printed. No silent config
+    // (EIMP-1 S.3).
+    if !flagged.is_empty() {
+        eprintln!(
+            "einmo: warning: {} flagged artifact(s) present:",
+            flagged.len()
+        );
+        for rel in &flagged {
+            eprintln!("  {}", rel.display());
+        }
+    }
+    Ok(
+        if report.all_ok()
+            && integrity.is_clean()
+            && !flags_fail_the_gate(flagged.len(), args.flag_is_not_failure)
+        {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        },
+    )
+}
+
+/// Whether flagged artifacts should fail `einmo verify`'s gate (`EIMP-1`
+/// §S.3): by default, any flag fails; `--flag-is-not-failure` downgrades
+/// that to advisory-only. Kept as a small pure function, separate from
+/// `cmd_verify`'s `ExitCode`/printing, so the actual decision is directly
+/// unit-testable.
+fn flags_fail_the_gate(flagged_count: usize, flag_is_not_failure: bool) -> bool {
+    flagged_count > 0 && !flag_is_not_failure
 }
 
 fn cmd_confirm(args: ConfirmArgs) -> Result<ExitCode> {
@@ -1084,6 +1126,29 @@ mod tests {
             Cli::try_parse_from(["einmo", "regenerate-output", "/tmp/s", "--command", "cat"])
                 .is_ok()
         );
+        assert!(
+            Cli::try_parse_from(["einmo", "verify", "/tmp/s", "--flag-is-not-failure"]).is_ok()
+        );
+    }
+
+    // EIMP-1 S.3: flags break the goal-state gate by default.
+
+    #[test]
+    fn flags_fail_the_gate_by_default() {
+        assert!(flags_fail_the_gate(1, false));
+        assert!(flags_fail_the_gate(3, false));
+    }
+
+    #[test]
+    fn flags_do_not_fail_the_gate_when_downgraded() {
+        assert!(!flags_fail_the_gate(1, true));
+        assert!(!flags_fail_the_gate(3, true));
+    }
+
+    #[test]
+    fn no_flags_never_fails_the_gate_either_way() {
+        assert!(!flags_fail_the_gate(0, false));
+        assert!(!flags_fail_the_gate(0, true));
     }
 
     #[test]

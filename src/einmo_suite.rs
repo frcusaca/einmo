@@ -491,6 +491,28 @@ pub fn check_suite_integrity(config: &TestConfig, policy: FailurePolicy) -> Resu
     EinmoSuite::new(config.clone()).check_integrity(&inputs, extraneous, level, policy)
 }
 
+/// The mirror-relative paths of every artifact currently sitting in
+/// `flagged/` (`EIMP-1` §S.3).
+///
+/// A suite's goal state is "no flags" — any flagged artifact means
+/// unresolved review work, and by default that fails `einmo verify`'s gate
+/// (`--flag-is-not-failure` downgrades it to advisory, but never silent —
+/// see `cli.rs`'s `cmd_verify`). This is deliberately a separate concept
+/// from [`SuiteIntegrity`] (suite *shape*: orphans/extraneous files) —
+/// `flagged_orphan_is_not_a_violation` still holds: a flagged artifact with
+/// no matching input is not a shape violation, but it IS counted here.
+///
+/// # Errors
+///
+/// Returns [`EinmoError::Io`] if `flagged/` cannot be walked.
+pub fn count_flagged(config: &TestConfig) -> Result<Vec<PathBuf>> {
+    let dir = config.stage_dir(Stage::Flagged);
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    crate::stage::walk_input_tree(&dir, config.walk_depth_limit())
+}
+
 /// A test suite bound to one work directory and configuration.
 #[derive(Debug)]
 pub struct EinmoSuite {
@@ -2447,6 +2469,34 @@ mod tests {
 
         assert!(results.integrity.is_clean());
         assert!(results.integrity.report().is_empty());
+    }
+
+    // EIMP-1 S.3: the goal-state flag count. Deliberately separate from
+    // SuiteIntegrity (shape: orphans/extraneous) -- flagged_orphan_is_not_a_
+    // violation below still holds unmodified; a flagged artifact is a
+    // reason `einmo verify`'s gate fails, not a reason the suite's SHAPE is
+    // unsound.
+
+    #[test]
+    fn count_flagged_is_zero_for_a_suite_with_no_flags() {
+        let (_tmp, suite0) = suite();
+        assert_eq!(
+            count_flagged(suite0.config()).unwrap(),
+            Vec::<PathBuf>::new()
+        );
+    }
+
+    #[test]
+    fn count_flagged_lists_every_flagged_artifact() {
+        let (_tmp, suite0) = suite();
+        let config = suite0.config().clone();
+        for name in ["a.foo.einmo", "b.foo.einmo"] {
+            let path = config.stage_dir(Stage::Flagged).join(name);
+            ensure_parent_dir(&path).unwrap();
+            std::fs::write(&path, "irrelevant, count_flagged does not verify").unwrap();
+        }
+        let flagged = count_flagged(&config).unwrap();
+        assert_eq!(flagged.len(), 2);
     }
 
     #[test]

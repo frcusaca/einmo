@@ -316,13 +316,33 @@ verbs belong to that crate's binary, not core's `cli.rs`.
       not required by this checkbox's actual text, and the concrete need
       hasn't appeared yet. 5 new tests across `signature.rs`/
       `transitions.rs`. 222 workspace tests, clippy/fmt clean.
-- [ ] Flags break tests by default (§S.3): a flagged artifact fails the run
+- [x] Flags break tests by default (§S.3): a flagged artifact fails the run
       (non-zero / red gate); `--flag-is-not-failure` downgrades to
       non-fatal but stderr STILL announces the flag count (no silent
       config); wire into the goal-state check (green = zero flags + signed
       + matching + valid signatures). Tests per §Test Plan "flag breaks
       tests". Note today's `flagged_orphan_is_not_a_violation` encodes the
       opposite policy for suite *shape* — reconcile the two deliberately
+      (2026-07-30 18:43) — **reconciliation**: kept as two genuinely
+      separate concepts rather than unified. `SuiteIntegrity` (shape:
+      orphans/extraneous, R1/R2) is untouched —
+      `flagged_orphan_is_not_a_violation` still passes unmodified, because
+      a flagged artifact's presence was never what that check was about.
+      New, independent library function `einmo_suite::count_flagged(config)
+      -> Result<Vec<PathBuf>>` (walks `flagged/` directly — no `SuiteIntegrity`
+      involvement at all) backs a new `--flag-is-not-failure` flag on
+      `einmo verify`. The actual gate decision is a small pure function,
+      `flags_fail_the_gate(count, flag_is_not_failure) -> bool`, kept
+      separate from `ExitCode`/printing specifically so it is directly
+      unit-testable (`std::process::ExitCode` has no public equality check
+      in stable Rust, so a full `cmd_verify`-level assertion isn't
+      practical — the pure decision function is where the real logic lives
+      and where it's tested). The stderr announcement
+      (`einmo: warning: <N> flagged artifact(s) present: …`) always prints
+      when `count > 0`, in both JSON and text mode, regardless of
+      `--flag-is-not-failure` — only the exit code changes. 5 new tests
+      (2 library, 3 CLI: the pure gate function's three cases, plus a parse
+      test for the new flag). 227 workspace tests, clippy/fmt clean.
 - [ ] Implement `Journal` (append-only JSONL, replay, truncated-tail
       tolerance) per the §S.6 resolution: keyed by `EinmoId`, verbosity
       levels (terse/normal/fine), `fine` recording each case as it is read
