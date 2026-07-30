@@ -570,6 +570,17 @@ impl EinmoReview {
             .undecide(id)
     }
 
+    /// `id`'s current pending decision, if any — "the answer so far"
+    /// (`EIMP-1` §S.2), without going through the full `items()` scan.
+    #[must_use]
+    pub fn decision(&self, id: &EinmoId) -> Option<Decision> {
+        self.decisions
+            .read()
+            .expect("decisions lock poisoned")
+            .get(id)
+            .cloned()
+    }
+
     /// A preview of what [`EinmoReview::execute`] would do right now.
     #[must_use]
     pub fn plan(&self) -> ExecutionPlan {
@@ -766,6 +777,62 @@ impl EinmoReview {
         }
 
         Ok(report)
+    }
+
+    /// Execute `id`'s pending decision immediately — a single-item
+    /// convenience over [`EinmoReview::execute`] (`EIMP-1` §S.2), for a
+    /// frontend that promotes as it goes rather than batching (§S.4's
+    /// "individual vs batch collapses into one design": this is not a
+    /// separate code path, just `execute` given a one-action plan, so it
+    /// gets the same drift check, the same exec-mutex exclusivity, and the
+    /// same undecide-on-completion for free).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `id` has no pending decision, the decision is
+    /// `Skip` (nothing to execute), or the action was skipped rather than
+    /// executed (drifted since `decide()`, or its source no longer exists —
+    /// see [`EinmoReview::execute`]'s `ExecutionReport::skipped`). In the
+    /// last case the decision is still cleared, exactly as a batch
+    /// `execute` would: a skip means "this needs a fresh decision," not
+    /// "try again unchanged."
+    pub fn execute_one(&self, id: &EinmoId, keys: &SignerSet) -> Result<Executed> {
+        let decision = {
+            let decisions = self.decisions.read().expect("decisions lock poisoned");
+            decisions.get(id).cloned()
+        };
+        let action = match decision {
+            Some(Decision::Promote { to }) => PlannedAction::Promote { id: id.clone(), to },
+            Some(Decision::Retract { from }) => PlannedAction::Retract {
+                id: id.clone(),
+                from,
+            },
+            Some(Decision::Flag { stage, reason }) => PlannedAction::Flag {
+                id: id.clone(),
+                stage,
+                reason,
+            },
+            Some(Decision::Skip) => {
+                return Err(EinmoError::Config(format!(
+                    "{id} is Skip: nothing to execute"
+                )));
+            }
+            None => return Err(EinmoError::Config(format!("no pending decision for {id}"))),
+        };
+        let plan = ExecutionPlan {
+            actions: vec![action],
+        };
+        let report = self.execute(&plan, keys)?;
+        report
+            .executed
+            .into_iter()
+            .find(|e| &e.id == id)
+            .ok_or_else(|| {
+                EinmoError::Verification(format!(
+                    "{id}'s decision drifted or its source no longer exists — \
+                     re-decide against current content"
+                ))
+            })
     }
 }
 
@@ -1162,6 +1229,83 @@ mod tests {
         );
     }
 
+    // EIMP-1 S.2: EinmoReview::execute_one.
+
+    #[test]
+    fn execute_one_applies_a_pending_decision() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: None,
+        };
+        let executed = review.execute_one(&id, &keys).unwrap();
+        assert_eq!(executed.id, id);
+        assert!(tmp.path().join("checked").join("a.foo.einmo").exists());
+    }
+
+    #[test]
+    fn execute_one_clears_the_decision_afterward() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: None,
+        };
+        review.execute_one(&id, &keys).unwrap();
+        assert!(review.plan().actions.is_empty());
+    }
+
+    #[test]
+    fn execute_one_errors_when_no_decision_is_pending() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: None,
+        };
+        assert!(review.execute_one(&id, &keys).is_err());
+    }
+
+    #[test]
+    fn execute_one_errors_on_a_skip_decision() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.decide(id.clone(), Decision::Skip);
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: None,
+        };
+        assert!(review.execute_one(&id, &keys).is_err());
+    }
+
+    #[test]
+    fn execute_one_errors_when_the_decision_has_drifted() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+        write_input(tmp.path(), "a.foo", "{9+9;}");
+        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        suite
+            .regenerate_output(std::path::Path::new("a.foo"), &Echo)
+            .unwrap();
+
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: None,
+        };
+        assert!(review.execute_one(&id, &keys).is_err());
+        assert!(!tmp.path().join("checked").join("a.foo.einmo").exists());
+    }
+
     #[test]
     fn body_is_single_flight_verified() {
         let tmp = seeded_suite();
@@ -1214,6 +1358,20 @@ mod tests {
             item.decision,
             Some(Decision::Promote { to: Stage::Checked })
         );
+    }
+
+    #[test]
+    fn decision_reports_the_answer_so_far() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        assert_eq!(review.decision(&id), None);
+
+        review.decide(id.clone(), Decision::Skip);
+        assert_eq!(review.decision(&id), Some(Decision::Skip));
+
+        review.undecide(&id);
+        assert_eq!(review.decision(&id), None);
     }
 
     #[test]

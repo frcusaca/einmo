@@ -206,8 +206,18 @@ verbs belong to that crate's binary, not core's `cli.rs`.
       enums are shape-parallel, so this doesn't convert one into the
       other). 5 new tests, incl. one proving a drifted promote never
       touches `checked/` at all. 205 workspace tests, clippy/fmt clean.
-- [ ] `EinmoReview::execute_one(id, keys)` — per-item execution, and
+- [x] `EinmoReview::execute_one(id, keys)` — per-item execution, and
       `decision(id)` ("answer so far")
+      (2026-07-30 18:02) — `execute_one` builds a one-action
+      `ExecutionPlan` and calls `execute` (`EIMP-1.md` §S.4's "individual
+      vs batch collapses into one design" — not a separate code path, so it
+      gets the same drift check, exec-mutex exclusivity, and
+      undecide-on-completion for free); errors if no decision is pending,
+      the decision is `Skip`, or the action was skipped (drifted/source
+      gone) rather than executed — in the last case the decision is still
+      cleared, same as batch `execute`. `decision(id)` is a direct
+      `DecisionBook` read, no `items()` scan needed. 6 new tests. 211
+      workspace tests, clippy/fmt clean.
 - [ ] §S.4a multi-signer promote: apply the content-then-key decision table
       to `checked`/`verified` inside `execute`/`execute_one` — content
       matches + my key present → no-op; content matches + new signer →
