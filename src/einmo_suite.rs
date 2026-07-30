@@ -1601,12 +1601,12 @@ fn separator_depth(path: &Path, sep: &str) -> usize {
 }
 
 /// The current git commit SHA (short), or `"unknown"` if unavailable.
-fn git_commit_sha() -> String {
+pub(crate) fn git_commit_sha() -> String {
     run_git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".to_string())
 }
 
 /// The SHA-256 of the current `git diff`, or empty when the tree is clean.
-fn git_diff_sha() -> String {
+pub(crate) fn git_diff_sha() -> String {
     match run_git(&["diff"]) {
         Some(diff) if !diff.is_empty() => {
             use sha2::{Digest, Sha256};

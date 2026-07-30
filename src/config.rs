@@ -372,6 +372,15 @@ impl TestConfig {
         self.work_dir.join(self.stages.name(stage))
     }
 
+    /// The `notes/` directory (`EIMP-1` §S.3). Not a [`Stage`]: `notes/` is
+    /// a narrow, self-contained sibling to `flagged/`, not a peer of
+    /// `output`/`checked`/`verified` in the promote/retract/compare
+    /// machinery, so it has no `StageDirs` entry and no configurable name.
+    #[must_use]
+    pub fn stage_dir_for_notes(&self) -> PathBuf {
+        self.work_dir.join("notes")
+    }
+
     /// The configured section separator.
     #[must_use]
     pub fn separator(&self) -> &str {

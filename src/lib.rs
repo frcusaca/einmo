@@ -52,8 +52,8 @@ pub use review_server::{
 pub use signature::{Stamp, StampRole, Stamps};
 pub use stage::{EinmoId, Stage};
 pub use transitions::{
-    FlagReport, PromotionReport, RetractReport, SignatureReport, confirm_signatures, flag, promote,
-    retract,
+    FlagReport, NoteReport, PromotionReport, RetractReport, SignatureReport, confirm_signatures,
+    flag, promote, promote_flag_to_note, retract,
 };
 pub use verify::{
     FileVerification, StampVerification, VerificationReport, verify, verify_all, verify_bytes,

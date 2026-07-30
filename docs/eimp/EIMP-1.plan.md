@@ -284,11 +284,38 @@ verbs belong to that crate's binary, not core's `cli.rs`.
       `concatenated_advisory_round_trips_and_keeps_the_chain_valid`.
       6 new/rewritten tests total across `format.rs`/`transitions.rs`/
       `review.rs`. 217 workspace tests, clippy/fmt clean.
-- [ ] New signed `notes/` stage (§S.3): a durable, attributed sibling to
+- [x] New signed `notes/` stage (§S.3): a durable, attributed sibling to
       `flagged/`; a note is a valid signed `.einmo` (stamped,
       verify-on-inspect, participates in signature checks); support
       promoting a flag's concatenated content into `notes/` as a signed
       note body
+      (2026-07-30 18:35) — **scoping decision**: `notes/` is deliberately
+      NOT a new `Stage` enum variant. `Stage` has ~266 non-test call sites
+      (`is_legal_transition`, `compare`, the CLI's `--stage` selection,
+      suite-integrity walks, `StageDirs`, …); adding a variant would ripple
+      through every exhaustive match over it for a stage that isn't part
+      of the promotion pipeline at all (no retract, no compare, nothing to
+      walk). Implemented instead as a narrow, self-contained function,
+      `transitions::promote_flag_to_note`, matching how `flagged/` itself
+      already sits outside most of that machinery. `TestConfig` gained
+      `stage_dir_for_notes()` (a plain path, not a `StageDirs` entry).
+      Building the note's full 3-stamp chain needed a real primitive fix
+      first: `Stamps::generate` hardcoded `"stage:output"` as both the
+      certified role and the stage key name, so it was unusable for any
+      other stage — generalized into `Stamps::generate_for_stage(prior,
+      configured, stage_key, stage_signer)`, with `generate` becoming a
+      thin specialization (`generate(...) = generate_for_stage(...,
+      "stage:output", ...)`), so all ~14 existing callers are unaffected
+      (pinned by a new
+      `generate_is_generate_for_stage_specialized_to_stage_output` test).
+      `promote_flag_to_note` reads the note's body from the flagged file's
+      advisory (verify-on-inspect first) and does NOT consume the flag —
+      `flagged/<rel>` stays in place; resolving the flag is a separate,
+      deliberate action. Broader integration (`einmo verify` scanning
+      `notes/`, a CLI `--stage notes` selector) is explicitly deferred —
+      not required by this checkbox's actual text, and the concrete need
+      hasn't appeared yet. 5 new tests across `signature.rs`/
+      `transitions.rs`. 222 workspace tests, clippy/fmt clean.
 - [ ] Flags break tests by default (§S.3): a flagged artifact fails the run
       (non-zero / red gate); `--flag-is-not-failure` downgrades to
       non-fatal but stderr STILL announces the flag count (no silent

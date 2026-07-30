@@ -505,9 +505,27 @@ impl Stamps {
         configured: &SigningKey,
         stage_output: &SigningKey,
     ) -> Self {
+        Self::generate_for_stage(prior_bytes, configured, "stage:output", stage_output)
+    }
+
+    /// The general form of [`Stamps::generate`]: build the full
+    /// compiled→configured→`stage_key` certification chain for a brand-new
+    /// file, for any stage key — not only `"stage:output"`. `generate`
+    /// is this specialized to `"stage:output"`; both existing callers of
+    /// `generate` and this method are unaffected by each other.
+    ///
+    /// Introduced for `notes/` (`EIMP-1` §S.3): a `notes/` file needs the
+    /// full 3-stamp chain like any brand-new artifact, but under
+    /// `"stage:notes"` rather than `"stage:output"`.
+    pub(crate) fn generate_for_stage(
+        prior_bytes: &[u8],
+        configured: &SigningKey,
+        stage_key: &str,
+        stage_signer: &SigningKey,
+    ) -> Self {
         let (compiled_sk, compiled_vk) = compiled_keypair();
         let configured_vk = configured.verifying_key();
-        let stage_vk = stage_output.verifying_key();
+        let stage_vk = stage_signer.verifying_key();
         let pb = produced_by();
         let ts = now_iso8601();
 
@@ -524,22 +542,22 @@ impl Stamps {
             "configured",
             configured,
             &configured_vk,
-            "stage:output",
+            stage_key,
             &stage_vk,
             pb,
             &ts,
         );
 
-        // The `stage:output` stamp signs everything in the file before its own
-        // line: the body (`prior_bytes`) plus the two certification lines that
-        // sit above it in the STAMPS section, each terminated by LF.
+        // The stage stamp signs everything in the file before its own line:
+        // the body (`prior_bytes`) plus the two certification lines that sit
+        // above it in the STAMPS section, each terminated by LF.
         let mut before_stage = Vec::from(prior_bytes);
         before_stage.extend_from_slice(compiled.to_json_line().as_bytes());
         before_stage.push(b'\n');
         before_stage.extend_from_slice(configured_stamp.to_json_line().as_bytes());
         before_stage.push(b'\n');
 
-        let stage = stage_stamp("stage:output", stage_output, &before_stage, pb, &ts);
+        let stage = stage_stamp(stage_key, stage_signer, &before_stage, pb, &ts);
 
         Stamps {
             entries: vec![compiled, configured_stamp, stage],
@@ -832,6 +850,51 @@ mod tests {
         for check in stamps.verify_chain(&body) {
             assert!(check.ok, "stamp {} must verify", check.key);
         }
+    }
+
+    #[test]
+    fn generate_for_stage_produces_a_chain_certifying_the_given_stage_key() {
+        let body = sample_body();
+        let (configured, _) = derive_keypair("cfg");
+        let (notes, notes_vk) = derive_keypair("a note signer");
+        let stamps = Stamps::generate_for_stage(&body, &configured, "stage:notes", &notes);
+        assert!(
+            stamps.chain_valid(&body),
+            "a stage:notes chain must verify like any other"
+        );
+        for check in stamps.verify_chain(&body) {
+            assert!(check.ok, "stamp {} must verify", check.key);
+        }
+        let stage_stamp = stamps
+            .entries()
+            .iter()
+            .find(|s| s.key() == "stage:notes")
+            .expect("a stage:notes stamp must be present");
+        assert_eq!(stage_stamp.pubkey_hex(), hex::encode(notes_vk.to_bytes()));
+    }
+
+    #[test]
+    fn generate_is_generate_for_stage_specialized_to_stage_output() {
+        // generate() must remain byte-for-byte what it always was — this
+        // pins that the refactor into generate_for_stage changed nothing
+        // observable for its ~14 existing callers.
+        let body = sample_body();
+        let (configured, _) = derive_keypair("cfg");
+        let (stage, _) = derive_keypair("");
+        let via_generate = Stamps::generate(&body, &configured, &stage);
+        let via_for_stage = Stamps::generate_for_stage(&body, &configured, "stage:output", &stage);
+        assert_eq!(
+            via_generate
+                .entries()
+                .iter()
+                .map(Stamp::key)
+                .collect::<Vec<_>>(),
+            via_for_stage
+                .entries()
+                .iter()
+                .map(Stamp::key)
+                .collect::<Vec<_>>(),
+        );
     }
 
     #[test]
