@@ -50,23 +50,49 @@ pub enum Decision {
 /// decision. Absence means untouched. `decide` replaces; `undecide` clears.
 #[derive(Debug, Default)]
 struct DecisionBook {
-    entries: HashMap<EinmoId, Decision>,
+    entries: HashMap<EinmoId, DecisionEntry>,
+}
+
+/// A decision plus the fingerprint of whatever stage it was based on, taken
+/// at `decide()` time — the substrate `EinmoReview::refresh`/`execute`'s
+/// drift detection compares against (`EIMP-1` §S.2/§S.5). `None` when the
+/// basis stage did not exist or could not be read at decide-time, or the
+/// decision (`Skip`) has no content basis at all.
+#[derive(Debug)]
+struct DecisionEntry {
+    decision: Decision,
+    basis: Option<Fingerprint>,
 }
 
 impl DecisionBook {
-    fn decide(&mut self, id: EinmoId, decision: Decision) -> Option<Decision> {
-        self.entries.insert(id, decision)
+    fn decide(
+        &mut self,
+        id: EinmoId,
+        decision: Decision,
+        basis: Option<Fingerprint>,
+    ) -> Option<Decision> {
+        self.entries
+            .insert(id, DecisionEntry { decision, basis })
+            .map(|e| e.decision)
     }
 
     fn undecide(&mut self, id: &EinmoId) -> Option<Decision> {
-        self.entries.remove(id)
+        self.entries.remove(id).map(|e| e.decision)
     }
 
     fn get(&self, id: &EinmoId) -> Option<&Decision> {
+        self.entries.get(id).map(|e| &e.decision)
+    }
+
+    fn get_entry(&self, id: &EinmoId) -> Option<&DecisionEntry> {
         self.entries.get(id)
     }
 
     fn iter(&self) -> impl Iterator<Item = (&EinmoId, &Decision)> {
+        self.entries.iter().map(|(id, e)| (id, &e.decision))
+    }
+
+    fn iter_entries(&self) -> impl Iterator<Item = (&EinmoId, &DecisionEntry)> {
         self.entries.iter()
     }
 }
@@ -442,10 +468,34 @@ impl EinmoReview {
     /// Record (or replace) the reviewer's decision for `id`. Returns the
     /// previous decision, if any (replace-not-stack, `EIMP-1` §S.3).
     pub fn decide(&self, id: EinmoId, decision: Decision) -> Option<Decision> {
+        let basis = decision_basis_path(&self.config, &id, &decision)
+            .and_then(|p| Fingerprint::of(&p).ok());
         self.decisions
             .write()
             .expect("decisions lock poisoned")
-            .decide(id, decision)
+            .decide(id, decision, basis)
+    }
+
+    /// Rescan for pending decisions whose basis content has changed on disk
+    /// since `decide()` was called (`EIMP-1` §S.2/§S.5's fingerprint
+    /// re-check). Returns the drifted cases' ids — **decisions are not
+    /// cleared**; a frontend decides whether to re-prompt or leave a stale
+    /// decision in place. (`items()` itself always reads fresh from disk on
+    /// every call, so `refresh` is not "make the worklist current" —
+    /// nothing caches it — it is specifically "which pending decisions no
+    /// longer match what they were made about.")
+    #[must_use]
+    pub fn refresh(&self) -> Vec<EinmoId> {
+        let decisions = self.decisions.read().expect("decisions lock poisoned");
+        decisions
+            .iter_entries()
+            .filter_map(|(id, entry)| {
+                let basis = entry.basis.as_ref()?;
+                let current_path = decision_basis_path(&self.config, id, &entry.decision)?;
+                let current = Fingerprint::of(&current_path).ok();
+                (current.as_ref() != Some(basis)).then(|| id.clone())
+            })
+            .collect()
     }
 
     /// Flag `id` at `stage` immediately — a single atomic convenience call,
@@ -574,10 +624,39 @@ impl EinmoReview {
         let _guard = self.exec.lock().expect("exec lock poisoned");
         let mut report = ExecutionReport::default();
 
+        // Content-fingerprint re-check (EIMP-1 S.2/S.5): an action whose
+        // decision basis has changed on disk since decide() must never be
+        // silently applied against content the reviewer never actually
+        // looked at -- skip and report, exactly like the presence-based
+        // drift below. Checked against the LIVE DecisionBook (not `plan`
+        // itself, which carries no fingerprint) so a decision changed or
+        // cleared between plan() and execute() is caught the same way.
+        let actions: Vec<PlannedAction> = {
+            let decisions = self.decisions.read().expect("decisions lock poisoned");
+            plan.actions
+                .iter()
+                .filter(|action| {
+                    let id = action_id(action);
+                    let Some(basis) = decisions.get_entry(id).and_then(|e| e.basis.as_ref()) else {
+                        return true; // no recorded basis: nothing to compare, proceed
+                    };
+                    let current = action_basis_path(&self.config, action)
+                        .and_then(|p| Fingerprint::of(&p).ok());
+                    if current.as_ref() == Some(basis) {
+                        true
+                    } else {
+                        report.skipped.push(id.clone());
+                        false
+                    }
+                })
+                .cloned()
+                .collect()
+        };
+
         // Group promotions by (from, to) so each stage pair's key is
         // derived exactly once for the whole batch, not once per case.
         let mut promote_groups: HashMap<(Stage, Stage), Vec<EinmoId>> = HashMap::new();
-        for action in &plan.actions {
+        for action in &actions {
             if let PlannedAction::Promote { id, to } = action {
                 let Some(from) = source_stage_for_promote(&self.config, id, *to) else {
                     report.skipped.push(id.clone());
@@ -634,7 +713,7 @@ impl EinmoReview {
             }
         }
 
-        for action in &plan.actions {
+        for action in &actions {
             match action {
                 PlannedAction::Promote { .. } => {} // handled in the grouped pass above
                 PlannedAction::Retract { id, from } => {
@@ -704,6 +783,52 @@ fn source_stage_for_promote(config: &TestConfig, id: &EinmoId, to: Stage) -> Opt
         .iter()
         .find(|&&s| id.to_stage_path(config.work_dir(), s).exists())
         .copied()
+}
+
+/// The stage whose content a decision is based on — `None` for `Skip` (no
+/// content basis) or a `Promote` whose source no longer exists.
+fn decision_basis_stage(config: &TestConfig, id: &EinmoId, decision: &Decision) -> Option<Stage> {
+    match decision {
+        Decision::Promote { to } => source_stage_for_promote(config, id, *to),
+        Decision::Retract { from } => Some(*from),
+        Decision::Flag { stage, .. } => Some(*stage),
+        Decision::Skip => None,
+    }
+}
+
+/// The path whose fingerprint [`EinmoReview::decide`]/[`EinmoReview::refresh`]
+/// treat as `decision`'s basis.
+fn decision_basis_path(
+    config: &TestConfig,
+    id: &EinmoId,
+    decision: &Decision,
+) -> Option<std::path::PathBuf> {
+    let stage = decision_basis_stage(config, id, decision)?;
+    Some(id.to_stage_path(config.work_dir(), stage))
+}
+
+/// The same basis-path lookup as [`decision_basis_path`], from a
+/// [`PlannedAction`] instead of a [`Decision`] — used by `execute`, which
+/// only has the plan's actions, not the originating decisions, in hand.
+/// The two enums are shape-parallel by construction, so this mirrors
+/// [`decision_basis_stage`] exactly rather than converting one into the
+/// other.
+fn action_basis_path(config: &TestConfig, action: &PlannedAction) -> Option<std::path::PathBuf> {
+    let (id, stage) = match action {
+        PlannedAction::Promote { id, to } => (id, source_stage_for_promote(config, id, *to)?),
+        PlannedAction::Retract { id, from } => (id, *from),
+        PlannedAction::Flag { id, stage, .. } => (id, *stage),
+    };
+    Some(id.to_stage_path(config.work_dir(), stage))
+}
+
+/// The case a [`PlannedAction`] concerns.
+fn action_id(action: &PlannedAction) -> &EinmoId {
+    match action {
+        PlannedAction::Promote { id, .. }
+        | PlannedAction::Retract { id, .. }
+        | PlannedAction::Flag { id, .. } => id,
+    }
 }
 
 /// Strip the `.einmo` mirror suffix and, when present, the stage-relative
@@ -953,6 +1078,87 @@ mod tests {
                 .any(|l| matches!(l, DiffLine::Removed(_) | DiffLine::Added(_))),
             "differing OUTPUT bodies must produce a non-Equal line: {:?}",
             output_section.lines
+        );
+    }
+
+    // EIMP-1 S.2/S.5: EinmoReview::refresh (fingerprint-based drift
+    // detection over a pending decision's basis content).
+
+    #[test]
+    fn refresh_reports_nothing_when_no_decisions_are_pending() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        assert!(review.refresh().is_empty());
+    }
+
+    #[test]
+    fn refresh_reports_nothing_when_basis_content_is_unchanged() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.decide(id, Decision::Promote { to: Stage::Checked });
+        assert!(review.refresh().is_empty());
+    }
+
+    #[test]
+    fn refresh_reports_a_case_whose_basis_content_changed_since_decide() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+
+        // Change what a.foo evaluates to -- the output/ content the
+        // decision was based on is no longer what's on disk.
+        write_input(tmp.path(), "a.foo", "{9+9;}");
+        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        suite
+            .regenerate_output(std::path::Path::new("a.foo"), &Echo)
+            .unwrap();
+
+        let stale = review.refresh();
+        assert_eq!(stale, vec![id]);
+    }
+
+    #[test]
+    fn refresh_does_not_report_an_undecided_case_even_if_its_output_changes() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        // b.foo has no decision at all.
+        write_input(tmp.path(), "b.foo", "{9+9;}");
+        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        suite
+            .regenerate_output(std::path::Path::new("b.foo"), &Echo)
+            .unwrap();
+        assert!(review.refresh().is_empty());
+    }
+
+    #[test]
+    fn execute_skips_a_drifted_decision_and_never_applies_stale_content() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+
+        write_input(tmp.path(), "a.foo", "{9+9;}");
+        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        suite
+            .regenerate_output(std::path::Path::new("a.foo"), &Echo)
+            .unwrap();
+
+        let plan = review.plan();
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: None,
+        };
+        let report = review.execute(&plan, &keys).unwrap();
+        assert!(report.skipped.contains(&id));
+        assert!(!report.executed.iter().any(|e| e.id == id));
+        assert!(
+            !tmp.path().join("checked").join("a.foo.einmo").exists(),
+            "a drifted decision must never be applied, not even with stale content"
         );
     }
 

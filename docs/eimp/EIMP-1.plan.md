@@ -128,7 +128,15 @@ verbs belong to that crate's binary, not core's `cli.rs`.
       re-check, skip-and-report drift, confirm token plumbed but enforced by
       frontends)
       (2026-07-29 17:38, fix 2026-07-29 18:xx) — `EIMP-2` Phase C, incl. the
-      exec mutex and the `undecide` pass after execute. `execute_one` and
+      exec mutex and the `undecide` pass after execute. Correction
+      (2026-07-30 17:55): the "fingerprint re-check" this box claimed was
+      only ever *presence*-based (`source_stage_for_promote` re-checking
+      whether the source stage still exists) — no content fingerprint was
+      actually compared, so a source that changed bytes without changing
+      which stage held it went undetected. Genuine content-fingerprint
+      re-check was added later alongside `refresh()` (see that checkbox
+      below) once the gap surfaced from working through `refresh`'s own
+      "decide first" instruction. `execute_one` and
       the retract cascade *within execute* remain; `retract_now` covers the
       cascade for the atomic path.
 - [x] `ReviewOpts` + `ReviewMode` (`Full` default / `Random` /
@@ -171,11 +179,33 @@ verbs belong to that crate's binary, not core's `cli.rs`.
       sweep. 200 workspace tests, clippy/fmt clean. Client wiring
       (rendering diff hunks instead of whole panes) deferred to Phase D,
       which already lists it as a follow-up task.
-- [ ] `EinmoReview::refresh()` — rescan and report changed cases. Note the
+- [x] `EinmoReview::refresh()` — rescan and report changed cases. Note the
       Phase 0 finding: `items()` currently rescans every call, so decide
       first whether `refresh` means "invalidate a cache that does not yet
       exist" (i.e. also add the cached worklist) or is unnecessary as
       specified. Record the decision either way
+      (2026-07-30 17:55) — decision: `refresh` is NOT "make items() fresh"
+      (nothing to invalidate — `items()` already reads disk every call, no
+      cached worklist exists to be stale). It IS real work: `decide()`
+      never recorded what content a decision was actually based on, so
+      nothing detected a decision going stale after the fact — the
+      "fingerprint re-check, skip-and-report drift" earlier Phase A
+      checkboxes claimed as EIMP-2-delivered turned out to only be
+      *presence*-based (does the source stage still exist), never
+      *content*-based (did the source stage's bytes change). Implemented
+      properly: `DecisionBook` entries now carry a `Fingerprint` (the same
+      type `VerifiedCache` already uses) of the decision's basis stage,
+      captured at `decide()` time via new `decision_basis_stage`/
+      `decision_basis_path` helpers. `refresh()` recomputes and compares,
+      returning drifted ids **without clearing their decisions** — a
+      frontend decides whether to re-prompt. `execute()` gained a
+      pre-filter (checked against the *live* `DecisionBook`, not `plan`
+      itself, so a decision changed between `plan()` and `execute()` is
+      also caught) that skips-and-reports any action whose basis fingerprint
+      no longer matches, via a mirrored `action_basis_path` helper (the two
+      enums are shape-parallel, so this doesn't convert one into the
+      other). 5 new tests, incl. one proving a drifted promote never
+      touches `checked/` at all. 205 workspace tests, clippy/fmt clean.
 - [ ] `EinmoReview::execute_one(id, keys)` — per-item execution, and
       `decision(id)` ("answer so far")
 - [ ] §S.4a multi-signer promote: apply the content-then-key decision table
