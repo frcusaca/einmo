@@ -72,6 +72,20 @@ implementation of a wrong tree is worthless.
       `sort_unstable_by` makes it flaky rather than diagnostic; and the
       alphabet must *contain* the colliding pairs (`'a'`/`'A'`, NFC/NFD of
       one grapheme), or it proves nothing about a lossy collation
+  - [ ] Run the harness on **the suites' own file names**, not only the
+        synthetic alphabet: feed it the real mirror-relative paths of
+        `zweimomo`'s fixture suites (`day.1/` at minimum, every populated
+        tier ideally). The synthetic set only catches ties among pairs
+        someone thought to include; the real corpus catches ties that exist
+        in data einmo actually signs
+  - [ ] Wire the same check into signing as a **pre-flight guard**, which
+        is how `EIMP-1` §S.11a item 5's "abort on a tie" gets a concrete
+        implementation: sort the manifest forward, sort it reversed, refuse
+        to sign if they disagree and report the colliding pair. `O(n log n)`
+        versus `O(n²)` for pairwise checking, over a list already being
+        sorted — so the test and the runtime guard become one code path
+        exercised on different inputs, and the invariant cannot rot because
+        the product depends on it
 - [ ] Write the domain-separation test FIRST: an input presenting an
       internal node's digest as a leaf must not verify (`EIMP-5.md` §S.2)
 - [ ] Write the digest-sensitivity tests FIRST: content alteration,

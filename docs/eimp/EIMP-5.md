@@ -132,9 +132,31 @@ Two properties not to weaken:
 
 Written as a **reusable harness every `Collation` variant is run through**,
 not a one-off — its value is constraining collations that do not exist yet.
-It complements rather than replaces §S.11a item 5's runtime error: the test
-proves totality over a representative alphabet, the runtime error catches
-what a real corpus produces that the alphabet did not anticipate.
+
+**Run it on the corpus's own paths, too — not only a synthetic alphabet.**
+The harness takes an arbitrary element set, so the *real* manifest paths of
+the section being signed are a valid (and better) test set. Two ways to use
+that, both worth having:
+
+- **As a test**: run permutation invariance over the actual paths of
+  `zweimomo`'s fixture suites, alongside the synthetic alphabet. The
+  synthetic set only catches ties among pairs someone thought to include;
+  the real corpus catches ties that actually exist in data einmo signs.
+- **As a pre-flight check inside signing itself**, which turns out to be
+  the *efficient* way to enforce §S.11a item 5. Checking "no two distinct
+  paths compare `Equal`" pairwise is `O(n²)`; sorting the manifest twice is
+  `O(n log n)` — and the manifest is being sorted anyway, so the marginal
+  cost is one extra sort of an already-in-memory path list. On a corpus
+  large enough for this EIMP to matter, that difference is what makes the
+  check affordable at all.
+
+So §S.11a item 5's "abort the signature on a tie" is not merely a defensive
+`assert` somewhere in the comparator — it has a concrete, cheap
+implementation: sort the manifest forward, sort it reversed, and if they
+disagree, refuse to sign and report the colliding pair. The test and the
+runtime guard become the same code path exercised on different inputs,
+which is the best kind of invariant: one that cannot rot, because the
+product depends on it.
 
 **Why this belongs here rather than in `EIMP-1`.** Ordering determines the
 byte-join's digest, but it determines a tree's *shape* — and a collation
