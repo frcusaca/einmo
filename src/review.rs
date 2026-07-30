@@ -277,6 +277,16 @@ fn shuffle<T>(items: &mut [T]) {
     }
 }
 
+/// A fresh, OS-entropy-seeded session id (`EIMP-1` §S.6) — 128 bits, hex
+/// encoded, matching this crate's existing prefer-`rand_core`-over-`rand`
+/// convention (`EIMP-4` §S.1).
+fn random_session_id() -> String {
+    use rand_core::{OsRng, RngCore};
+    let mut bytes = [0u8; 16];
+    OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
 /// One row of the worklist: a case and where it currently stands.
 #[derive(Debug, Clone)]
 pub struct ReviewItem {
@@ -369,29 +379,108 @@ pub struct EinmoReview {
     cache: VerifiedCache,
     decisions: RwLock<DecisionBook>,
     exec: Mutex<()>,
+    journal: crate::journal::Journal,
 }
 
 impl EinmoReview {
     /// Open a review session over `suite` with the default options
     /// (`ReviewMode::Full`, no filter — `EIMP-2`'s original unfiltered
-    /// behavior).
+    /// behavior), under a fresh, randomly generated session id.
     #[must_use]
     pub fn open(suite: impl Into<std::path::PathBuf>) -> Self {
         Self::open_with(suite, ReviewOpts::default())
     }
 
     /// Open a review session over `suite` with explicit [`ReviewOpts`]
-    /// (`EIMP-1` §S.2).
+    /// (`EIMP-1` §S.2), under a fresh, randomly generated session id.
     #[must_use]
     pub fn open_with(suite: impl Into<std::path::PathBuf>, opts: ReviewOpts) -> Self {
+        Self::open_internal(suite, opts, random_session_id())
+    }
+
+    /// Resume a session previously opened under `session_id`: replays that
+    /// session's journal (`EIMP-1` §S.6, "Reopen = replay") and reconstructs
+    /// pending decisions by replaying every `decide`/`undecide` event, in
+    /// order, through the ordinary [`EinmoReview::decide`]/
+    /// [`EinmoReview::undecide`] calls — so a resumed decision's drift-check
+    /// basis (`EIMP-1` §S.2/§S.5) is fingerprinted fresh against *current*
+    /// disk content, never trusted blindly from before a crash. If nothing
+    /// changed since the original `decide()`, the fingerprint matches and
+    /// resume is transparent; if something DID change during the gap, that
+    /// is a legitimate drift `execute`/`refresh` will still catch.
+    ///
+    /// A `session_id` with no journal history (never opened, or nothing
+    /// written yet) resumes as an ordinary fresh, empty review — this is
+    /// not an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a replayed `Decide` event's case id fails to
+    /// parse as an [`EinmoId`].
+    pub fn resume(
+        suite: impl Into<std::path::PathBuf>,
+        session_id: impl Into<String>,
+        opts: ReviewOpts,
+    ) -> Result<Self> {
+        let session_id = session_id.into();
+        let path = crate::journal::journal_path(&session_id);
+        let entries = crate::journal::Journal::replay(&path);
+        let review = Self::open_internal(suite, opts, session_id);
+        for line in entries {
+            match line.event {
+                crate::journal::JournalEvent::Decide { id, decision } => {
+                    let id = EinmoId::try_from(id.as_str())?;
+                    if let Some(decision) = decision.into_decision() {
+                        review.decide(id, decision);
+                    }
+                }
+                crate::journal::JournalEvent::Undecide { id } => {
+                    let id = EinmoId::try_from(id.as_str())?;
+                    review.undecide(&id);
+                }
+                _ => {}
+            }
+        }
+        Ok(review)
+    }
+
+    fn open_internal(
+        suite: impl Into<std::path::PathBuf>,
+        opts: ReviewOpts,
+        session_id: String,
+    ) -> Self {
         let config = TestConfig::new(suite, crate::einmo_suite::ValidationLevel::Output);
+        let journal =
+            crate::journal::Journal::open(session_id, crate::journal::JournalLevel::default());
+        journal.log_at(
+            crate::journal::JournalLevel::Terse,
+            crate::journal::JournalEvent::SessionOpen {
+                session: journal.session_id().to_string(),
+                suite: config.work_dir().display().to_string(),
+            },
+        );
         EinmoReview {
             config,
             opts,
             cache: VerifiedCache::default(),
             decisions: RwLock::new(DecisionBook::default()),
             exec: Mutex::new(()),
+            journal,
         }
+    }
+
+    /// This session's id — the journal file (under
+    /// [`crate::journal::journal_dir`]) is `<session_id>.jsonl`.
+    /// [`EinmoReview::resume`] with this id continues the same journal.
+    #[must_use]
+    pub fn session_id(&self) -> &str {
+        self.journal.session_id()
+    }
+
+    /// The path this session's journal writes to.
+    #[must_use]
+    pub fn journal_path(&self) -> std::path::PathBuf {
+        self.journal.path()
     }
 
     /// The worklist: every case matching `self.opts`, its per-stage status,
@@ -431,7 +520,27 @@ impl EinmoReview {
     /// verify-on-inspect.
     pub fn body(&self, id: &EinmoId, stage: Stage) -> Result<VerifiedBody> {
         let path = id.to_stage_path(self.config.work_dir(), stage);
-        self.cache.get_or_verify(&path)
+        // `fine`-level only (EIMP-1 S.6): an unmatched VerifyStart (the
+        // process crashed between these two log_at calls) identifies the
+        // in-flight case after a crash, without touching output/ the way
+        // the crash crumb does.
+        self.journal.log_at(
+            crate::journal::JournalLevel::Fine,
+            crate::journal::JournalEvent::VerifyStart {
+                id: id.as_str().to_string(),
+                stage: stage.dir_name().to_string(),
+            },
+        );
+        let result = self.cache.get_or_verify(&path);
+        self.journal.log_at(
+            crate::journal::JournalLevel::Fine,
+            crate::journal::JournalEvent::VerifyEnd {
+                id: id.as_str().to_string(),
+                stage: stage.dir_name().to_string(),
+                ok: result.is_ok(),
+            },
+        );
+        result
     }
 
     /// The section-by-section diff of `id` between `left` and `right`
@@ -472,6 +581,13 @@ impl EinmoReview {
     pub fn decide(&self, id: EinmoId, decision: Decision) -> Option<Decision> {
         let basis = decision_basis_path(&self.config, &id, &decision)
             .and_then(|p| Fingerprint::of(&p).ok());
+        self.journal.log_at(
+            crate::journal::JournalLevel::Normal,
+            crate::journal::JournalEvent::Decide {
+                id: id.as_str().to_string(),
+                decision: crate::journal::JournalDecision::from(&decision),
+            },
+        );
         self.decisions
             .write()
             .expect("decisions lock poisoned")
@@ -573,6 +689,12 @@ impl EinmoReview {
     /// decision, if any; a no-op (returns `None`) if it was already
     /// undecided.
     pub fn undecide(&self, id: &EinmoId) -> Option<Decision> {
+        self.journal.log_at(
+            crate::journal::JournalLevel::Normal,
+            crate::journal::JournalEvent::Undecide {
+                id: id.as_str().to_string(),
+            },
+        );
         self.decisions
             .write()
             .expect("decisions lock poisoned")
@@ -764,6 +886,22 @@ impl EinmoReview {
             }
         }
 
+        self.journal.log_at(
+            crate::journal::JournalLevel::Terse,
+            crate::journal::JournalEvent::ExecuteBatch {
+                executed: report
+                    .executed
+                    .iter()
+                    .map(|e| e.id.as_str().to_string())
+                    .collect(),
+                skipped: report
+                    .skipped
+                    .iter()
+                    .map(|id| id.as_str().to_string())
+                    .collect(),
+            },
+        );
+
         Ok(report)
     }
 
@@ -821,6 +959,20 @@ impl EinmoReview {
                      re-decide against current content"
                 ))
             })
+    }
+}
+
+impl Drop for EinmoReview {
+    /// Journals `SessionClose` (`EIMP-1` §S.6: "terse: session open/close")
+    /// whenever a session ends, however the caller stops using it — no
+    /// separate `close()` method to remember to call.
+    fn drop(&mut self) {
+        self.journal.log_at(
+            crate::journal::JournalLevel::Terse,
+            crate::journal::JournalEvent::SessionClose {
+                session: self.journal.session_id().to_string(),
+            },
+        );
     }
 }
 
@@ -1410,6 +1562,114 @@ mod tests {
             item.decision,
             Some(Decision::Promote { to: Stage::Checked })
         );
+    }
+
+    // EIMP-1 S.6: the journal.
+
+    #[test]
+    fn open_writes_a_session_open_entry() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let lines = crate::journal::Journal::replay(&review.journal_path());
+        assert!(
+            lines
+                .iter()
+                .any(|l| matches!(&l.event, crate::journal::JournalEvent::SessionOpen { session, .. } if session == review.session_id())),
+        );
+    }
+
+    #[test]
+    fn decide_and_undecide_are_journaled() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.decide(id.clone(), Decision::Skip);
+        review.undecide(&id);
+
+        let lines = crate::journal::Journal::replay(&review.journal_path());
+        let decided = lines
+            .iter()
+            .any(|l| matches!(&l.event, crate::journal::JournalEvent::Decide { id: eid, .. } if eid == id.as_str()));
+        let undecided = lines
+            .iter()
+            .any(|l| matches!(&l.event, crate::journal::JournalEvent::Undecide { id: eid } if eid == id.as_str()));
+        assert!(decided, "decide() must be journaled: {lines:?}");
+        assert!(undecided, "undecide() must be journaled: {lines:?}");
+    }
+
+    #[test]
+    fn execute_logs_one_execute_batch_entry() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+        review
+            .execute(
+                &review.plan(),
+                &SignerSet {
+                    to_checked: KeySource::from_passphrase(""),
+                    to_verified: None,
+                },
+            )
+            .unwrap();
+
+        let lines = crate::journal::Journal::replay(&review.journal_path());
+        let batch = lines.iter().find_map(|l| match &l.event {
+            crate::journal::JournalEvent::ExecuteBatch { executed, skipped } => {
+                Some((executed.clone(), skipped.clone()))
+            }
+            _ => None,
+        });
+        let (executed, _skipped) = batch.expect("an ExecuteBatch entry must be journaled");
+        assert!(executed.contains(&id.as_str().to_string()));
+    }
+
+    #[test]
+    fn resume_reconstructs_a_pending_decision_left_by_a_dropped_session() {
+        let tmp = seeded_suite();
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let session_id = {
+            let review = EinmoReview::open(tmp.path());
+            review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+            review.session_id().to_string()
+            // `review` drops here without ever calling execute() -- simulates
+            // the process crashing with a decision still pending.
+        };
+
+        let resumed = EinmoReview::resume(tmp.path(), &session_id, ReviewOpts::default()).unwrap();
+        assert_eq!(
+            resumed.decision(&id),
+            Some(Decision::Promote { to: Stage::Checked }),
+            "resume must reconstruct the decision the dropped session left pending"
+        );
+    }
+
+    #[test]
+    fn resume_replays_undecide_so_a_cleared_decision_stays_cleared() {
+        let tmp = seeded_suite();
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let session_id = {
+            let review = EinmoReview::open(tmp.path());
+            review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+            review.undecide(&id);
+            review.session_id().to_string()
+        };
+
+        let resumed = EinmoReview::resume(tmp.path(), &session_id, ReviewOpts::default()).unwrap();
+        assert_eq!(resumed.decision(&id), None);
+    }
+
+    #[test]
+    fn resume_of_an_unknown_session_id_is_a_fresh_empty_review() {
+        let tmp = seeded_suite();
+        let resumed = EinmoReview::resume(
+            tmp.path(),
+            "never-seen-before-session",
+            ReviewOpts::default(),
+        )
+        .unwrap();
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        assert_eq!(resumed.decision(&id), None);
     }
 
     #[test]

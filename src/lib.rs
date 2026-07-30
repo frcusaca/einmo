@@ -25,6 +25,7 @@ mod config;
 mod einmo_suite;
 mod error;
 mod format;
+mod journal;
 mod review;
 mod review_server;
 mod signature;
@@ -41,6 +42,9 @@ pub use einmo_suite::{
 };
 pub use error::EinmoError;
 pub use format::{EinmoFile, Metadata, Section, Status};
+pub use journal::{
+    Journal, JournalDecision, JournalEvent, JournalLevel, JournalLine, journal_dir, journal_path,
+};
 pub use review::{
     Decision, DiffHunks, DiffLine, EinmoReview, Executed, ExecutionPlan, ExecutionReport,
     PlannedAction, ReviewItem, ReviewMode, ReviewOpts, SectionDiff, SignerSet, VerifiedBody,

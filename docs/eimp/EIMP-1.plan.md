@@ -343,12 +343,59 @@ verbs belong to that crate's binary, not core's `cli.rs`.
       `--flag-is-not-failure` — only the exit code changes. 5 new tests
       (2 library, 3 CLI: the pure gate function's three cases, plus a parse
       test for the new flag). 227 workspace tests, clippy/fmt clean.
-- [ ] Implement `Journal` (append-only JSONL, replay, truncated-tail
+- [x] Implement `Journal` (append-only JSONL, replay, truncated-tail
       tolerance) per the §S.6 resolution: keyed by `EinmoId`, verbosity
       levels (terse/normal/fine), `fine` recording each case as it is read
       in and verified. Must be *capable* of the crash crumb's purpose;
       retiring the crumb is explicitly NOT this EIMP's work (follow-up
       logging EIMP, see the repo TODO)
+      (2026-07-30 18:58) — new `src/journal.rs`. `Journal::open` never
+      fails (a plumbing failure just means events go unrecorded — logging
+      must never block a reviewer's actual work); `JournalLevel::Terse <
+      Normal(default) < Fine` gates `log_at` by a plain comparison.
+      `replay` is truncated-tail tolerant by being *maximally* tolerant:
+      any unparseable line (not just the last) is silently skipped rather
+      than aborting the whole replay — simpler than distinguishing
+      tail-truncation from other corruption, and still correct (every line
+      that DOES parse survives). Scratch dir: `$EINMO_JOURNAL_DIR` or
+      `temp_dir()/einmo-journal`, hardened to mode 0700 (mirrors
+      `einmo_review_client.sh`'s `harden_dir`). Domain types stay
+      serde-free (`review_server.rs`'s existing DTO convention): a new
+      `JournalDecision` is the journal's own wire form for `Decision`,
+      with round-trip conversions.
+
+      Wired into `EinmoReview`: a random 128-bit session id per `open`/
+      `open_with`; `decide`/`undecide` log at `Normal`; `execute` logs one
+      `ExecuteBatch` at `Terse` (so `execute_one` inherits it for free, per
+      its own "not a separate code path" design); `body` logs
+      `VerifyStart`/`VerifyEnd` at `Fine` (an unmatched `VerifyStart`
+      identifies the in-flight case after a crash — the crash-crumb-capable
+      claim, without writing anything into `output/`); a `Drop` impl logs
+      `SessionClose` so "terse: session open/close" needs no separate
+      method to remember to call.
+
+      New `EinmoReview::resume(suite, session_id, opts) -> Result<Self>`
+      (`EIMP-1`'s "Reopen = replay", concretely: Use Case #7, "resume after
+      a crash"): replays a session's journal and reconstructs pending
+      decisions by calling the ordinary `decide`/`undecide` methods, in
+      order — **not** by restoring the original decide-time fingerprint
+      verbatim. This is a deliberate simplification found while
+      implementing: recomputing the drift-check basis fresh at resume-time
+      is actually the *safer* choice, not a shortcut — if nothing changed
+      during the crash gap the fingerprints agree anyway, and if something
+      DID change, that's a legitimate drift `execute`/`refresh` should
+      still catch, not something a resume should paper over by trusting
+      stale pre-crash state.
+
+      11 new tests (7 in `journal.rs`, 6 in `review.rs` incl. two resume
+      tests and a third pinning that resuming an unknown session id is
+      just an ordinary fresh review, not an error). Found and fixed one
+      test bug along the way: an early draft's test helper embedded a
+      tempdir's full path (containing `/`) into a session id string later
+      used as a filename component, corrupting the journal path — fixed by
+      using only the tempdir's leaf name. `Journal`/`JournalEvent`/
+      `JournalLevel`/`JournalDecision`/`JournalLine` exported from `lib.rs`.
+      240 workspace tests, clippy/fmt clean.
 - [ ] Soft claims (§S.5): `claim(id, ttl)`, 5-minute default,
       auto-reclaimed on expiry, surfaced in `plan()` output. Advisory only —
       cannot wedge. (Single implicit reviewer today, so this is
