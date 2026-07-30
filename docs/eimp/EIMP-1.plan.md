@@ -440,6 +440,96 @@ of any async runtime. The digest construction stays `EIMP-1` §S.11's
 byte-join — `EIMP-5` handles both the Merkle restructuring and the
 parallelism, as one change, after this ships.
 
+> **STASH — temporary implementation notes (2026-07-30), delete this block
+> when Phase A2's checkboxes below are all checked.** Captured mid-design so
+> nothing is lost if the sandbox reboots again before the code lands.
+>
+> **fips205 API, confirmed by reading the crate source
+> (`fips205-0.4.1/src/{lib,traits}.rs`) — not just its docs:**
+> - `slh_dsa_sha2_256s::N = 32` (seed size), `PK_LEN = 64`, `SIG_LEN = 29792`.
+> - `KeyGen::keygen_with_seeds::<32>(sk_seed, sk_prf, pk_seed) -> (PublicKey,
+>   PrivateKey)` is a **default trait method already in fips205** — fully
+>   deterministic (internally drives a `DummyRng` that just replays the three
+>   seeds via `try_fill_bytes`, no OS entropy touched). This is the
+>   dual-derivation primitive; no new dependency (`rand_chacha` etc.) needed.
+> - `PrivateKey::try_sign_with_rng(rng, message, ctx, hedged)` — verified in
+>   `slh_sign_with_rng`'s body that when `hedged == false`, `opt_rand` is
+>   fixed to `self.pk_seed` and `rng.try_fill_bytes` is **never called** —
+>   signing is fully deterministic given the same key + message when
+>   `hedged: false`, regardless of what rng is passed. Plan: pass
+>   `&mut rand_core::OsRng` (already a dep, unused in practice) and
+>   `hedged: false` throughout — same message ⇒ byte-identical signature,
+>   every run.
+> - Both are pure Rust, `#![no_std]`, `#![deny(unsafe_code)]` — better than
+>   the `#![forbid(unsafe_code)]` floor this crate already holds.
+>
+> **Key derivation plan (extends `signature.rs`, not a new derivation
+> scheme):** generalize `derive_keypair` to delegate to a new
+> `pub(crate) fn derive_seed(passphrase: &str, salt: &[u8]) -> [u8; 32]`
+> (same pinned Argon2id params, just parameterized on salt). `corpus_signer.rs`
+> then derives a **master seed** via `derive_seed(passphrase,
+> CORPUS_SIGNER_SALT)` (`CORPUS_SIGNER_SALT = b"einmo:corpus-signer-key:v1"`,
+> domain-separated from the Ed25519 `SALT`), then SHA-256-expands it three
+> ways (`expand(&master, b"sk_seed")` / `b"sk_prf"` / `b"pk_seed"`, each
+> `Sha256(fixed-domain-prefix || label || master)`) into the three 32-byte
+> seeds `keygen_with_seeds` wants. One Argon2id run (not three) — the
+> expensive KDF step stays singular; SHA-256 fans it out. Same passphrase ⇒
+> same master ⇒ same three seeds ⇒ same SLH-DSA keypair, always.
+>
+> **Digest plan, matching §S.11 step 3 ("hashed, and SPHINCS+ signs that
+> digest") literally:** `digest()` streams a SHA-256 hasher over (a) a
+> canonical header encoding stage name + param-set id (`"slh_dsa_sha2_256s"`)
+> + collation id + the collation-ordered `EinmoId` list — so the *path set
+> and order* are part of what's signed, not just concatenated file bytes —
+> then (b) each file's full on-disk envelope bytes in manifest order,
+> incrementally. The resulting 32-byte SHA-256 digest is the fips205 signing
+> **message** (`sk.try_sign_with_rng(&mut OsRng, &digest, b"", false)`),
+> matching the spec's explicit two-stage "hash, then SPHINCS+ signs that
+> digest" rather than feeding the whole section to SLH-DSA directly.
+> Mid-read size change on a file → hard error (record `len` from `metadata`
+> before streaming, compare to bytes actually read after).
+>
+> **`Collation::PathBytes` comparator — the key insight:** compare
+> `EinmoId::as_str().split('/')` (an iterator of `&str` components) via
+> `Iterator::cmp`, **never** `EinmoId::as_str().cmp()` directly on the whole
+> string. Rust's `str: Ord` is already raw-byte lexicographic (no locale, no
+> normalization — satisfies items 3–4 of §S.11a for free), but comparing the
+> *whole path string* would let `/` (0x2F) vs `-` (0x2D) decide before
+> structure does, which is exactly backwards for the `a/b` vs `a-b` case the
+> spec calls out: `["a","b"]` vs `["a-b"]` compares component 0 (`"a"` is a
+> strict prefix of `"a-b"`) and puts `a/b` first, whereas a raw string
+> compare would put `a-b` first (`-` < `/` in byte value). Splitting before
+> comparing is what makes "a path boundary can never be confused with a
+> character inside a name" (§S.11a item 2) actually true. Tie detection
+> (item 5): sort, then check adjacent pairs — a tie can only mean duplicate
+> input, so it's a hard error, not silently broken.
+>
+> **Module layout decided:** new `src/collation.rs` (the `Collation` enum,
+> standalone, no `CorpusSigner` dependency — testable on bare `EinmoId`
+> lists) and new `src/corpus_signer.rs` (`CorpusSigner`, `SectionManifest`,
+> `SectionDigest`, `SectionSig`, the dual-derivation helpers). `sign` takes
+> `&KeySource` (existing type from `config.rs`, not a new `Signer` type — the
+> EIMP-1.md pseudocode's `&Signer` parameter predates `SignerSet`/`KeySource`
+> actually being built in Phase A; `key.passphrase()` is the established
+> idiom every other signing call site already uses, e.g.
+> `transitions.rs::promote`). New `EinmoError::CorpusSignature(String)`
+> variant for manifest/collation/digest/SLH-DSA-signature failures —
+> deliberately distinct from `EinmoError::Verification` (the per-file Ed25519
+> stamp-chain checker) so an unknown-collation error is never textually
+> indistinguishable from a tampered-corpus mismatch, per §S.11a's explicit
+> requirement. `einmo.toml` wiring: add `collation: Option<String>` to
+> `config.rs`'s `SigningConfig`, parsed alongside the existing
+> `output`/`checked`/`verified` fields; a `TestConfig` accessor resolves it
+> via `Collation::parse` (default `"path-bytes"` when unset) — this is the
+> "wire it to `einmo.toml`" checkbox, independent of *using* `CorpusSigner`
+> from the live promotion flow, which stays out of scope per this phase's
+> header.
+>
+> Not yet started: no `collation.rs`/`corpus_signer.rs` files exist yet, no
+> tests written, no code beyond the already-committed `Cargo.toml` fips205
+> dependency. Next action on resume: write `collation.rs` tests-first (the
+> plan's own ordering — Collation before the `CorpusSigner` skeleton).
+
 - [ ] Read §S.11 of `EIMP-1.md`; add `fips205` dep (feature
       `slh_dsa_sha2_256s` — conservative set) to `Cargo.toml`
 - [ ] Write tests FIRST (§Test Plan "CorpusSigner" + section attestation):
