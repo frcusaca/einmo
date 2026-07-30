@@ -42,10 +42,13 @@ pub use einmo_suite::{
 pub use error::EinmoError;
 pub use format::{EinmoFile, Metadata, Section, Status};
 pub use review::{
-    Decision, EinmoReview, Executed, ExecutionPlan, ExecutionReport, PlannedAction, ReviewItem,
-    ReviewMode, ReviewOpts, SignerSet, VerifiedBody,
+    Decision, DiffHunks, DiffLine, EinmoReview, Executed, ExecutionPlan, ExecutionReport,
+    PlannedAction, ReviewItem, ReviewMode, ReviewOpts, SectionDiff, SignerSet, VerifiedBody,
 };
-pub use review_server::{ApiError, AppState, SessionId, router, serve_uds};
+pub use review_server::{
+    ApiError, AppState, DiffLineResponse, DiffResponse, SectionDiffResponse, SessionId, router,
+    serve_uds,
+};
 pub use signature::{Stamp, StampRole, Stamps};
 pub use stage::{EinmoId, Stage};
 pub use transitions::{

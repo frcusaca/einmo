@@ -79,6 +79,37 @@ pub struct VerifiedBody {
     pub sections: Vec<(String, String)>,
 }
 
+/// One line of a section's diff between two stages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiffLine {
+    /// Present, unchanged, on both sides.
+    Equal(String),
+    /// Present in `left` (the first stage passed to
+    /// [`EinmoReview::diff`]), absent or different in `right`.
+    Removed(String),
+    /// Present in `right`, absent or different in `left`.
+    Added(String),
+}
+
+/// One section's diff between two stages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SectionDiff {
+    /// The section name (e.g. `"OUTPUT"`, `"COMMENTS"`).
+    pub name: String,
+    /// The line-level diff of that section's body, `left` vs `right`.
+    pub lines: Vec<DiffLine>,
+}
+
+/// The diff between two stages' verified bodies, section by section
+/// (`EIMP-1` §S.7: "hunks between stages, stamp lines excluded" — STAMPS is
+/// never a section here because [`VerifiedBody`] already excludes it).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiffHunks {
+    /// One entry per section present on either side, in `left`'s section
+    /// order followed by any sections `right` has that `left` does not.
+    pub sections: Vec<SectionDiff>,
+}
+
 /// A cheap content fingerprint used as the single-flight cache key: the
 /// artifact's path plus its file length and modified time. Not a
 /// cryptographic hash — collisions are safe (worst case: one redundant
@@ -182,6 +213,28 @@ pub struct ReviewOpts {
     /// Restrict to cases whose id contains this substring (same semantics
     /// as `scan_tests`'s existing filter).
     pub filter: Option<String>,
+}
+
+/// Line-level diff of one section's body between two stages, via `similar`
+/// (already a dependency — `einmo_suite.rs`'s dependent-`DIFF`-section
+/// generation uses it too).
+fn section_diff(name: &str, left: &str, right: &str) -> SectionDiff {
+    let diff = similar::TextDiff::from_lines(left, right);
+    let lines = diff
+        .iter_all_changes()
+        .map(|change| {
+            let value = change.value().to_string();
+            match change.tag() {
+                similar::ChangeTag::Equal => DiffLine::Equal(value),
+                similar::ChangeTag::Delete => DiffLine::Removed(value),
+                similar::ChangeTag::Insert => DiffLine::Added(value),
+            }
+        })
+        .collect();
+    SectionDiff {
+        name: name.to_string(),
+        lines,
+    }
 }
 
 /// Fisher-Yates, OS-entropy seeded. `ReviewMode::Random`'s only consumer —
@@ -351,6 +404,39 @@ impl EinmoReview {
     pub fn body(&self, id: &EinmoId, stage: Stage) -> Result<VerifiedBody> {
         let path = id.to_stage_path(self.config.work_dir(), stage);
         self.cache.get_or_verify(&path)
+    }
+
+    /// The section-by-section diff of `id` between `left` and `right`
+    /// (`EIMP-1` §S.7). Both bodies go through [`EinmoReview::body`], so
+    /// each side is verify-on-inspected and single-flight cached exactly as
+    /// a direct `body` call would be.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either stage's artifact does not exist or fails
+    /// verify-on-inspect.
+    pub fn diff(&self, id: &EinmoId, left: Stage, right: Stage) -> Result<DiffHunks> {
+        let left_body = self.body(id, left)?;
+        let right_body = self.body(id, right)?;
+
+        let mut sections = Vec::new();
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for (name, left_text) in &left_body.sections {
+            let right_text = right_body
+                .sections
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, b)| b.as_str())
+                .unwrap_or("");
+            sections.push(section_diff(name, left_text, right_text));
+            seen.insert(name.as_str());
+        }
+        for (name, right_text) in &right_body.sections {
+            if !seen.contains(name.as_str()) {
+                sections.push(section_diff(name, "", right_text));
+            }
+        }
+        Ok(DiffHunks { sections })
     }
 
     /// Record (or replace) the reviewer's decision for `id`. Returns the
@@ -804,6 +890,69 @@ mod tests {
         assert_eq!(
             full_ids, random_ids,
             "Random must be a reordering, never a different set"
+        );
+    }
+
+    // EIMP-1 S.7: EinmoReview::diff.
+
+    #[test]
+    fn diff_is_all_equal_when_stage_bodies_match() {
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let hunks = review.diff(&id, Stage::Output, Stage::Checked).unwrap();
+        assert!(!hunks.sections.is_empty());
+        for section in &hunks.sections {
+            assert!(
+                section
+                    .lines
+                    .iter()
+                    .all(|l| matches!(l, DiffLine::Equal(_))),
+                "section {:?} should be all-Equal when bodies match: {:?}",
+                section.name,
+                section.lines
+            );
+        }
+    }
+
+    #[test]
+    fn diff_excludes_stamps_section() {
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let hunks = review.diff(&id, Stage::Output, Stage::Checked).unwrap();
+        assert!(!hunks.sections.iter().any(|s| s.name == "STAMPS"));
+    }
+
+    #[test]
+    fn diff_reports_line_level_changes_between_differing_stages() {
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path()); // checked := "2" (1+1)
+        write_input(tmp.path(), "a.foo", "{3+3;}");
+        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let regen = suite
+            .regenerate_output(std::path::Path::new("a.foo"), &Echo)
+            .unwrap();
+        assert!(regen.written_and_verified);
+
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let hunks = review.diff(&id, Stage::Output, Stage::Checked).unwrap();
+        let output_section = hunks
+            .sections
+            .iter()
+            .find(|s| s.name == "OUTPUT")
+            .expect("OUTPUT section present on both sides");
+        assert!(
+            output_section
+                .lines
+                .iter()
+                .any(|l| matches!(l, DiffLine::Removed(_) | DiffLine::Added(_))),
+            "differing OUTPUT bodies must produce a non-Equal line: {:?}",
+            output_section.lines
         );
     }
 

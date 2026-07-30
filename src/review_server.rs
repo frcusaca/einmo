@@ -224,6 +224,77 @@ fn parse_stage(s: &str) -> Result<Stage, ApiError> {
     Stage::parse(s).map_err(|_| ApiError::BadRequest(format!("invalid stage {s:?}")))
 }
 
+/// One line of a [`SectionDiffResponse`], tagged by `"tag"` — the wire form
+/// of [`crate::review::DiffLine`].
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "tag", rename_all = "lowercase")]
+pub enum DiffLineResponse {
+    /// Present, unchanged, on both sides.
+    Equal {
+        /// The line text.
+        text: String,
+    },
+    /// Present on the `left` side, absent or different on `right`.
+    Removed {
+        /// The line text.
+        text: String,
+    },
+    /// Present on the `right` side, absent or different on `left`.
+    Added {
+        /// The line text.
+        text: String,
+    },
+}
+
+impl From<crate::review::DiffLine> for DiffLineResponse {
+    fn from(line: crate::review::DiffLine) -> Self {
+        match line {
+            crate::review::DiffLine::Equal(text) => DiffLineResponse::Equal { text },
+            crate::review::DiffLine::Removed(text) => DiffLineResponse::Removed { text },
+            crate::review::DiffLine::Added(text) => DiffLineResponse::Added { text },
+        }
+    }
+}
+
+/// One section's diff, as returned by `GET … /diff/<left>/<right>`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SectionDiffResponse {
+    /// The section name.
+    pub name: String,
+    /// The section's line-level diff, `left` vs `right`.
+    pub lines: Vec<DiffLineResponse>,
+}
+
+impl From<crate::review::SectionDiff> for SectionDiffResponse {
+    fn from(section: crate::review::SectionDiff) -> Self {
+        SectionDiffResponse {
+            name: section.name,
+            lines: section.lines.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// `GET /einmo/<session>/cases/<id>/diff/<left>/<right>` response body
+/// (`EIMP-1` §S.7).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DiffResponse {
+    /// One entry per section present on either side (STAMPS excluded).
+    pub sections: Vec<SectionDiffResponse>,
+}
+
+async fn case_diff(
+    State(state): State<Arc<AppState>>,
+    Path((session, id, left, right)): Path<(SessionId, EinmoId, String, String)>,
+) -> Result<Json<DiffResponse>, ApiError> {
+    let review = state.get(session)?;
+    let left = parse_stage(&left)?;
+    let right = parse_stage(&right)?;
+    let hunks = review.diff(&id, left, right).map_err(ApiError::from)?;
+    Ok(Json(DiffResponse {
+        sections: hunks.sections.into_iter().map(Into::into).collect(),
+    }))
+}
+
 /// A promote/retract destination or source restricted to the two stages a
 /// human decision can name (`checked`/`verified`) — deliberately narrower
 /// than [`Stage`] (which also has `output`/`flagged`, neither a legal
@@ -491,6 +562,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/einmo/:session/cases", get(list_cases))
         .route("/einmo/:session/cases/:id", get(case_detail))
         .route("/einmo/:session/cases/:id/body/:stage", get(case_body))
+        .route(
+            "/einmo/:session/cases/:id/diff/:left/:right",
+            get(case_diff),
+        )
         .route("/einmo/:session/cases/:id/flag/:stage", post(flag_case))
         .route(
             "/einmo/:session/cases/:id/retract/:stage",
@@ -660,6 +735,7 @@ mod tests {
             "/einmo/deadbeefdeadbeef/cases",
             "/einmo/deadbeefdeadbeef/cases/a.foo",
             "/einmo/deadbeefdeadbeef/cases/a.foo/body/output",
+            "/einmo/deadbeefdeadbeef/cases/a.foo/diff/output/checked",
         ] {
             let req = Request::get(uri).body(Body::empty()).unwrap();
             let resp = app.clone().oneshot(req).await.unwrap();
@@ -681,6 +757,64 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body: BodyResponse = body_json(resp).await;
         assert!(body.sections.iter().any(|(name, _)| name == "OUTPUT"));
+    }
+
+    #[tokio::test]
+    async fn case_diff_returns_all_equal_when_stages_match() {
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::get(format!("/einmo/{session}/cases/a.foo/diff/output/checked"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let diff: DiffResponse = body_json(resp).await;
+        assert!(!diff.sections.is_empty());
+        assert!(!diff.sections.iter().any(|s| s.name == "STAMPS"));
+        for section in &diff.sections {
+            assert!(
+                section
+                    .lines
+                    .iter()
+                    .all(|l| matches!(l, DiffLineResponse::Equal { .. })),
+                "{:?}",
+                section
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn case_diff_404s_on_unknown_case() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::get(format!(
+            "/einmo/{session}/cases/does-not-exist.foo/diff/output/checked"
+        ))
+        .body(Body::empty())
+        .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn case_diff_400s_on_invalid_stage() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::get(format!("/einmo/{session}/cases/a.foo/diff/output/bogus"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

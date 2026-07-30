@@ -150,9 +150,27 @@ verbs belong to that crate's binary, not core's `cli.rs`.
       `rand_core::OsRng` (already a dependency via `signature.rs`) rather
       than adding the `rand` crate. 5 new tests; exported from `lib.rs`.
       194 workspace tests, clippy/fmt clean.
-- [ ] `EinmoReview::diff(id, left, right) -> DiffHunks` + the server
+- [x] `EinmoReview::diff(id, left, right) -> DiffHunks` + the server
       endpoint that exposes it; today the client renders whole panes with
       no server-computed diff (`similar` is already a dependency)
+      (2026-07-30 17:47) — `DiffHunks`/`SectionDiff`/`DiffLine` in
+      `review.rs`: `diff` calls `body()` on both sides (verify-on-inspect +
+      single-flight cache reused, not bypassed), then diffs each section
+      with `similar::TextDiff` (same crate `einmo_suite.rs`'s dependent-DIFF
+      generation already uses). STAMPS is never a section here because
+      `VerifiedBody` already excludes it. Server: `GET
+      /einmo/<session>/cases/<id>/diff/<left>/<right>` — path segments for
+      both stages, matching `body/<stage>`'s existing shape rather than the
+      original sketch's `?l=&r=` query params, for one consistent way to
+      name a stage across every route (same precedent Phase F/G set for
+      `flag`/`retract`). DTOs (`DiffResponse`/`SectionDiffResponse`/
+      `DiffLineResponse`) keep the domain type serde-free, per the
+      established `PlannedAction`/`PlannedActionResponse` pattern.
+      3 library tests + 3 endpoint tests (success, unknown case 404,
+      invalid stage 400) + added to the unknown-session-404s-everywhere
+      sweep. 200 workspace tests, clippy/fmt clean. Client wiring
+      (rendering diff hunks instead of whole panes) deferred to Phase D,
+      which already lists it as a follow-up task.
 - [ ] `EinmoReview::refresh()` — rescan and report changed cases. Note the
       Phase 0 finding: `items()` currently rescans every call, so decide
       first whether `refresh` means "invalidate a cache that does not yet
