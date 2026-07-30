@@ -77,3 +77,13 @@
   `day.1/checked/` under it so the whole chain reflects the new key.
   Passphrase goes in the config file only, never in prose (per the first
   open item above).
+
+- [ ] Design pass (2026-07-30): `Perspective`/`PerspectiveOf` currently live
+  as a `TestConfig`-level list of `(name, extract: fn(&str) -> String)`
+  closures (`src/config.rs`), applied ad hoc inside `write_output`
+  (`src/einmo_suite.rs:1168-1179`) to append extra sections. Human feedback:
+  this should instead be a first-class concept of the `.einmo` file
+  struct/format itself (`src/format.rs`'s `EinmoFile`/`Section` model), not
+  a bolted-on config callback external to it. Needs its own design pass
+  (likely its own EIMP) before reshaping — noted here so it isn't lost, not
+  acted on yet.
