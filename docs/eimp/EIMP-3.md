@@ -2,7 +2,7 @@
 eimp: 3
 title: Output-stage drift fails the run; explicit regenerate; multi-signer output stamps
 author: Claude Code (Sonnet 5) <noreply@anthropic.com>
-status: Draft
+status: complete
 type: Standards
 created: 2026-07-30
 supersedes: []

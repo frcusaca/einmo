@@ -138,3 +138,120 @@ fn crash_crumb_survives_stack_overflow() {
     assert!(file.metadata().status_detail.contains("TEST IN PROGRESS"));
     assert!(file.chain_valid(), "crash-crumb stamp chain must be valid");
 }
+
+/// Recursively copy `src` into `dst` (`dst` must already exist). Used to give
+/// each comprehensive-test run its own scratch copy of `day.1` — the real
+/// suite fixture under `suites/javascript/` is never mutated by tests.
+fn copy_dir_recursive(src: &Path, dst: &Path) {
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let ty = entry.file_type().unwrap();
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            std::fs::create_dir_all(&dst_path).unwrap();
+            copy_dir_recursive(&entry.path(), &dst_path);
+        } else if ty.is_file() {
+            std::fs::copy(entry.path(), &dst_path).unwrap();
+        }
+    }
+}
+
+/// EIMP-3 comprehensive test: the full content/key decision table, driven
+/// against a scratch copy of `day.1`'s real, already-signed `output/`
+/// baseline with the real `BoaEvaluator` — not the synthetic `Echo`
+/// evaluator `einmo_suite.rs`'s unit tests use. Exercises, in one pass:
+/// a no-op rerun, a second-signer co-sign, a drifted case that fails and
+/// leaves `output/` untouched, `regenerate_output` replacing it, and a
+/// subsequent clean rerun.
+#[test]
+fn eimp3_output_drift_comprehensive() {
+    let tmp = tempfile::tempdir().unwrap();
+    let scratch = tmp.path().join("day.1");
+    std::fs::create_dir_all(&scratch).unwrap();
+    copy_dir_recursive(&tier_dir("day.1"), &scratch);
+
+    // ---- 1. No-op rerun: unchanged content, the same (computer-key)
+    // signer that originally produced this fixture. `output/` must be
+    // byte-for-byte untouched.
+    let config = TestConfig::new(&scratch, ValidationLevel::Output);
+    let suite = EinmoSuite::new(config);
+    let out_path = scratch.join("output").join("integer_arithmetic.js.einmo");
+    let bytes_before = std::fs::read(&out_path).unwrap();
+    let rerun = suite
+        .evaluate(Path::new("integer_arithmetic.js"), &BoaEvaluator)
+        .unwrap();
+    assert!(!rerun.drifted, "unchanged content must not be drift");
+    assert!(rerun.written_and_verified);
+    assert_eq!(
+        std::fs::read(&out_path).unwrap(),
+        bytes_before,
+        "a true no-op must not touch the file at all"
+    );
+
+    // ---- 2. Second-signer co-sign: same content, a different `output`
+    // passphrase. Stamps accumulate; content is untouched.
+    std::fs::write(
+        scratch.join("einmo.toml"),
+        "[signing]\noutput = \"zweimomo second signer\"\nchecked = \"We unanimously, unequivocally, categorically and definitively approve these test results !\"\n",
+    )
+    .unwrap();
+    let second_config = TestConfig::new(&scratch, ValidationLevel::Output);
+    let second_suite = EinmoSuite::new(second_config);
+    let co_signed = second_suite
+        .evaluate(Path::new("integer_arithmetic.js"), &BoaEvaluator)
+        .unwrap();
+    assert!(!co_signed.drifted);
+    assert!(co_signed.written_and_verified);
+    let file = EinmoFile::from_file(&out_path).unwrap();
+    assert_eq!(file.section("OUTPUT").unwrap().body(), "9");
+    let stage_output_stamps = file
+        .stamps()
+        .entries()
+        .iter()
+        .filter(|s| s.key() == "stage:output")
+        .count();
+    assert_eq!(
+        stage_output_stamps, 2,
+        "both the original and the second signer's stage:output stamps must be present"
+    );
+
+    // ---- 3. Drift: change what `name_binding.js` evaluates to. The
+    // normal (non-forcing) run must fail this case and leave `output/`
+    // untouched.
+    let nb_out_path = scratch.join("output").join("name_binding.js.einmo");
+    let nb_bytes_before = std::fs::read(&nb_out_path).unwrap();
+    std::fs::write(
+        scratch.join("input").join("name_binding.js"),
+        "(() => { let x = 42; let y = x + 9; return y; })()",
+    )
+    .unwrap();
+    let drifted = suite
+        .evaluate(Path::new("name_binding.js"), &BoaEvaluator)
+        .unwrap();
+    assert!(drifted.drifted, "changed evaluator output must be drift");
+    assert!(!drifted.written_and_verified);
+    assert_eq!(
+        std::fs::read(&nb_out_path).unwrap(),
+        nb_bytes_before,
+        "output/ must be untouched by a drifted (failing) run"
+    );
+
+    // ---- 4. `regenerate_output`: deliberately accept the new content.
+    let regenerated = suite
+        .regenerate_output(Path::new("name_binding.js"), &BoaEvaluator)
+        .unwrap();
+    assert!(!regenerated.drifted);
+    assert!(regenerated.written_and_verified);
+    let nb_file = EinmoFile::from_file(&nb_out_path).unwrap();
+    assert_eq!(nb_file.section("OUTPUT").unwrap().body(), "51");
+
+    // ---- 5. A subsequent normal run of the regenerated case is clean:
+    // no drift, no rewrite.
+    let nb_bytes_after_regen = std::fs::read(&nb_out_path).unwrap();
+    let clean = suite
+        .evaluate(Path::new("name_binding.js"), &BoaEvaluator)
+        .unwrap();
+    assert!(!clean.drifted);
+    assert!(clean.written_and_verified);
+    assert_eq!(std::fs::read(&nb_out_path).unwrap(), nb_bytes_after_regen);
+}

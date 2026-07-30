@@ -100,14 +100,28 @@ bottom. Work happens directly on `main` (`EIMP-0` §8).
 
 ## Comprehensive test + completion
 
-- [ ] Comprehensive test, per `EIMP-3.md` §Test Plan: one suite fixture run
-      (reuse `zweimomo`'s ported suites) exercising in one pass: a no-op
-      rerun, a second-signer co-sign (stamps accumulate, content untouched),
-      a drifted case (fails, `output/` untouched), `regenerate-output` on
-      the drifted case, then confirm the regenerated case is a normal
-      `output/` candidate a subsequent run reports as clean
-- [ ] All tests pass: `cargo test` (workspace), `cargo clippy --workspace
+- [x] Comprehensive test, per `EIMP-3.md` §Test Plan: `zweimomo/tests/suites.rs`'s
+      new `eimp3_output_drift_comprehensive`, over a scratch copy of
+      `day.1`'s real, already-signed fixture with the real `BoaEvaluator`
+      (not the synthetic `Echo` evaluator the `einmo_suite.rs` unit tests
+      use). One pass: (1) a no-op rerun of `integer_arithmetic.js` — byte-
+      identical, untouched; (2) a second signer (`einmo.toml` `[signing]
+      output = "zweimomo second signer"`) re-running the same unchanged
+      input — stamp accumulates (2 `stage:output` stamps), content
+      untouched; (3) `name_binding.js`'s input edited to evaluate
+      differently — normal `evaluate` reports `drifted`, `output/` left
+      byte-for-byte untouched; (4) `regenerate_output` on the same case —
+      replaces content, new stamp chain; (5) a subsequent normal `evaluate`
+      of the regenerated case — clean, untouched.
+      (2026-07-30 07:10) — new `copy_dir_recursive` test helper gives each
+      run its own scratch copy; the real `suites/javascript/day.1/` fixture
+      is never mutated.
+- [x] All tests pass: `cargo test` (workspace), `cargo clippy --workspace
       --all-targets -- -D warnings`, `cargo fmt --check`
-- [ ] Update `EIMP-3.md` frontmatter to `status: complete`
-- [ ] Update `docs/eimp/INDEX.md` to add EIMP-3 and reflect its completed
+      (2026-07-30 07:12) — 189 einmo + 4 zweimomo unit + 3 zweimomo
+      integration (was 2) tests, all green; clippy/fmt clean.
+- [x] Update `EIMP-3.md` frontmatter to `status: complete`
+      (2026-07-30 07:12)
+- [x] Update `docs/eimp/INDEX.md` to add EIMP-3 and reflect its completed
       status
+      (2026-07-30 07:12)

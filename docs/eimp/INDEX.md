@@ -16,13 +16,22 @@ ls docs/eimp | rev | sort -V | rev
 | EIMP | Title | Status | Created | Author |
 |------|-------|--------|---------|--------|
 | [EIMP-0](EIMP-0.md) | EIMP Purpose, Process, and Format | Final | 2026-07-29 | Claude Code (Sonnet 5) |
-| [EIMP-1](EIMP-1.md) | EinmoReview — a thread-safe review-session object; thin bash, server, and dhtml frontends | Draft | 2026-07-19 | Atlas (ported by Claude Code (Sonnet 5)) |
+| [EIMP-1](EIMP-1.md) | EinmoReview — a thread-safe review-session object; thin bash, server, and dhtml frontends | Implementing | 2026-07-19 | Atlas (ported by Claude Code (Sonnet 5)) |
 | [EIMP-2](EIMP-2.md) | einmo-review-server — a minimal HTTP prototype of the review/sign/promote/flag loop | complete | 2026-07-29 | Claude Code (Sonnet 5) |
-| [EIMP-3](EIMP-3.md) | Output-stage drift fails the run; explicit regenerate; multi-signer output stamps | Draft | 2026-07-30 | Claude Code (Sonnet 5) |
+| [EIMP-3](EIMP-3.md) | Output-stage drift fails the run; explicit regenerate; multi-signer output stamps | complete | 2026-07-30 | Claude Code (Sonnet 5) |
 
 ---
 
 ## Last Updated
+
+**Date**: 2026-07-30 (2)
+**Updated By**: Claude Code (Sonnet 5)
+**Changes**: `EIMP-3` reached `complete` — both phases plus the
+comprehensive test implemented and verified against `zweimomo`'s real
+`day.1` fixture (no-op rerun, second-signer co-sign, drift-fails-untouched,
+`regenerate_output` replace, clean rerun). Also began `EIMP-1` (all six
+Open Questions resolved, `status: Implementing`) — no implementation phases
+of it are done yet.
 
 **Date**: 2026-07-30
 **Updated By**: Claude Code (Sonnet 5)
