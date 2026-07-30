@@ -350,6 +350,22 @@ pub enum PlannedAction {
 pub struct ExecutionPlan {
     /// The actions this plan will apply, in order.
     pub actions: Vec<PlannedAction>,
+    /// Every currently-active soft claim (`EIMP-1` §S.5) — "a reviewer sees
+    /// what another reviewer currently holds (and its remaining TTL) before
+    /// deciding, so two reviewers don't collide on the same case." Advisory
+    /// only: nothing here changes what `execute` does.
+    pub claims: Vec<ActiveClaim>,
+}
+
+/// A soft, advisory claim on a case (`EIMP-1` §S.5): "I'm on this one" —
+/// never enforced, cannot wedge (an expired claim is silently released, no
+/// action needed from the original claimant).
+#[derive(Debug, Clone)]
+pub struct ActiveClaim {
+    /// The claimed case.
+    pub id: EinmoId,
+    /// How much longer the claim lasts, as of when it was read.
+    pub remaining: std::time::Duration,
 }
 
 /// The outcome of one executed action.
@@ -380,6 +396,8 @@ pub struct EinmoReview {
     decisions: RwLock<DecisionBook>,
     exec: Mutex<()>,
     journal: crate::journal::Journal,
+    /// Soft claims (`EIMP-1` §S.5): id -> the instant it expires at.
+    claims: RwLock<HashMap<EinmoId, std::time::Instant>>,
 }
 
 impl EinmoReview {
@@ -466,6 +484,7 @@ impl EinmoReview {
             decisions: RwLock::new(DecisionBook::default()),
             exec: Mutex::new(()),
             journal,
+            claims: RwLock::new(HashMap::new()),
         }
     }
 
@@ -712,6 +731,53 @@ impl EinmoReview {
             .cloned()
     }
 
+    /// The default claim TTL (`EIMP-1` §S.5, resolved): 5 minutes.
+    pub const DEFAULT_CLAIM_TTL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+    /// Advertise "I'm on this one" for `id`, for [`EinmoReview::DEFAULT_CLAIM_TTL`]
+    /// (`EIMP-1` §S.5). Soft: never enforced, never blocks `decide`/`execute`
+    /// for this or any other case — see [`EinmoReview::claim_for`] for the
+    /// full contract.
+    pub fn claim(&self, id: &EinmoId) {
+        self.claim_for(id, Self::DEFAULT_CLAIM_TTL);
+    }
+
+    /// As [`EinmoReview::claim`], with an explicit TTL. Claiming an
+    /// already-claimed case REFRESHES it (replace-not-stack, same
+    /// discipline as decisions) rather than erroring or stacking — a claim
+    /// is advisory, not a lock, so there is nothing to contend over.
+    /// Surfaced via [`EinmoReview::plan`]'s `claims` field; an expired
+    /// claim is silently released (auto-reclaimed) the next time claims
+    /// are read — no explicit release call exists, matching `EIMP-1`
+    /// §S.5's "no action needed from the original claimant".
+    pub fn claim_for(&self, id: &EinmoId, ttl: std::time::Duration) {
+        let mut claims = self.claims.write().expect("claims lock poisoned");
+        let now = std::time::Instant::now();
+        // Opportunistic prune: claiming is the natural, cheap point to drop
+        // stale entries, so the map does not grow unboundedly across a long
+        // session even though nothing ever explicitly releases a claim.
+        claims.retain(|_, expires_at| *expires_at > now);
+        claims.insert(id.clone(), now + ttl);
+    }
+
+    /// Every currently-active claim, auto-reclaiming (filtering out) any
+    /// that have expired. Read-only — does not prune the underlying map
+    /// (see [`EinmoReview::claim_for`] for where pruning happens); an
+    /// expired entry simply never appears here.
+    #[must_use]
+    fn active_claims(&self) -> Vec<ActiveClaim> {
+        let claims = self.claims.read().expect("claims lock poisoned");
+        let now = std::time::Instant::now();
+        claims
+            .iter()
+            .filter(|(_, expires_at)| **expires_at > now)
+            .map(|(id, expires_at)| ActiveClaim {
+                id: id.clone(),
+                remaining: *expires_at - now,
+            })
+            .collect()
+    }
+
     /// A preview of what [`EinmoReview::execute`] would do right now.
     #[must_use]
     pub fn plan(&self) -> ExecutionPlan {
@@ -735,7 +801,10 @@ impl EinmoReview {
                 Decision::Skip => {}
             }
         }
-        ExecutionPlan { actions }
+        ExecutionPlan {
+            actions,
+            claims: self.active_claims(),
+        }
     }
 
     /// Apply `plan`'s actions: sign and write promotions (via
@@ -945,8 +1014,12 @@ impl EinmoReview {
             }
             None => return Err(EinmoError::Config(format!("no pending decision for {id}"))),
         };
+        // `claims` is irrelevant here: `execute` only ever reads
+        // `plan.actions`, never `plan.claims` (claims are advisory display
+        // data for a frontend, not part of execution).
         let plan = ExecutionPlan {
             actions: vec![action],
+            claims: Vec::new(),
         };
         let report = self.execute(&plan, keys)?;
         report
@@ -1670,6 +1743,76 @@ mod tests {
         .unwrap();
         let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
         assert_eq!(resumed.decision(&id), None);
+    }
+
+    // EIMP-1 S.5: soft claims.
+
+    #[test]
+    fn claim_appears_in_plan_output() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.claim(&id);
+
+        let plan = review.plan();
+        let claim = plan.claims.iter().find(|c| c.id == id);
+        assert!(
+            claim.is_some(),
+            "an active claim must appear in plan().claims"
+        );
+        assert!(claim.unwrap().remaining <= std::time::Duration::from_secs(5 * 60));
+    }
+
+    #[test]
+    fn claim_is_advisory_and_never_blocks_decide_or_execute() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.claim(&id);
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+        let report = review
+            .execute(
+                &review.plan(),
+                &SignerSet {
+                    to_checked: KeySource::from_passphrase(""),
+                    to_verified: None,
+                },
+            )
+            .unwrap();
+        assert!(
+            report.executed.iter().any(|e| e.id == id),
+            "an active claim must never block a decision from executing"
+        );
+    }
+
+    #[test]
+    fn claim_refreshes_rather_than_stacks() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.claim(&id);
+        review.claim(&id);
+        let plan = review.plan();
+        assert_eq!(
+            plan.claims.iter().filter(|c| c.id == id).count(),
+            1,
+            "re-claiming the same case must refresh, not accumulate entries"
+        );
+    }
+
+    #[test]
+    fn an_expired_claim_is_auto_reclaimed() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.claim_for(&id, std::time::Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let plan = review.plan();
+        assert!(
+            !plan.claims.iter().any(|c| c.id == id),
+            "an expired claim must be silently released, not linger: {:?}",
+            plan.claims
+        );
     }
 
     #[test]

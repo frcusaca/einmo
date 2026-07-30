@@ -396,13 +396,38 @@ verbs belong to that crate's binary, not core's `cli.rs`.
       using only the tempdir's leaf name. `Journal`/`JournalEvent`/
       `JournalLevel`/`JournalDecision`/`JournalLine` exported from `lib.rs`.
       240 workspace tests, clippy/fmt clean.
-- [ ] Soft claims (§S.5): `claim(id, ttl)`, 5-minute default,
+- [x] Soft claims (§S.5): `claim(id, ttl)`, 5-minute default,
       auto-reclaimed on expiry, surfaced in `plan()` output. Advisory only —
       cannot wedge. (Single implicit reviewer today, so this is
       infrastructure for the multi-verifier story rather than something the
       current client exercises — note that when implementing)
-- [ ] All Phase A tests green; `cargo fmt` and `cargo clippy -D warnings`
+      (2026-07-30 19:09) — `EinmoReview::claim(id)` (default 5-minute TTL,
+      `DEFAULT_CLAIM_TTL` constant) and `claim_for(id, ttl)` (explicit TTL,
+      used by tests to avoid a real 5-minute wait). Backed by `claims:
+      RwLock<HashMap<EinmoId, Instant>>`; claiming an already-claimed case
+      refreshes (replace-not-stack, same discipline as decisions) rather
+      than stacking or erroring — advisory, nothing to contend over.
+      Opportunistic pruning happens inside `claim_for` itself (the natural,
+      cheap point to drop stale entries) rather than needing a background
+      task or explicit release call — matches §S.5's "no action needed
+      from the original claimant" exactly, since there genuinely is no
+      release API at all, only auto-expiry. `ExecutionPlan` gained a
+      `claims: Vec<ActiveClaim>` field (`{id, remaining: Duration}`),
+      populated by a new private `active_claims()` read (filters expired,
+      never mutates); confirmed advisory-only by a test that claims a case
+      and then decides+executes it through to completion unimpeded. As
+      noted in the plan, single-implicit-reviewer today means this is
+      infrastructure the current client has no reason to call yet — it
+      becomes load-bearing once multiple concurrent reviewers exist.
+      4 new tests. `ActiveClaim` exported from `lib.rs`. 244 workspace
+      tests, clippy/fmt clean.
+- [x] All Phase A tests green; `cargo fmt` and `cargo clippy -D warnings`
       clean
+      (2026-07-30 19:09) — confirmed: 244 einmo lib tests + 4 zweimomo unit
+      + 3 zweimomo integration, all green (einmo alone grew from 189 tests
+      at Phase A's start to 244). `cargo clippy --workspace --all-targets
+      -- -D warnings` and `cargo fmt --check` both clean. **Phase A is
+      complete.**
 
 ## Phase A2 — `CorpusSigner` (section PQ attestation), CRYPTO CORE ONLY, BYTE-JOIN + SINGLE-THREADED (EIMP-1.md §S.11, §S.11a)
 

@@ -46,8 +46,9 @@ pub use journal::{
     Journal, JournalDecision, JournalEvent, JournalLevel, JournalLine, journal_dir, journal_path,
 };
 pub use review::{
-    Decision, DiffHunks, DiffLine, EinmoReview, Executed, ExecutionPlan, ExecutionReport,
-    PlannedAction, ReviewItem, ReviewMode, ReviewOpts, SectionDiff, SignerSet, VerifiedBody,
+    ActiveClaim, Decision, DiffHunks, DiffLine, EinmoReview, Executed, ExecutionPlan,
+    ExecutionReport, PlannedAction, ReviewItem, ReviewMode, ReviewOpts, SectionDiff, SignerSet,
+    VerifiedBody,
 };
 pub use review_server::{
     ApiError, AppState, DiffLineResponse, DiffResponse, SectionDiffResponse, SessionId, router,
