@@ -856,16 +856,29 @@ Tests are written first, per project rules.
   passphrase ⇒ same section pubkey across runs); empty-section manifest is
   well-formed. NO real-corpus writes in this EIMP — pure module tests over
   fixtures.
-- **Unit — CorpusSigner read strategies (S.11)**: `ParallelBuffer` (default)
-  and `Stream` produce a **byte-identical digest** over the same fixture
-  set, independent of worker count and read completion order; the parallel
-  two-pass buffer has exactly `sum(len)` bytes with each file at its
-  manifest offset; a file that shrinks between the metadata and read pass
-  (short read) or grows (leftover bytes) is a hard error, not a silent
-  mis-hash; `Stream` holds bounded memory (never materializes the whole
-  section). Stress with a mix of many tiny files and a few large ones.
-  `CorpusSigner` is exercised as a standalone object (no `EinmoReview`),
-  proving the encapsulation.
+- **Unit — CorpusSigner (S.11, single-threaded byte-join — superseded the
+  original `ParallelBuffer`/`Stream` comparison, withdrawn 2026-07-30 when
+  the parallel read moved to `EIMP-5`)**: `manifest()` is deterministic —
+  same file set, any discovery order, produces the same ordered path list
+  (§S.11a's `Collation`, `PathBytes` by default); `digest()` changes on
+  file add/remove/reorder/content-alteration and is stable across repeated
+  calls with no on-disk change; `sign()`→`verify()` round-trips; a tampered
+  section (one file's bytes altered after signing) fails `verify()`;
+  same-passphrase dual derivation (Ed25519 stamp key + SLH-DSA section key)
+  is deterministic — same passphrase, same two keys, every time; an empty
+  section (stage dir exists, no files) has a well-defined digest and
+  signs/verifies like any other. `CorpusSigner` is exercised as a
+  standalone object (no `EinmoReview`), proving the encapsulation. A file
+  that changes size or disappears mid-read is a hard error, never a
+  silent mis-hash.
+- **Unit — Collation (S.11a)**: the ordering is a genuine total order —
+  paths differing only by case, by Unicode normalization (NFC vs NFD of
+  one grapheme), or where a separator vs an in-name character could flip a
+  naive string sort (`a/b` vs `a-b`) all sort deterministically and
+  identically regardless of discovery order; the collation identifier
+  round-trips through `.section.sig`; an unrecognized identifier fails
+  verification as *that* (an unknown-collation error), never as a generic
+  signature mismatch indistinguishable from tampering.
 - **Unit — execute**: plan/execute equivalence with CLI `einmo promote`
   byte-for-byte; skip-and-report on mid-plan drift; retract cascade;
   exclusive exec under concurrent decide traffic (no lost updates).

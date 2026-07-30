@@ -35,6 +35,10 @@ sha2 = "0.10"
 chacha20poly1305 = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+# Section-level post-quantum attestation (EIMP-1 S.11): SLH-DSA at the
+# conservative (large-signature, slow-signing) parameter set. Pure Rust, no
+# default features -- only the one parameter set this EIMP uses.
+fips205 = { version = "0.4", default-features = false, features = ["slh_dsa_sha2_256s"] }
 # einmo-review-server (EIMP-2): a minimal HTTP prototype over a unix-domain
 # socket. Typed extractors throughout -- see EIMP-2.md §3a. axum 0.7's
 # serve() is TCP-only, so the UDS accept loop is hand-rolled: hyper's HTTP/1.1
