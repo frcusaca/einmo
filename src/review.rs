@@ -15,9 +15,11 @@ use crate::config::{KeySource, TestConfig};
 use crate::einmo_suite::{TestRow, body_sections, scan_tests};
 use crate::error::{EinmoError, Result};
 use crate::format::EinmoFile;
+use crate::signature::StageKeypair;
 use crate::stage::EinmoId;
 use crate::stage::Stage;
-use crate::transitions::{self, FlagReport, PromotionReport, RetractReport};
+use crate::stage::ensure_parent_dir;
+use crate::transitions::{self, FlagReport, RetractReport};
 
 /// A reviewer's decision about one case. Replace-not-stack: a later
 /// [`EinmoReview::decide`] call for the same [`EinmoId`] replaces, never
@@ -689,38 +691,17 @@ impl EinmoReview {
                 })?,
                 _ => &keys.to_checked,
             };
-            let files: Vec<_> = ids
-                .iter()
-                .map(|id| crate::stage::mirror_input_path(std::path::Path::new(id.as_str())))
-                .collect();
-            // One transitions::promote call per stage pair: it derives the
-            // stage key once internally and signs every file in `files`
-            // under that single derivation (transitions.rs's own KEK
-            // discipline), so this loop's key material is never held
-            // outside that one call.
-            let outcome: Result<PromotionReport> =
-                transitions::promote(&self.config, from, to, key, None, Some(&files));
-            match outcome {
-                Ok(promoted) => {
-                    let promoted_rels: std::collections::HashSet<_> = promoted
-                        .promoted
-                        .iter()
-                        .map(|p| p.rel_path.clone())
-                        .collect();
-                    for id in ids {
-                        let rel =
-                            crate::stage::mirror_input_path(std::path::Path::new(id.as_str()));
-                        if promoted_rels.contains(&rel) {
-                            report.executed.push(Executed {
-                                id,
-                                detail: format!("promoted {from} to {to}"),
-                            });
-                        } else {
-                            report.skipped.push(id);
-                        }
-                    }
+            // Derive the stage key ONCE per (from, to) group (the same
+            // discipline `transitions::promote` uses): Argon2id derivation
+            // is ~1.8s by design, so per-case derivation would make a
+            // multi-case batch promotion unusable
+            // (`execute_derives_stage_key_once_per_batch_not_per_case`).
+            let keypair = StageKeypair::derive(key.passphrase());
+            for id in ids {
+                match promote_one_accumulating(&self.config, from, to, &id, &keypair) {
+                    Ok(detail) => report.executed.push(Executed { id, detail }),
+                    Err(_) => report.skipped.push(id),
                 }
-                Err(_) => report.skipped.extend(ids),
             }
         }
 
@@ -896,6 +877,70 @@ fn action_id(action: &PlannedAction) -> &EinmoId {
         | PlannedAction::Retract { id, .. }
         | PlannedAction::Flag { id, .. } => id,
     }
+}
+
+/// One file's promote from `from` to `to`, applying `EIMP-1` §S.4a's
+/// content-then-key decision table — the `checked`/`verified` counterpart
+/// to `EIMP-3`'s `output`-stage version of the same idea (`write_output`).
+/// Returns a short human-readable detail string on success (what
+/// [`Executed::detail`] carries).
+///
+/// Unlike `EIMP-3`'s table, a content mismatch here is never a failure:
+/// promoting *is* accepting the reviewer's approved content as the new
+/// baseline, fresh stamp chain and all. Only a genuinely broken read (the
+/// source fails verify-on-inspect, an I/O error) is an `Err` — the caller
+/// treats that as skip-and-report, same as a presence-based drift.
+///
+/// # Errors
+///
+/// Returns an error if the source fails verify-on-inspect or a write fails.
+fn promote_one_accumulating(
+    config: &TestConfig,
+    from: Stage,
+    to: Stage,
+    id: &EinmoId,
+    keypair: &StageKeypair,
+) -> Result<String> {
+    let src_path = id.to_stage_path(config.work_dir(), from);
+    let dst_path = id.to_stage_path(config.work_dir(), to);
+
+    let src_file = EinmoFile::from_file(&src_path)?; // verify-on-inspect the source
+    let existing = EinmoFile::from_file(&dst_path).ok(); // absent/corrupt -> treat as absent
+
+    if let Some(existing) = existing {
+        let sections_same = body_sections(&existing, None) == body_sections(&src_file, None);
+        if sections_same {
+            let my_pubkey = keypair.pubkey_hex();
+            if existing
+                .stamps()
+                .has_stage_stamp_from(to.stamp_key(), &my_pubkey)
+            {
+                // True no-op: the destination already reflects this exact
+                // content, already signed by this exact key. Untouched.
+                return Ok(format!("{from} to {to}: already signed, unchanged"));
+            }
+            // Content matches, new signer: append onto the EXISTING file in
+            // place, preserving every prior stamp (including other
+            // signers') — multi-signer accumulation.
+            let mut appended = existing;
+            appended.append_stage_stamp_with(to.stamp_key(), keypair);
+            ensure_parent_dir(&dst_path)?;
+            let bytes = appended.serialize()?;
+            std::fs::write(&dst_path, &bytes).map_err(|e| EinmoError::io(&dst_path, e))?;
+            return Ok(format!("{from} to {to}: co-signed by a new signer"));
+        }
+    }
+
+    // Absent, corrupt, or genuinely different content: a fresh baseline —
+    // carry the source's own (already verified) stamp chain forward and
+    // append exactly one new destination stamp. Matches
+    // `transitions::promote`'s existing single-file behavior byte-for-byte.
+    let mut file = src_file;
+    file.append_stage_stamp_with(to.stamp_key(), keypair);
+    ensure_parent_dir(&dst_path)?;
+    let bytes = file.serialize()?;
+    std::fs::write(&dst_path, &bytes).map_err(|e| EinmoError::io(&dst_path, e))?;
+    Ok(format!("promoted {from} to {to}"))
 }
 
 /// Strip the `.einmo` mirror suffix and, when present, the stage-relative
@@ -1435,6 +1480,133 @@ mod tests {
 
     fn seeded_suite_with_same_content() -> tempfile::TempDir {
         seeded_suite()
+    }
+
+    // EIMP-1 S.4a: content-then-key decision table for execute's promote.
+
+    #[test]
+    fn execute_promote_is_a_true_noop_when_dest_already_matches_and_is_mine() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: None,
+        };
+
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+        review.execute(&review.plan(), &keys).unwrap();
+        let checked_path = tmp.path().join("checked").join("a.foo.einmo");
+        let bytes_before = std::fs::read(&checked_path).unwrap();
+
+        // Re-decide and re-execute the SAME promotion, same signer, content
+        // unchanged: must be a true no-op, byte-for-byte.
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+        let report = review.execute(&review.plan(), &keys).unwrap();
+        assert!(report.executed.iter().any(|e| e.id == id));
+
+        let bytes_after = std::fs::read(&checked_path).unwrap();
+        assert_eq!(
+            bytes_before, bytes_after,
+            "re-promoting unchanged content under the same signer must not touch the file"
+        );
+    }
+
+    #[test]
+    fn execute_promote_appends_a_second_signers_stamp_when_content_matches() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+        review
+            .execute(
+                &review.plan(),
+                &SignerSet {
+                    to_checked: KeySource::from_passphrase(""),
+                    to_verified: None,
+                },
+            )
+            .unwrap();
+
+        // Second signer, same (unchanged) content.
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+        let report = review
+            .execute(
+                &review.plan(),
+                &SignerSet {
+                    to_checked: KeySource::from_passphrase("second signer"),
+                    to_verified: None,
+                },
+            )
+            .unwrap();
+        assert!(report.executed.iter().any(|e| e.id == id));
+
+        let checked_path = tmp.path().join("checked").join("a.foo.einmo");
+        let file = EinmoFile::from_file(&checked_path).unwrap();
+        assert_eq!(
+            body_sections(&file, None),
+            body_sections(
+                &EinmoFile::from_file(&tmp.path().join("output/a.foo.einmo")).unwrap(),
+                None
+            ),
+            "content must be untouched by the co-sign"
+        );
+        let checked_stamps = file
+            .stamps()
+            .entries()
+            .iter()
+            .filter(|s| s.key() == Stage::Checked.stamp_key())
+            .count();
+        assert_eq!(
+            checked_stamps, 2,
+            "both signers' stage:checked stamps must be present"
+        );
+    }
+
+    #[test]
+    fn execute_promote_writes_a_fresh_baseline_when_content_genuinely_differs() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: None,
+        };
+
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+        review.execute(&review.plan(), &keys).unwrap();
+
+        // Change what a.foo evaluates to, accept it via regenerate_output
+        // (EIMP-3), then decide+execute promote again -- output now
+        // genuinely differs from the existing checked/ baseline.
+        write_input(tmp.path(), "a.foo", "{9+9;}");
+        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        suite
+            .regenerate_output(std::path::Path::new("a.foo"), &Echo)
+            .unwrap();
+
+        review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
+        let report = review.execute(&review.plan(), &keys).unwrap();
+        assert!(
+            report.executed.iter().any(|e| e.id == id),
+            "a genuine content change must promote, not skip or fail: {report:?}"
+        );
+
+        let checked_path = tmp.path().join("checked").join("a.foo.einmo");
+        let file = EinmoFile::from_file(&checked_path).unwrap();
+        assert_eq!(file.section("OUTPUT").unwrap().body(), "{9+9;}");
+        let checked_stamps = file
+            .stamps()
+            .entries()
+            .iter()
+            .filter(|s| s.key() == Stage::Checked.stamp_key())
+            .count();
+        assert_eq!(
+            checked_stamps, 1,
+            "a fresh baseline gets a fresh stamp chain, not an accumulated one"
+        );
     }
 
     #[test]

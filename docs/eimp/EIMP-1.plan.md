@@ -218,12 +218,37 @@ verbs belong to that crate's binary, not core's `cli.rs`.
       cleared, same as batch `execute`. `decision(id)` is a direct
       `DecisionBook` read, no `items()` scan needed. 6 new tests. 211
       workspace tests, clippy/fmt clean.
-- [ ] §S.4a multi-signer promote: apply the content-then-key decision table
+- [x] §S.4a multi-signer promote: apply the content-then-key decision table
       to `checked`/`verified` inside `execute`/`execute_one` — content
       matches + my key present → no-op; content matches + new signer →
       append my stamp to the existing artifact; content differs → fresh
       write. Reuse `Stamps::has_stage_stamp_from` (added by `EIMP-3`) rather
       than writing a second lookup
+      (2026-07-30 18:11) — new `promote_one_accumulating` (per-file,
+      reusing `Stamps::has_stage_stamp_from` and
+      `EinmoFile::append_stage_stamp_with` exactly as planned) replaces the
+      single batched `transitions::promote` call in `execute`'s promote
+      loop; the "derive the stage key once per (from, to) group" property
+      is preserved (`StageKeypair::derive` moved out of the per-file
+      function, called once by the caller,
+      `execute_derives_stage_key_once_per_batch_not_per_case` still green).
+      Unlike `EIMP-3`'s output-stage table, a content mismatch here is
+      never a failure — checked/verified promotion always accepts the
+      reviewer's approved content as the new baseline, which is what
+      promoting *means* — only a broken source read is an error. Not
+      shared as a common helper with `EIMP-3`'s `write_output` (its own
+      "share where it falls out naturally, don't force it" note): the
+      write-side stamping differs (append-one-stamp onto an
+      already-certified source file here, vs. `Stamps::generate`'s full
+      3-stamp chain there), so only the classification logic would be
+      shareable, and extracting it now risked touching already-shipped,
+      tested `EIMP-3` code without a concrete need. 3 new tests (true
+      no-op, second-signer co-sign showing 2 `stage:checked` stamps, fresh
+      baseline on genuine content change showing 1 fresh stamp); the
+      existing `execute_promote_matches_cli_promote_byte_for_byte`
+      equivalence test still passes unmodified (first-time promotion is
+      the same "absent dest → fresh write" path as before). 214 workspace
+      tests, clippy/fmt clean.
 - [ ] Flag = plaintext, **concatenating** (§S.3): `flagged/` is
       PLAINTEXT/unsigned/transient; execute writes the annotated note as
       plaintext and CONCATENATES a dated block on top when re-flagging;
