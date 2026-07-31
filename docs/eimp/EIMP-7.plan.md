@@ -478,30 +478,109 @@ four-variant `Stage`.
 
 ## Phase E — the two consumers (§S.6)
 
-- [ ] Read §S.6 of `EIMP-7.md`.
-- [ ] `EinmoTestRunner::stage_pair_problems`: source its comparison from
+- [x] Read §S.6 of `EIMP-7.md`.
+      (2026-07-31)
+- [x] `EinmoTestRunner::stage_pair_problems`: source its comparison from
       `EinmoCase::agreement` (mapping `Differ` → one
       `Problem::SectionDifference` per section, `OneSided` →
       `Right`/`LeftMissingEntirely`, `Tampered` → today's tampered
       handling). Behavior-preserving: every existing `Problem`-generation
       test must pass **unedited**.
-- [ ] `EinmoReview::items` / `ReviewItem::differing`: recompute from
+      (2026-07-31) — **already satisfied, no code change made here**:
+      Phase D already folded `compare::compare` onto `EinmoCase::
+      agreement`, and `stage_pair_problems` calls `compare::compare`
+      (unchanged call site, `einmo_suite.rs:670`), which already fully
+      translates every `StagePairAgreement` outcome into the exact
+      `Problem` variants this bullet describes (`only_in_a`/`only_in_b`
+      → `Right`/`LeftMissingEntirely`, `differing` → one
+      `SectionDifference` per section, `tampered` →
+      `SignatureDoesNotVerify`). Making `stage_pair_problems` call
+      `agreement()` directly, bypassing `compare()`, was considered and
+      rejected: no test or behavior would change (Phase D already proved
+      the 43 `einmo_suite::` tests pass through `compare()`), and it
+      would mean re-plumbing something Phase D already unified — the
+      opposite of the point. Left calling `compare()`.
+- [x] `EinmoReview::items` / `ReviewItem::differing`: recompute from
       `agreement(&[Stage::Output, Stage::Checked],
       config.match_sections())`, per §S.6.
-  - [ ] Update `ReviewItem::differing`'s doc comment — it currently
+      (2026-07-31) — `differing = !matches!(pair, Some(Agree))`, so
+      `Differ`/`OneSided`/`BothAbsent`/`Tampered` all still read as
+      "needs a look" (matching the old bool's INTENT, just correctly
+      SCOPED to output-vs-checked).
+  - [x] Update `ReviewItem::differing`'s doc comment — it currently
         describes the old all-stages semantics.
-  - [ ] Update `ReviewMode::NewOrBroken`'s doc comment and
+        (2026-07-31)
+  - [x] Update `ReviewMode::NewOrBroken`'s doc comment and
         `scripts/einmo_review_client.sh`'s `-n` help text if either
         overstates or understates the now-correct behavior.
-  - [ ] Assert the P1 bug is fixed end-to-end at the `EinmoReview` level
+        (2026-07-31) — neither needed a change: `NewOrBroken`'s own doc
+        comment was already generic enough to remain accurate, and the
+        shell script's `-n` help text (`"differ between output and
+        checked stages"`) was **already describing the correct,
+        intended behavior** — it was the CODE that was wrong (P1), not
+        the docs. Confirmed by reading both, not assumed.
+  - [x] Assert the P1 bug is fixed end-to-end at the `EinmoReview` level
         (not just at `EinmoCase`): a fresh suite with empty `verified/`
         and agreeing output/checked yields **no** `NewOrBroken` items.
-- [ ] `cli.rs:814` (`einmo list`): migrate off `scan_tests`/`TestRow` onto
+        (2026-07-31) — new test
+        `new_or_broken_excludes_cases_whose_verified_stage_is_simply_
+        unpopulated_p1_repro`.
+  - [x] **Found while adding the P1 end-to-end test, in a DIFFERENT
+        pre-existing test**: `new_or_broken_mode_excludes_a_fully_
+        matching_case` called the unfiltered `promote_output_to_checked`
+        (promotes EVERY case, not just `a.foo`), then asserted `b.foo`
+        appears under `NewOrBroken` with the comment "b.foo stays
+        output-only: no checked/verified baseline at all". That premise
+        was **false** — the unfiltered promote already put `b.foo` in
+        `checked/` too, matching `output/` exactly. Under the OLD
+        all-three-stage `differing` bool this went unnoticed: `b.foo`'s
+        empty `verified/` made it read `differing: true` anyway, for
+        the wrong reason, which happened to match the test's (wrong)
+        expectation. Once `differing` was correctly scoped to
+        output-vs-checked, `b.foo` (genuinely matching there) stopped
+        appearing, and the test failed for the RIGHT reason — surfacing
+        the pre-existing bug in the test's own setup. Root-caused via a
+        single-threaded, untruncated `cargo test --lib review::` run
+        (a `| tail -80` on the first attempt truncated the log before
+        the real panic, showing only the `JOURNAL_ENV_LOCK` poison
+        cascade — re-ran to a file instead). Fixed by promoting only
+        `a.foo`, making the test's stated premise about `b.foo` true
+        rather than coincidentally-compatible with a bug. `review::`
+        re-run after the fix: 63/63 clean, both single- and
+        default-threaded.
+- [x] `cli.rs:814` (`einmo list`): migrate off `scan_tests`/`TestRow` onto
       `EinmoSuite::cases()`. Its rendered output must be unchanged.
-- [ ] Delete `scan_tests` and `TestRow` from `einmo_suite.rs` once no
+      (2026-07-31) — **`--differing` deliberately keeps its OLD
+      semantics, not `agreement()`'s**: `einmo list --differing`'s own
+      doc comment ("stage bodies not all identical... exactly as compare
+      does") describes an ALL-THREE-STAGE, ALL-non-STAMPS-sections
+      comparison — a general suite-shape overview, never overloaded the
+      same way `ReviewMode::NewOrBroken` was (P1 was specifically about
+      that OTHER field's mismatch between promise and implementation).
+      Replicated the exact old comparison as a small private
+      `list_differing` helper in `cli.rs` rather than routing through
+      `agreement()` (which is `MatchSections`-policy-scoped — wrong
+      granularity here, the same "deliberate asymmetry" shape as
+      `promote()`'s own destination-match check). Also found: `--filter`'s
+      own doc comment says "mirror-relative path" (`.einmo` suffix) —
+      `EinmoSuite::scan`'s built-in filter matches the bare id instead
+      (§S.5's choice) — so `cmd_list` filters by hand against the
+      rendered mirror-relative string, preserving its documented
+      contract exactly rather than silently narrowing it.
+- [x] Delete `scan_tests` and `TestRow` from `einmo_suite.rs` once no
       caller remains, and drop the `use crate::einmo_suite::{TestRow,
       body_sections, scan_tests}` import at `src/review.rs:15`.
-- [ ] Phase E tests green; `clippy`/`fmt` clean; commit.
+      (2026-07-31) — deleted; `body_sections` alone re-imported (still
+      used elsewhere in both files).
+- [x] Phase E tests green; `clippy`/`fmt` clean; commit.
+      (2026-07-31) — `review::` 63/63 (62 + 1 new), `cli::` 18/18,
+      `einmo_suite::` 43/43, all clean. `cargo fmt --check` / `cargo
+      clippy --all-targets -- -D warnings` both clean. Full `cargo test
+      --workspace`: **393/393** (355 `einmo` lib + 31
+      `einmo-review-server` bin + 4 `zweimomo` lib + 3 `zweimomo`
+      `tests/suites.rs`; up from 392 — +1 net: the P1 end-to-end repro
+      minus `strip_einmo_suffix`/`scan_tests`/`TestRow` removal had no
+      test losses since none tested those helpers directly).
 
 ## Phase F — one promote implementation; the suite directs the cases (§S.4, §S.10)
 

@@ -809,16 +809,65 @@ fn cmd_body(args: BodyArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// `einmo list`'s own notion of "differing": ALL non-STAMPS sections must
+/// be identical across ALL THREE stages, not `MatchSections`-policy-scoped
+/// — a general suite-shape overview for a human, distinct from
+/// `ReviewMode::NewOrBroken`'s narrower output-vs-checked promise
+/// (`EIMP-7` §S.6 fixed THAT one; this one was never overloaded the same
+/// way and keeps its original all-stages, all-sections behavior exactly).
+/// A tampered stage counts as absent, matching `scan_tests`'s prior
+/// behavior (verify-on-inspect failure is reported via `stages()`'s own
+/// `"TAMPERED"` status, but folds into `differing` the same as missing).
+fn list_differing<S: crate::storage::EinmoStorage>(case: &crate::case::EinmoCase<'_, S>) -> bool {
+    let bodies: Vec<Option<Vec<(String, String)>>> = Stage::ALL
+        .iter()
+        .map(
+            |&stage| match case.read(crate::storage::ArtifactLocation::Stage(stage)) {
+                Ok(Some(file)) => Some(crate::einmo_suite::body_sections(&file, None)),
+                Ok(None) | Err(_) => None,
+            },
+        )
+        .collect();
+    bodies.iter().any(Option::is_none) || bodies.windows(2).any(|w| w[0] != w[1])
+}
+
 fn cmd_list(args: ListArgs) -> Result<ExitCode> {
     let config = TestConfig::new(&args.work_dir, ValidationLevel::Output);
-    let rows = crate::einmo_suite::scan_tests(&config, args.filter.as_deref())?;
-    let rows: Vec<&crate::einmo_suite::TestRow> = rows
-        .iter()
-        .filter(|r| !args.differing || r.differing)
-        .collect();
+    let directory = crate::storage::EinmoDirectory::new(config);
+    // Filtered by hand below, against the mirror-relative path -- ListArgs'
+    // own documented contract ("mirror-relative path"), not
+    // EinmoSuite::scan's built-in filter (which matches the bare id, no
+    // `.einmo` suffix, EIMP-7 §S.5's own choice for the general case).
+    let suite = crate::suite::EinmoSuite::scan(directory, None)?;
+
+    struct Row {
+        rel: String,
+        differing: bool,
+        stages: Vec<(Stage, Option<String>)>,
+    }
+    let mut rows = Vec::new();
+    for case in suite.cases() {
+        let rel = crate::stage::mirror_input_path(Path::new(case.id().as_str()))
+            .to_string_lossy()
+            .into_owned();
+        if let Some(pat) = &args.filter
+            && !rel.contains(pat.as_str())
+        {
+            continue;
+        }
+        let differing = list_differing(&case);
+        if args.differing && !differing {
+            continue;
+        }
+        let stages = case.stages()?;
+        rows.push(Row {
+            rel,
+            differing,
+            stages,
+        });
+    }
 
     for row in &rows {
-        let rel = row.rel.to_string_lossy();
         if args.json {
             let stages: Vec<String> = row
                 .stages
@@ -834,7 +883,7 @@ fn cmd_list(args: ListArgs) -> Result<ExitCode> {
                 .collect();
             println!(
                 "{{\"test\":\"{}\",\"differing\":{},{}}}",
-                rel,
+                row.rel,
                 row.differing,
                 stages.join(",")
             );
@@ -852,7 +901,7 @@ fn cmd_list(args: ListArgs) -> Result<ExitCode> {
                 .collect();
             println!(
                 "{}\t{}\t{}",
-                rel,
+                row.rel,
                 if row.differing { "differ" } else { "same" },
                 marks.join(" ")
             );

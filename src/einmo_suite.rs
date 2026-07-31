@@ -1693,84 +1693,12 @@ pub(crate) fn body_sections(file: &EinmoFile, only: Option<&str>) -> Vec<(String
         .collect()
 }
 
-/// Where a test's artifacts exist, and whether their bodies agree.
-pub(crate) struct TestRow {
-    pub(crate) rel: PathBuf,
-    pub(crate) stages: Vec<(Stage, Option<String>)>, // (stage, status if present)
-    pub(crate) differing: bool,
-}
-
-/// Enumerate the suite's tests across output/checked/verified.
-///
-/// The union of the input tree and every stage tree, so a test that exists only
-/// in a stage (input deleted) or only in `output/` (never promoted) is still
-/// listed — the file scan the review layer and `einmo list` both need.
-pub(crate) fn scan_tests(config: &TestConfig, filter: Option<&str>) -> Result<Vec<TestRow>> {
-    use crate::stage::walk_input_tree;
-
-    const STAGES: [Stage; 3] = [Stage::Output, Stage::Checked, Stage::Verified];
-
-    let mut rels: Vec<PathBuf> = walk_input_tree(&config.input_path(), config.walk_depth_limit())
-        .unwrap_or_default()
-        .iter()
-        .map(|p| mirror_input_path(p))
-        .collect();
-    // Union in anything present in a stage but absent from input/. Each
-    // stage's nested flagged sink (`EIMP-7` §S.2a) is excluded — a flagged
-    // artifact is not one of the stage's own output/checked/verified rows.
-    let flagged_name = config.flagged_dir_name();
-    for stage in STAGES {
-        let dir = config.stage_dir(stage);
-        if let Ok(found) = walk_input_tree(&dir, config.walk_depth_limit()) {
-            rels.extend(
-                found
-                    .into_iter()
-                    .filter(|rel| !crate::stage::is_in_flagged_sink(rel, flagged_name)),
-            );
-        }
-    }
-    rels.sort();
-    rels.dedup();
-
-    let mut rows = Vec::new();
-    for rel in rels {
-        let shown = rel.to_string_lossy().to_string();
-        if filter.is_some_and(|f| !shown.contains(f)) {
-            continue;
-        }
-        let mut stages = Vec::new();
-        let mut bodies: Vec<Option<Vec<(String, String)>>> = Vec::new();
-        for stage in STAGES {
-            let path = config.stage_dir(stage).join(&rel);
-            if path.exists() {
-                match EinmoFile::from_file(&path) {
-                    Ok(f) => {
-                        let status = f.metadata().status.to_string();
-                        stages.push((stage, Some(status)));
-                        bodies.push(Some(body_sections(&f, None)));
-                    }
-                    Err(_) => {
-                        // Tampered/unreadable: report it, never render it.
-                        stages.push((stage, Some("TAMPERED".to_string())));
-                        bodies.push(None);
-                    }
-                }
-            } else {
-                stages.push((stage, None));
-                bodies.push(None);
-            }
-        }
-        // Differing unless every stage is present and their bodies agree.
-        let differing =
-            bodies.iter().any(Option::is_none) || bodies.windows(2).any(|w| w[0] != w[1]);
-        rows.push(TestRow {
-            rel,
-            stages,
-            differing,
-        });
-    }
-    Ok(rows)
-}
+// scan_tests/TestRow (the suite-scanning free function + struct pair) are
+// retired as of EIMP-7 Phase E, replaced by EinmoSuite::cases()/
+// EinmoCase::stages() (src/suite.rs, src/case.rs) -- the shared
+// implementation `einmo test`, `einmo review`, and `einmo list` all now
+// use, instead of each maintaining (or, as of EIMP-7's own drafting,
+// silently drifting from) their own scan.
 
 #[cfg(test)]
 mod tests {

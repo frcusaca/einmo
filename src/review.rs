@@ -11,15 +11,16 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-use crate::case::{EinmoCase, PromoteOutcome};
+use crate::case::{EinmoCase, PromoteOutcome, StagePairAgreement};
 use crate::config::{KeySource, TestConfig};
-use crate::einmo_suite::{TestRow, body_sections, scan_tests};
+use crate::einmo_suite::body_sections;
 use crate::error::{EinmoError, Result};
 use crate::format::EinmoFile;
 use crate::signature::StageKeypair;
 use crate::stage::EinmoId;
 use crate::stage::Stage;
 use crate::storage::EinmoDirectory;
+use crate::suite::EinmoSuite;
 use crate::transitions::{self, FlagReport, RetractReport};
 
 /// A reviewer's decision about one case. Replace-not-stack: a later
@@ -239,8 +240,9 @@ pub enum ReviewMode {
 pub struct ReviewOpts {
     /// Selection/ordering mode.
     pub mode: ReviewMode,
-    /// Restrict to cases whose id contains this substring (same semantics
-    /// as `scan_tests`'s existing filter).
+    /// Restrict to cases whose id contains this substring (`EinmoSuite::
+    /// scan`'s filter — matched against the bare id, no `.einmo` suffix,
+    /// the same form `transitions.rs`'s own filter already uses).
     pub filter: Option<String>,
 }
 
@@ -295,7 +297,15 @@ pub struct ReviewItem {
     pub id: EinmoId,
     /// `(stage, status if present)` for each of output/checked/verified.
     pub stages: Vec<(Stage, Option<String>)>,
-    /// `true` unless every stage is present and their bodies agree.
+    /// `true` unless output and checked are BOTH present and their
+    /// policy-required sections agree (`EinmoCase::agreement(&[Output,
+    /// Checked], _)`, `EIMP-7` §S.6). Scoped to exactly what
+    /// `ReviewMode::NewOrBroken` promises — "differs between output and
+    /// checked" — not whether `verified/` happens to be populated. This
+    /// is the fix for `EIMP-1`'s P1 finding: the prior all-stages
+    /// semantic (`true` unless EVERY stage among output/checked/verified
+    /// was present and agreed) made a fresh suite's unpopulated
+    /// `verified/` false-positive as "differing" on every single case.
     pub differing: bool,
     /// The reviewer's current decision for this case, if any.
     pub decision: Option<Decision>,
@@ -527,22 +537,37 @@ impl EinmoReview {
     ///
     /// Returns an error if the suite's directories cannot be walked.
     pub fn items(&self) -> Result<Vec<ReviewItem>> {
-        let rows: Vec<TestRow> = scan_tests(&self.config, self.opts.filter.as_deref())?;
+        let directory = EinmoDirectory::new(self.config.clone());
+        let suite = EinmoSuite::scan(directory, self.opts.filter.as_deref())?;
         let decisions = self.decisions.read().expect("decisions lock poisoned");
-        let mut items: Vec<ReviewItem> = rows
-            .into_iter()
-            .filter(|row| self.opts.mode != ReviewMode::NewOrBroken || row.differing)
-            .map(|row| {
-                let id = EinmoId::from_input_rel(&strip_einmo_suffix(&row.rel))?;
-                let decision = decisions.get(&id).cloned();
-                Ok(ReviewItem {
-                    id,
-                    stages: row.stages,
-                    differing: row.differing,
-                    decision,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let mut items: Vec<ReviewItem> = Vec::new();
+        for case in suite.cases() {
+            // EIMP-7 §S.6: differing is scoped to output-vs-checked only,
+            // under the suite's configured MatchSections policy -- the P1
+            // fix. Not `Agree` covers Differ/OneSided/BothAbsent/Tampered
+            // alike: any of those is "needs a look", same as the old
+            // all-stages bool's intent, just correctly scoped.
+            let agreement = case.agreement(
+                &[Stage::Output, Stage::Checked],
+                self.config.match_sections(),
+            )?;
+            let differing = !matches!(
+                agreement.pair(Stage::Output, Stage::Checked),
+                Some(StagePairAgreement::Agree)
+            );
+            if self.opts.mode == ReviewMode::NewOrBroken && !differing {
+                continue;
+            }
+            let stages = case.stages()?;
+            let id = case.id().clone();
+            let decision = decisions.get(&id).cloned();
+            items.push(ReviewItem {
+                id,
+                stages,
+                differing,
+                decision,
+            });
+        }
         if self.opts.mode == ReviewMode::Random {
             shuffle(&mut items);
         }
@@ -1187,15 +1212,6 @@ fn action_id(action: &PlannedAction) -> &EinmoId {
 // promote implementation, shared with the plain CLI path (`transitions.rs`,
 // wired in a later EIMP-7 phase) instead of a private copy living here.
 
-/// Strip the `.einmo` mirror suffix and, when present, the stage-relative
-/// wrapping — `scan_tests` already yields the mirror-relative path
-/// (`<input-rel>.einmo`), so this is the inverse of `mirror_input_path`.
-fn strip_einmo_suffix(mirror_rel: &std::path::Path) -> std::path::PathBuf {
-    let s = mirror_rel.to_string_lossy();
-    let stripped = s.strip_suffix(".einmo").unwrap_or(&s);
-    std::path::PathBuf::from(stripped)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1347,19 +1363,21 @@ mod tests {
     #[test]
     fn new_or_broken_mode_excludes_a_fully_matching_case() {
         let tmp = seeded_suite();
-        // Fully promote a.foo through checked AND verified with matching
-        // content at every stage -- this case is NOT differing.
-        promote_output_to_checked(tmp.path());
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        transitions::promote(
-            &config,
-            Stage::Checked,
-            Stage::Verified,
-            &KeySource::from_passphrase(""),
-            Some("a.foo"),
-            None,
-        )
-        .unwrap();
+        // Promote ONLY a.foo through checked AND verified with matching
+        // content at every stage -- this case is NOT differing.
+        //
+        // `Some("a.foo")` here is load-bearing, not incidental: this test
+        // predates EIMP-7 §S.6's fix and originally called the unfiltered
+        // `promote_output_to_checked` (promotes EVERY case), relying on
+        // the OLD all-three-stage `differing` bool to separately flag
+        // b.foo as differing because its `verified/` was empty -- true,
+        // but for the wrong reason. Once `differing` was correctly scoped
+        // to output-vs-checked only, b.foo (output==checked after that
+        // unfiltered promote) stopped reading as differing too, and this
+        // test's own premise ("b.foo stays output-only") was revealed to
+        // have been false all along. Filtering to "a.foo" here makes the
+        // premise true, not just the assertion.
         transitions::promote(
             &config,
             Stage::Output,
@@ -1395,6 +1413,39 @@ mod tests {
             "a fully-matching, fully-promoted case must not appear under NewOrBroken: {ids:?}"
         );
         assert!(ids.contains(&"b.foo".to_string()));
+    }
+
+    /// `EIMP-1`'s P1 finding, reproduced and asserted fixed at the
+    /// `EinmoReview` level (not just `EinmoCase::agreement`'s own unit
+    /// tests): a fresh suite where output and checked agree for every
+    /// case, and `verified/` simply hasn't been populated yet -- the
+    /// NORMAL starting state -- must report NOTHING under `NewOrBroken`.
+    /// The old `TestRow::differing` bool required all THREE stages
+    /// present and agreeing, so it read `true` for every single case
+    /// here, making `-n`/`NewOrBroken` nearly useless on a typical suite.
+    #[test]
+    fn new_or_broken_excludes_cases_whose_verified_stage_is_simply_unpopulated_p1_repro() {
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        // Neither a.foo nor b.foo has a verified/ artifact -- untouched.
+
+        let review = EinmoReview::open_with(
+            tmp.path(),
+            ReviewOpts {
+                mode: ReviewMode::NewOrBroken,
+                filter: None,
+            },
+        );
+        let items = review.items().unwrap();
+        assert!(
+            items.is_empty(),
+            "output and checked agree for every case; an unpopulated \
+             verified/ must not make NewOrBroken report anything: {:?}",
+            items
+                .iter()
+                .map(|i| i.id.as_str().to_string())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
