@@ -1134,16 +1134,475 @@ Ships in `einmo-review-server` (`EIMP-4` §S.1).
       `from_file` (verify-on-inspect) with valid stamp chains; journal
       replay confirms SessionOpen/Decide/ExecuteBatch events.
       311 einmo lib tests + 30 binary tests = 341 total, clippy/fmt clean.
-- [ ] STOP — maintainer performance-verifies the review loop end to end.
+- [x] STOP — maintainer performance-verifies the review loop end to end.
       `EIMP-4` (publish) gates on this having happened, not merely on the
       tests being green
+      (2026-07-31 15:10) — performed via a fresh Claude Code session, not
+      the sprint's own agent: two independent static code-review passes
+      (crypto/signing core; server/CLI/client + plan-vs-code consistency)
+      plus hands-on driving of `einmo_review_client.sh` against a live
+      private server (promote-to-checked, promote-to-verified with
+      passphrase, flag, kick, undo, the pending-plan summary, and the
+      typed-`PROMOTE` gate — confirmed with `einmo verify --all`
+      afterward). This *did* surface real defects — see "Maintainer-found
+      defects" immediately below, now tracked as its own checkbox block
+      per the maintainer's direction rather than silently folded in here.
+      **`cargo test --workspace` itself deadlocked mid-run** (never
+      returned) during this verification — the "STOP" is satisfied
+      (verification happened), but per this repo's own rule ("never start
+      substantive work while any test is broken") nothing past that first
+      sub-item below should be treated as unblocked until it's fixed.
+
+## Maintainer-found defects (jia-sprint review, 2026-07-31)
+
+Found via the STOP-gate performance-verification above. Ordered by
+priority; the plan is to fix top-down. Each item below is independently
+actionable — file/line, what's wrong, why it matters — so any one can be
+picked up without re-deriving the finding. `\d`/server-diff (see the
+explicitly-deferred item near the bottom) is the one exception: the
+maintainer asked to leave it alone for now despite the diagnosis, since it
+apparently used to work and the regression (if any) isn't understood yet.
+
+- [x] **P0 — `cargo test --workspace` deadlocks partway through; never
+      completes.** Confirmed, not merely slow: the run made genuine
+      progress for ~14 minutes (100%+ CPU, `corpus_signer::*` and most of
+      `review::tests::*` passing, including the flagship
+      `comprehensive_multi_reviewer_end_to_end`), then **all 21 OS threads
+      of the test binary parked in `futex_do_wait`, with `utime` in
+      `/proc/<pid>/stat` frozen bit-for-bit identical across a 20+ second
+      sampling window** — a real deadlock, not contention.
+      (2026-07-31 15:57) — root-caused and fixed. Bisected one test at a
+      time (`cargo test --lib <exact_test_name> -- --exact
+      --test-threads=1`, per-test timeout) to
+      `review::tests::execute_promote_matches_cli_promote_byte_for_byte`,
+      then reproduced it live under `gdb --args ... run`, interrupted with
+      Ctrl-C once frozen, and got a full `thread apply all bt`: the test
+      thread was blocked in `std::sync::Mutex::lock` on
+      `review::tests::JOURNAL_ENV_LOCK`, a `static` mutex. Root cause:
+      `TestContext` (both in `src/review.rs` and, identically
+      copy-pasted, in `src/bin/einmo_review_server.rs`) stores that
+      mutex's `MutexGuard` as a struct field, so acquiring one keeps the
+      lock held for the *entire* `TestContext`'s lifetime, not just the
+      brief window it needs to mutate `EINMO_JOURNAL_DIR`. That's correct
+      and required for every ordinary test (it's what serializes
+      concurrently-running tests' use of that shared env var), but
+      `std::sync::Mutex` isn't reentrant, and exactly one test per file
+      creates a *second*, independent `TestContext` on the same thread
+      before dropping the first
+      (`execute_promote_matches_cli_promote_byte_for_byte`'s `tmp`/`tmp2`,
+      comparing the review path against a fresh CLI-driven baseline; the
+      binary's `tests::cli_execute_promote_matches_einmo_promote_cli_at_
+      the_cli_surface` has the identical shape) — the second
+      `test_context()` call deadlocks waiting on a lock the very same
+      thread already holds. Fix: added `TestContext::release_journal_lock`
+      to both files (drops the guard and its scratch tempdir early,
+      once the first context's journal-writing work is actually done),
+      called from each of the two affected tests right before opening
+      their second context. Confirmed via `gdb`/`strace`-style isolation
+      as the maintainer suggested, not guessed. Verified: the previously-
+      hanging test now passes standalone (`--exact --test-threads=1`,
+      ~16s); the full `review::` module (58 tests, `--test-threads=4`,
+      229s) and the `einmo-review-server` binary's own module (30 tests,
+      29s) each pass completely on their own; and a final clean
+      `cargo test --workspace` (output redirected straight to a file,
+      not piped through `tail`, to avoid losing progress visibility)
+      completes end-to-end: **348 tests total (311 `einmo` lib + 30
+      `einmo-review-server` bin + 4 `zweimomo` lib + 3 `zweimomo`
+      `tests/suites.rs`), 0 failed**, in ~330s. `cargo fmt --check` and
+      `cargo clippy --all-targets -- -D warnings` both still clean.
+- [ ] **P1 — the `differing`/`NewOrBroken` flag conflates two different
+      concerns that happen to share one boolean.** `TestRow::differing`
+      (`src/einmo_suite.rs` `scan_tests`) is `true` if *any* of
+      output/checked/verified is absent, OR any two present stages'
+      bodies disagree — `bodies.iter().any(Option::is_none) ||
+      bodies.windows(2).any(|w| w[0] != w[1])`. That's a reasonable
+      "needs attention" signal for `einmo test`/`einmo list`'s own
+      fail-the-gate use (an unpopulated `verified/` is fine at the
+      `Checked` level, but the row is still worth a human glance in a
+      listing). `review::EinmoReview::items` (`src/review.rs`) reuses
+      that exact same field to implement `ReviewMode::NewOrBroken`, whose
+      own doc comment (and `einmo_review_client.sh -n`'s help text)
+      promises cases that "differ **between output and checked**
+      stages" — output vs checked specifically, not "any stage missing."
+      Confirmed empirically: on a fresh suite where `verified/` simply
+      hasn't been populated yet (the normal starting state), every case
+      shows `differing: true` regardless of whether output and checked
+      actually agree; promoting one case to `verified` was the only thing
+      that flipped its flag to `false`. This makes `-n`/`NewOrBroken`
+      nearly useless on a typical suite.
+      **Direction from the maintainer**: don't just patch the boolean —
+      `einmo test` (must *fail* when conditions aren't met) and `einmo
+      review` (must *prompt the reviewer to act*) are different
+      consumers of the same underlying stage-comparison, and the code
+      should reflect that: share the comparison core, but let each
+      consumer derive its own, correctly-scoped meaning from it instead
+      of both reading one overloaded `bool`.
+      **(2026-07-31, after further discussion) — broadened into an
+      architectural direction, to be *thought through* only after P0 is
+      fixed, not acted on yet:** the maintainer's proposal is a layered
+      core the whole crate shares, not just a `scan_tests` patch —
+      - `EinmoCase`: one case's full cross-stage bundle (input/output/
+        checked/verified) plus every operation performable on it as
+        itself — read each stage's file, verify its stamp chain,
+        pairwise-compare stage bodies, promote/flag/retract *this one
+        case*. Formalizes what `TestRow` (`einmo_suite.rs`) and
+        `review.rs`'s per-id operations each already approximate ad hoc,
+        without a shared type.
+      - `EinmoSuite`: matches files across stage directories into
+        `EinmoCase`s and owns suite-wide case management, including
+        being the one place batch/signature promotion logic lives —
+        replacing the two independent promote implementations that
+        already exist and have already drifted (`transitions::promote`
+        vs. `review.rs`'s `promote_one_accumulating`; see P3, a direct
+        symptom of this duplication).
+      - `EinmoSuiteDirectory`: the file/directory-operations layer
+        (walking, path mirroring, stage-dir resolution) `EinmoCase`/
+        `EinmoSuite` sit on. Largely already exists informally as
+        `stage.rs`/`config.rs` (`walk_input_tree`, `mirror_input_path`,
+        `stage_dir`) and is what `CorpusSigner` already builds on — main
+        remaining work is naming it explicitly and having the case/suite
+        layer share it rather than each doing its own path-juggling.
+      - `einmo test`'s FAE/FF policy and user-facing error formatting,
+        and `einmo review`'s gather-and-prompt worklist, become two thin,
+        purpose-specific layers over the *same* `EinmoSuite`/`EinmoCase`
+        core, instead of review re-deriving its own scanning/comparison/
+        promotion logic as it does today. The FAE/FF half of this split
+        already exists (`einmo_suite.rs`'s `Problem`/`ProblemLevel`); the
+        review half is what currently bypasses it.
+      Given the blast radius (`einmo_suite.rs`, `review.rs`,
+      `transitions.rs`, `corpus_signer.rs`, `cli.rs`), consider spinning
+      this into its own EIMP (design doc first, via `eimp-write-plan`)
+      rather than executing it ad hoc inside EIMP-1's tail end — a
+      decision for whoever picks this up, not pre-made here.
+- [x] **P2 — `EinmoReview::execute` can partially apply a batch and then
+      discard the whole report on error** (`src/review.rs:845-915`).
+      Promotions are grouped by `(from, to)` in a `HashMap` and applied
+      group-by-group; `Stage::Verified` groups do
+      `keys.to_verified.as_ref().ok_or_else(...)?` — a `?` *inside* the
+      loop. If a plan mixes a `→checked` and a `→verified` promotion and
+      no verified key was supplied, and (arbitrary) `HashMap` iteration
+      hits the checked-group first, that promotion is written to disk —
+      then the next iteration's missing-key error propagates out of the
+      whole function. The flag/retract loop after the promote loop never
+      runs; the already-applied item's pending decision is never
+      cleared; no `JournalEvent::ExecuteBatch` is ever logged for a batch
+      that *did* mutate disk. Fix: validate all needed keys for the
+      entire plan before mutating anything, or make the per-group loop
+      resilient (accumulate per-group errors into `report`, never
+      short-circuit the whole function once a group has mutated disk).
+      Add a test with a mixed checked+verified batch and a missing
+      verified key.
+      (2026-07-31 16:05) — split the promote-groups loop into two passes:
+      the first resolves every `(from, to)` group's key (still returning
+      `EinmoError::NoKey` on a missing verified key, preserving the
+      documented "returns an error if a promotion needs a verified-stage
+      key" contract) *before* the second pass does any mutation at all;
+      a missing key now aborts the whole batch with zero side effects,
+      regardless of `HashMap` iteration order, rather than after some
+      other group has already been written to disk. Added
+      `execute_missing_verified_key_aborts_the_whole_batch_untouched`: a
+      two-case batch (`a.foo → verified` with no verified key, `b.foo →
+      output → checked` in the same plan) asserts neither promotion lands
+      on disk and both decisions remain pending after the `Err`. All 19
+      `execute_*`/promote-related tests in `review::tests` pass
+      (including the new one and every pre-existing one, no
+      regressions); `cargo fmt --check` / `cargo clippy --all-targets --
+      -D warnings` both clean.
+- [x] **P3 — the reviewer-session promote path drops `is_computer_key`/
+      `non_human` detection.** `transitions::promote` computes and
+      returns `Promoted.non_human` for empty-passphrase (computer-key)
+      `verified` promotions, and it's tested
+      (`empty_passphrase_verified_is_flagged_non_human`). The session
+      path added by this EIMP, `promote_one_accumulating`
+      (`src/review.rs:1140-1187`), returns only a plain `String` detail —
+      `is_computer_key`/`non_human` appears nowhere in `review.rs`,
+      `review_server.rs`, or `src/bin/einmo_review_server.rs`. An
+      empty-passphrase `verified` promotion executed through `POST
+      /execute` or the TUI is currently indistinguishable from a genuine
+      human attestation in the API response and `ExecutionReport`. Thread
+      `non_human` through `promote_one_accumulating` → `Executed` →
+      the HTTP/CLI JSON, same as the pre-existing CLI path already does.
+      (2026-07-31 16:20) — added `non_human: bool` to `review::Executed`
+      (mirrors `transitions::Promoted::non_human`); `promote_one_
+      accumulating` now computes it once
+      (`to == Stage::Verified && is_computer_key(&keypair.pubkey_hex())`)
+      and returns it alongside the detail string from all three of its
+      return paths (no-op / co-signed / fresh baseline), threaded through
+      the one call site in `execute()`; the retract/flag call sites set
+      `non_human: false` (not applicable to non-promote actions).
+      Surfaced at both API surfaces: `review_server.rs`'s `ExecuteResponse
+      .executed` changed from an undocumented `(String, String)` tuple to
+      a named `ExecutedResponse { id, detail, non_human }` (verified no
+      current consumer — the shell client, the dhtml page — reads
+      anything but `.length`, so this was a safe, non-breaking shape
+      change); the CLI's `print_execute_report`
+      (`src/bin/einmo_review_server.rs`) now includes `non_human` in its
+      JSON output and prints the same plaintext warning `einmo promote`'s
+      own CLI path already does (`cli.rs`) for any non-human verified
+      promotion. Three new tests: `review::tests::execute_reports_non_
+      human_for_a_computer_key_verified_promotion_but_not_a_real_one`
+      (library level, both computer-key `true` and real-passphrase
+      `false` cases), `review_server::tests::execute_response_surfaces_
+      non_human_for_a_computer_key_verified_promotion` (proves it reaches
+      the actual HTTP JSON), plus P2's
+      `execute_missing_verified_key_aborts_the_whole_batch_untouched`
+      picked up along the way. Full re-run: `review::tests` 60/60,
+      `review_server::tests` 46/46, `einmo-review-server` binary 30/30,
+      all passing; `cargo fmt --check` / `cargo clippy --all-targets --
+      -D warnings` both clean.
+- [x] **P4 — `claims` never reaches the HTTP `plan` endpoint.**
+      `PlanResponse` (`src/review_server.rs`) only has `actions`;
+      `get_plan` maps `plan.actions` and drops `plan.claims` even though
+      `EinmoReview::plan()` returns it. Both consumers expect a `.claims`
+      field that never arrives: `scripts/einmo_review_client.sh`'s
+      `jq -r '.claims // [] | ...'` (always empty) and
+      `src/dhtml/review.html`'s claims banner (always hidden). The CLI
+      binary's `cmd_plan` (`src/bin/einmo_review_server.rs`) already
+      includes claims correctly — mirror that shape into `PlanResponse`.
+      (2026-07-31 16:32) — added `ClaimResponse { id, remaining_secs }`
+      (same shape `cmd_plan` already prints) plus a
+      `From<review::ActiveClaim>` conversion, and a `claims:
+      Vec<ClaimResponse>` field on `PlanResponse`, populated in `get_plan`
+      from `plan.claims`. Two existing tests had literally documented the
+      gap in their own comments (`claim_endpoint_surfaces_in_plan`:
+      "PlanResponse only carries actions; claims aren't in the wire
+      type"; `claim_via_http_expires_and_is_auto_reclaimed`: "PlanResponse
+      (the wire DTO) doesn't carry claims" with a `let _ = plan;`
+      side-stepping it) — both now actually assert on `plan.claims`
+      instead of working around the hole. Manually verified live end to
+      end: started a real server on a fixture suite, claimed a case over
+      HTTP, and confirmed `GET .../plan` now returns
+      `"claims":[{"id":"name_binding.js","remaining_secs":299}]` — exactly
+      the shape the shell client's `jq` was always expecting. All 46
+      `review_server::tests` pass; `cargo fmt --check` / `cargo clippy
+      --all-targets -- -D warnings` both clean.
+- [x] **P5 — dhtml diff view renders every line wrong**
+      (`src/dhtml/review.html`). Reads `line.Equal`/`.Removed`/`.Added`,
+      but `DiffLineResponse` is `#[serde(tag = "tag", rename_all =
+      "lowercase")]` (`src/review_server.rs`) — the wire shape is
+      `{"tag":"equal","text":"..."}`. All three property reads are
+      `undefined`, so every line currently renders green ("added") with
+      the literal text `undefined`. Fix the JS to branch on `.tag`, same
+      as `einmo_review_client.sh`'s `diff-helper.sh` already does
+      correctly.
+      (2026-07-31 16:29) — `toggleDiff()` now reads `line.tag`/`line.text`
+      directly instead of the nonexistent per-variant keys. No Rust test
+      covers static HTML/JS, so verified against a REAL signed diff
+      instead of just reading the diff: built a tiny throwaway suite
+      (`einmo evaluate` with content "one" → promote to checked, then
+      changed the input to "two" and `einmo regenerate-output`, so
+      output/checked genuinely disagree, both validly signed), started a
+      real server, fetched `GET .../diff/output/checked`, and fed the
+      exact response through the fixed JS logic verbatim (via `node`,
+      outside a browser — no headless browser available in this
+      environment). Confirmed correct output: `removed`/`added` lines
+      with the right CSS classes and `-`/`+` prefixes, matching
+      `.diff-line.removed`/`.diff-line.added`'s existing styling.
+- [x] **P6 — dhtml SSE live-refresh never fires**
+      (`src/dhtml/review.html`). Uses `es.onmessage`, but the server
+      sends every event with an explicit name
+      (`Event::default().event(event.name())` —
+      `decision-made`/`item-changed`/`executed`,
+      `src/review_server.rs`). Per the SSE spec, `onmessage` only fires
+      for unnamed (`"message"`) events; named events need
+      `addEventListener(name, ...)`. Add listeners for all three event
+      names instead of the single `onmessage` handler.
+      (2026-07-31 16:34) — `connectSSE()` now registers one shared handler
+      via `addEventListener` for each of the three event names (dropped
+      the now-redundant `data.event === '...'` branch inside the old
+      `onmessage` handler — with per-name listeners already scoped to
+      exactly those three names, the check could never be false). Verified
+      against the REAL wire protocol, not just the code: started a live
+      server, opened a raw `curl -N` connection to `GET .../events`,
+      triggered a decision change on another connection, and captured the
+      actual SSE frame — `event: decision-made` followed by
+      `data: {"event":"decision-made","id":"..."}` — confirming the
+      server really does send exactly the named-event shape
+      `addEventListener` needs and `onmessage` was silently dropping.
+- [x] **P7 — private server can be orphaned on early script exit**
+      (`scripts/einmo_review_client.sh`). `trap cleanup EXIT INT TERM`
+      isn't registered until after the private server is already
+      spawned; at least six early `exit 1` paths between spawn and the
+      trap registration (no socket special file, no `.session` sidecar,
+      empty session, stale/unreachable socket, missing `jq`,
+      `harden_dir` failure) leave `$SERVER_PID` running with no cleanup —
+      and no way to find its (deliberately unpredictable/unexposed)
+      socket path again afterward. Move `trap cleanup EXIT INT TERM`
+      to immediately after the private server is spawned (right after
+      `SERVER_PID=$!`), before any later fail-fast check can exit.
+      (2026-07-31 16:32) — moved `cleanup()`'s definition and `trap
+      cleanup EXIT INT TERM` to the very top of the script, right after
+      the initial `SOCKET`/`PRIVATE_SUITE`/`SERVER_PID`/`TMP` variable
+      declarations and before `getopts` even runs — every variable
+      `cleanup()` touches was already `${VAR:-}`-guarded, so registering
+      it this early is a safe no-op in every mode (`-s`, `-p`, or a bare
+      `exit 0` from `-h`) until there's actually something to clean up.
+      Removed the now-redundant manual `kill "$SERVER_PID"` on the
+      socket-timeout path (the trap already covers it) and the old,
+      later `cleanup`/`trap` definitions. Verified against the REAL bug,
+      not just by reading the diff: built a `PATH` with every tool the
+      script needs (`curl`, `mktemp`, etc.) *except* `jq`, ran
+      `./einmo_review_client.sh -p <suite>` under it so the script spawns
+      the private server and then fails at the "jq is required" check —
+      confirmed on the unfixed code (via `git stash`) that this leaves
+      `einmo-review-server serve --private ...` running as an orphan
+      with no socket path ever exposed to find it again, and confirmed
+      the fixed code kills it cleanly every time.
+- [x] **P8 — private-socket base directory is never hardened**
+      (`src/review_server.rs` `private_socket_base_dir`). The per-session
+      leaf directory gets `crate::journal::harden_dir` (mode 0700), but
+      its parent (`$EINMO_REVIEW_PRIVATE_DIR` or
+      `$TMPDIR/einmo-review-private`) is only `create_dir_all`'d, never
+      chmod'd. Under a typical umask (022) that's mode 0755 —
+      world-readable/executable — so any local user can list it and see
+      every "unpredictable" session directory name the moment it's
+      created, contradicting `EIMP-1.md` §S.7a's discovery-resistance
+      intent (the leaf's own 0700 still blocks traversal into it, but the
+      name itself leaks). Apply `harden_dir` to the base dir the same way
+      `journal_dir()` already hardens itself.
+      (2026-07-31 16:40) — `private_socket_path()` now calls
+      `crate::journal::harden_dir(&base)?` in place of the bare
+      `create_dir_all`, matching `journal_dir()`'s own discipline exactly.
+      Extended the existing `private_socket_path_is_hardened_and_unique`
+      test to also assert the base dir itself ends up mode 0700 (not just
+      the leaf) — confirmed this genuinely catches the bug by reverting
+      the fix locally and re-running: it failed with `left: 493, right:
+      448` (0755 vs the expected 0700, exactly the leak under umask 022),
+      then passed again once restored. All 46 `review_server::tests`
+      pass; `cargo fmt --check` / `cargo clippy --all-targets -- -D
+      warnings` both clean.
+- [x] **P9 — `retract_now` doesn't take the `exec` mutex that
+      `flag_now`/`execute` do** (`src/review.rs`). `flag_now`'s own doc
+      comment explains why it takes `self.exec.lock()` (concurrent flags
+      must serialize against `execute`'s own batch). `retract_now` has no
+      equivalent guard, so a concurrent `execute()` promoting an id and a
+      `retract_now()` for the same id can interleave unserialized. Add
+      the same `let _guard = self.exec.lock()...` `retract_now` opens
+      with.
+      (2026-07-31 16:44) — added the identical guard, same place in the
+      function `flag_now` takes it. New test
+      `retract_now_serializes_against_a_concurrent_execute_on_the_same_id`:
+      spawns a real `retract_now`/`execute` race on the SAME id (execute
+      promoting checked→verified, retract demoting from checked) and
+      asserts neither call panics and, whichever actually won the race,
+      `checked/`+`verified` end up either both absent or both
+      stamp-chain-valid — never a torn/half-written file. Verified
+      non-flaky across several manual runs before the full-suite
+      confirmation. All 61 `review::tests` pass (60 pre-existing + the
+      new one); `cargo fmt --check` / `cargo clippy --all-targets -- -D
+      warnings` both clean.
+- [x] **P10 — passphrase-bearing types derive `Debug` with no
+      redaction.** `config::KeySource`, `review::SignerSet`,
+      `review_server::ExecuteRequest`, and
+      `src/bin/einmo_review_server.rs`'s `ExecuteArgs` all derive `Debug`
+      over a field holding a raw passphrase — inconsistent with
+      `signature::StageKeypair`'s hand-written redacted `Debug`
+      (`"seed": "<sealed>"`) and this project's own "never log secrets"
+      rule (`rust_instructions.md`). No live `{:?}` call site was found
+      during review, so this is latent rather than currently
+      triggered — fix before it is. Hand-write redacting `Debug` impls
+      for all four.
+      (2026-07-31 16:53) — hand-wrote redacted `Debug` impls for
+      `KeySource`, `ExecuteRequest`, and `ExecuteArgs`, all printing
+      `"<redacted>"` in place of the passphrase (same shape as
+      `StageKeypair`'s). `SignerSet` needed no separate impl: it still
+      derives `Debug`, but that's already safe once `KeySource`'s own
+      `Debug` redacts, since a derived impl calls each field's own `fmt` —
+      proved this transitively-safe reasoning with a real test rather
+      than just asserting it. Four new tests, one per type, each
+      confirming the raw passphrase string never appears in `{:?}`
+      output: `config::tests::key_source_debug_never_renders_the_raw_
+      passphrase`, `review::tests::signer_set_debug_never_renders_
+      either_raw_passphrase`, `review_server::tests::execute_request_
+      debug_never_renders_the_raw_passphrase`,
+      `tests::execute_args_debug_never_renders_the_raw_passphrase`
+      (`src/bin/einmo_review_server.rs`). All affected clusters re-run
+      clean: `config::tests` 15/15, `review_server::tests::execute*`
+      5/5, full `einmo-review-server` binary 31/31; `cargo fmt --check`
+      / `cargo clippy --all-targets -- -D warnings` both clean.
+- [x] **P11 — dhtml case list is the one render path that doesn't escape
+      `c.id`** (`src/dhtml/review.html`, `renderCaseList()`). Every other
+      render path in the file (`showPlan`, `toggleDiff`) uses
+      `escHtml()`; this one interpolates directly into `innerHTML`. Case
+      ids derive from suite input filenames, so a crafted filename could
+      execute script in the reviewer's browser. Use `escHtml()` here too.
+      (2026-07-31 16:56) — wrapped `c.id` in `escHtml()`, matching
+      `showPlan`/`toggleDiff`. No Rust test covers static HTML/JS;
+      verified with a standalone `node` reproduction of the exact
+      template-literal logic on both versions: the OLD code turned a case
+      id of `<img src=x onerror=alert(1)>evil.js` into a live `<img
+      onerror=...>` tag in the resulting HTML (confirmed
+      `html.includes('<img')` was `true`); the FIXED code renders it as
+      inert escaped text (`&lt;img src=x onerror=alert(1)&gt;evil.js`,
+      `includes('<img')` `false`).
+- [x] **P12 — stage path segments in `review_server.rs` use hand-rolled
+      parsing instead of a typed extractor.** `case_body`, `case_diff`,
+      `flag_case`, `retract_case` take `Path<(.., String)>` and validate
+      via a hand-written `parse_stage()` inside each handler — the exact
+      shape `rust_instructions.md`'s "HTTP services (axum)" section
+      calls out as wrong, and inconsistent with this same file's header
+      comment claiming "typed extractors throughout." Give `Stage` a
+      `Deserialize` impl usable as a path-segment extractor (mirroring
+      `SessionId`'s), and use `Path<(SessionId, EinmoId, Stage)>` etc.
+      instead.
+      (2026-07-31 17:03) — added `impl<'de> Deserialize<'de> for Stage`
+      in `stage.rs`, right where `EinmoId`'s own impl already lives,
+      routing through the existing `Stage::parse` (same shape/rationale
+      as `EinmoId`'s). All four handlers switched to
+      `Path<(SessionId, EinmoId, Stage)>` /
+      `Path<(SessionId, EinmoId, Stage, Stage)>`; `parse_stage()` and its
+      four call sites deleted entirely — nothing left hand-rolling this.
+      Purely an internal refactor: the four pre-existing tests that
+      already assert `400` on an invalid stage string
+      (`invalid_stage_400s`, `case_diff_400s_on_invalid_stage`,
+      `flag_endpoint_400s_on_invalid_stage`,
+      `retract_endpoint_400s_on_invalid_stage`) needed no changes and all
+      still pass, since axum's default `Path` rejection is `400` too —
+      exactly the point of the refactor: identical external behavior,
+      no more hand-rolled parsing to keep in sync. `stage::tests` 16/16,
+      `review_server::tests` 47/47; `cargo fmt --check` / `cargo clippy
+      --all-targets -- -D warnings` both clean.
+- [ ] Deferred by explicit maintainer direction (not a fix-it item):
+      `\d`/server-diff in `einmo_review_client.sh` is broken —
+      `EinmoReviewServerDiff()`'s Vimscript function body uses
+      backslash line-continuation inside a single string passed to
+      `vim -c "..."`; that continuation syntax is a `:source`-time
+      parser feature and does not apply to a `-c` argument, confirmed by
+      reproducing the exact `E116`/`E10` errors in isolation. Left alone
+      per the maintainer ("it worked before, I'm not sure what's going
+      on, but leave it") pending further diagnosis of whether/how it
+      ever worked.
+
 - [ ] Verify all work is committed on `jia` and all tests pass
       (`cargo test`, `cargo clippy --all-targets -- -D warnings`,
       `cargo fmt --check`)
-      **Note**: all work is currently on branch `agent/1-0`. Needs merge to
-      `jia` before marking complete. `cargo fmt --check` and `cargo clippy
-      --all-targets -- -D warnings` both pass. 341 tests (311 lib + 30
-      binary), clippy/fmt clean.
+      **Note (2026-07-31, superseding the 341-tests note below)**: all
+      work is currently on branch `agent/1-0`, not `jia` — needs a merge
+      before this can be checked. `cargo fmt --check` and `cargo clippy
+      --all-targets -- -D warnings` are still clean.
+      **Update (2026-07-31 15:57)**: `cargo test` deadlocking is now
+      fixed (P0). A clean `cargo test --workspace` completes end-to-end:
+      **348 tests, 0 failed** (311 `einmo` lib + 30 `einmo-review-server`
+      bin + 4 `zweimomo` lib + 3 `zweimomo` `tests/suites.rs`; the earlier
+      "341" count predates several tests added since and, more
+      importantly, was never actually re-confirmed to complete before
+      this review — see P0 for the full story). `cargo fmt --check` /
+      `cargo clippy --all-targets -- -D warnings` both still clean. Still
+      blocked on the branch-vs-`jia` merge, and on the remaining P1–P12
+      defects below before this box should be checked.
+      **Update (2026-07-31 17:03) — P2 through P12 all now fixed too**
+      (only P1, the architectural discussion, remains open by design —
+      see its entry above: explicitly deferred, think-through-only per
+      the maintainer, not an implementation task). Final full re-run
+      after all of P0/P2–P12 together: **356 tests, 0 failed** (318
+      `einmo` lib + 31 `einmo-review-server` bin + 4 `zweimomo` lib + 3
+      `zweimomo` `tests/suites.rs` — the count grew again since the
+      348-test checkpoint above because P2, P3, P9, and P10 each added
+      their own regression test alongside the fix). `cargo fmt --check`
+      / `cargo clippy --all-targets -- -D warnings` both clean. Still
+      not checking this box: the branch-vs-`jia` merge hasn't happened
+      (all of this is still on `agent/1-0`) and P1 is still open —
+      genuinely not done yet, not just unconfirmed.
 - [ ] Update `EIMP-1.md` frontmatter `status: complete`
 - [ ] Update `docs/eimp/INDEX.md` to reflect EIMP-1's completed status
 

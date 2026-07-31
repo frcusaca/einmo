@@ -175,7 +175,7 @@ function renderCaseList() {
     if (hasDecision) badge = `<span class="badge decided">${c.decision}</span>`;
     else if (differing) badge = '<span class="badge diff">diff</span>';
     else badge = '<span class="badge ok">ok</span>';
-    div.innerHTML = `<span class="id">${c.id}</span>${badge}`;
+    div.innerHTML = `<span class="id">${escHtml(c.id)}</span>${badge}`;
     div.onclick = () => selectCase(i);
     el.appendChild(div);
   });
@@ -280,9 +280,12 @@ async function toggleDiff() {
     for (const sec of hunks.sections) {
       html += `=== ${sec.name} ===\n`;
       for (const line of sec.lines) {
-        const cls = line.Equal ? 'equal' : line.Removed ? 'removed' : 'added';
-        const text = line.Equal || line.Removed || line.Added;
-        const prefix = line.Equal ? ' ' : line.Removed ? '-' : '+';
+        // Wire shape is `{"tag":"equal"|"removed"|"added","text":"..."}`
+        // (`DiffLineResponse`'s `#[serde(tag = "tag", rename_all =
+        // "lowercase")]` in review_server.rs) -- not a per-variant key.
+        const cls = line.tag;
+        const text = line.text;
+        const prefix = line.tag === 'equal' ? ' ' : line.tag === 'removed' ? '-' : '+';
         html += `<div class="diff-line ${cls}">${prefix} ${escHtml(text)}</div>`;
       }
     }
@@ -343,16 +346,22 @@ async function executePlan() {
 function connectSSE() {
   const es = new EventSource(`${BASE}/einmo/${sessionId}/events`);
   const log = document.getElementById('event-log');
-  es.onmessage = (e) => {
+  // The server sends every event with an explicit SSE `event:` name
+  // (decision-made / item-changed / executed, `ReviewEvent::name()` in
+  // review_server.rs) -- per the SSE spec, `onmessage` only fires for
+  // unnamed ("message") events, so it never received these. Register a
+  // listener per name instead.
+  const onEvent = (e) => {
     try {
       const data = JSON.parse(e.data);
       log.textContent = JSON.stringify(data);
-      if (data.event === 'decision-made' || data.event === 'item-changed' || data.event === 'executed') {
-        refreshCases();
-        if (currentIdx >= 0) selectCase(currentIdx);
-      }
+      refreshCases();
+      if (currentIdx >= 0) selectCase(currentIdx);
     } catch { log.textContent = e.data; }
   };
+  for (const name of ['decision-made', 'item-changed', 'executed']) {
+    es.addEventListener(name, onEvent);
+  }
   es.onerror = () => { log.textContent = 'SSE disconnected'; };
 }
 

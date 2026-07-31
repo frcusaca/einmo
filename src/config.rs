@@ -569,9 +569,19 @@ impl TestConfig {
 ///
 /// This is a thin newtype so key material is never confused with arbitrary
 /// strings and the cascade's decision is explicit at call sites.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct KeySource {
     passphrase: String,
+}
+
+impl std::fmt::Debug for KeySource {
+    /// Never renders the raw passphrase — same discipline as
+    /// `signature::StageKeypair`'s hand-written `Debug`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeySource")
+            .field("passphrase", &"<redacted>")
+            .finish()
+    }
 }
 
 impl KeySource {
@@ -949,6 +959,17 @@ mod tests {
         // (This test compiles only because `from_passphrase` takes `impl Into<String>`,
         // which moves the `String`.)
         assert_eq!(key.passphrase(), "my-secret-passphrase");
+    }
+
+    #[test]
+    fn key_source_debug_never_renders_the_raw_passphrase() {
+        let key = KeySource::from_passphrase("very-secret-value");
+        let rendered = format!("{key:?}");
+        assert!(
+            !rendered.contains("very-secret-value"),
+            "Debug output must never contain the raw passphrase: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"));
     }
 
     #[test]

@@ -75,6 +75,21 @@ impl std::fmt::Display for Stage {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Stage {
+    /// Routes through [`Stage::parse`] so a request path segment names a
+    /// stage exactly the same way any other `Stage` construction does — an
+    /// invalid name is a deserialization error (axum's `Path<Stage>`
+    /// extractor turns this into a `400` before handler code runs,
+    /// mirroring [`EinmoId`]'s own `Deserialize` impl further down in
+    /// this file).
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Stage::parse(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Validate a stage or stage-directory name against `[A-Za-z0-9_-]+`.
 ///
 /// # Errors

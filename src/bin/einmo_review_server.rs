@@ -189,7 +189,7 @@ struct UndecideArgs {
     json: bool,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args)]
 struct ExecuteArgs {
     #[command(flatten)]
     session: SessionArgs,
@@ -213,6 +213,24 @@ struct ExecuteArgs {
     /// Emit machine-readable JSON.
     #[arg(long)]
     json: bool,
+}
+
+impl std::fmt::Debug for ExecuteArgs {
+    /// Never renders the raw passphrase (same discipline as
+    /// `review_server::ExecuteRequest`'s hand-written `Debug`).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExecuteArgs")
+            .field("session", &self.session)
+            .field("confirm", &self.confirm)
+            .field(
+                "passphrase",
+                &self.passphrase.as_ref().map(|_| "<redacted>"),
+            )
+            .field("stdin_passphrase", &self.stdin_passphrase)
+            .field("interactive", &self.interactive)
+            .field("json", &self.json)
+            .finish()
+    }
 }
 
 fn main() -> ExitCode {
@@ -809,7 +827,9 @@ fn print_execute_report(session_id: &str, report: &ExecutionReport, json: bool) 
         let executed: Vec<serde_json::Value> = report
             .executed
             .iter()
-            .map(|e| serde_json::json!({"id": e.id.as_str(), "detail": e.detail}))
+            .map(|e| {
+                serde_json::json!({"id": e.id.as_str(), "detail": e.detail, "non_human": e.non_human})
+            })
             .collect();
         let skipped: Vec<&str> = report.skipped.iter().map(EinmoId::as_str).collect();
         println!(
@@ -817,6 +837,17 @@ fn print_execute_report(session_id: &str, report: &ExecutionReport, json: bool) 
             serde_json::json!({"session": session_id, "executed": executed, "skipped": skipped})
         );
     } else {
+        // Warn on any non-human verified attestation, same phrasing as
+        // `einmo promote`'s own warning (`cli.rs`) -- this session path
+        // must not silently drop the signal that call already surfaces.
+        for e in &report.executed {
+            if e.non_human {
+                eprintln!(
+                    "einmo-review-server: warning: {} verified under a well-known computer key (non-human attestation)",
+                    e.id
+                );
+            }
+        }
         for e in &report.executed {
             println!("executed {}: {}", e.id, e.detail);
         }
@@ -1175,6 +1206,27 @@ mod tests {
     }
 
     #[test]
+    fn execute_args_debug_never_renders_the_raw_passphrase() {
+        let args = ExecuteArgs {
+            session: SessionArgs {
+                work_dir: PathBuf::from("/tmp/some-suite"),
+                session: None,
+            },
+            confirm: "PROMOTE".to_string(),
+            passphrase: Some("very-secret-value".to_string()),
+            stdin_passphrase: false,
+            interactive: false,
+            json: false,
+        };
+        let rendered = format!("{args:?}");
+        assert!(
+            !rendered.contains("very-secret-value"),
+            "Debug output must never contain the raw passphrase: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"));
+    }
+
+    #[test]
     fn confirm_gate_is_a_noop_with_no_pending_promotion() {
         let plan = ExecutionPlan {
             actions: vec![PlannedAction::Retract {
@@ -1199,14 +1251,29 @@ mod tests {
     static JOURNAL_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     struct TestContext {
-        _journal_guard: std::sync::MutexGuard<'static, ()>,
-        _journal_tmp: tempfile::TempDir,
+        _journal_guard: Option<std::sync::MutexGuard<'static, ()>>,
+        _journal_tmp: Option<tempfile::TempDir>,
         suite: tempfile::TempDir,
     }
 
     impl TestContext {
         fn path(&self) -> &std::path::Path {
             self.suite.path()
+        }
+
+        /// Release `JOURNAL_ENV_LOCK` (and its scratch journal dir) early,
+        /// before `self.suite` itself is dropped. `std::sync::Mutex` isn't
+        /// reentrant, so a test that needs a *second*, independent
+        /// `TestContext` alive at the same time (e.g. comparing the review
+        /// path against a fresh CLI-driven baseline, as
+        /// `cli_execute_promote_matches_einmo_promote_cli_at_the_cli_surface`
+        /// does) must call this once its own journal-writing calls are
+        /// done, or the second `test_context()` call deadlocks waiting on
+        /// a lock this same thread already holds (see the identical fix
+        /// and its rationale in `src/review.rs`'s own `TestContext`).
+        fn release_journal_lock(&mut self) {
+            self._journal_guard = None;
+            self._journal_tmp = None;
         }
     }
 
@@ -1218,8 +1285,8 @@ mod tests {
             std::env::set_var("EINMO_JOURNAL_DIR", journal_tmp.path());
         }
         TestContext {
-            _journal_guard: guard,
-            _journal_tmp: journal_tmp,
+            _journal_guard: Some(guard),
+            _journal_tmp: Some(journal_tmp),
             suite: tempfile::tempdir().unwrap(),
         }
     }
@@ -1493,7 +1560,7 @@ mod tests {
     fn cli_execute_promote_matches_einmo_promote_cli_at_the_cli_surface() {
         // Baseline: the existing `einmo promote` CLI path, via the exported
         // `einmo::cli_main` entry point -- the actual binary users run.
-        let tmp_baseline = seeded_suite();
+        let mut tmp_baseline = seeded_suite();
         let _ = einmo::cli_main(vec![
             OsString::from("einmo"),
             OsString::from("promote"),
@@ -1507,6 +1574,12 @@ mod tests {
             baseline_path.exists(),
             "einmo promote must have written checked/a.foo.einmo"
         );
+
+        // This context's journal-writing calls are done; release its lock
+        // before opening a second, independent `TestContext` below --
+        // `JOURNAL_ENV_LOCK` isn't reentrant, so holding both at once on
+        // this one thread would deadlock (`TestContext::release_journal_lock`).
+        tmp_baseline.release_journal_lock();
 
         // The review path: `decide` then `execute`, chained across two
         // separate cmd_* calls sharing one --session id -- exactly how two

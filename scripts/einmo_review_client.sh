@@ -40,6 +40,28 @@ SOCKET=".einmo-review.sock"
 PRIVATE_SUITE=""
 NEW_OR_BROKEN=""
 SERVER_PID=""
+TMP=""
+
+# Registered up front, before ANY code that can `exit` runs (private-server
+# spawn, socket/session discovery, `harden_dir`, ...) -- every reference
+# below is `${VAR:-}`-guarded, so this is a safe no-op for whichever of
+# SERVER_PID/PRIVATE_SUITE/SOCKET/TMP aren't set yet at exit time. A trap
+# registered only near the bottom of the script (its old location) left a
+# window where several early `exit 1`s upstream of it could leak a private
+# server with no way to find its socket again afterward.
+cleanup() {
+    if [[ -n "${SERVER_PID:-}" ]]; then
+        kill "$SERVER_PID" 2>/dev/null || true
+        wait "$SERVER_PID" 2>/dev/null || true
+    fi
+    if [[ -n "${PRIVATE_SUITE:-}" && -n "${SOCKET:-}" ]]; then
+        rm -f "$SOCKET" "${SOCKET}.session"
+    fi
+    if [[ -n "${TMP:-}" && -d "$TMP" ]]; then
+        rm -rf "$TMP"
+    fi
+}
+trap cleanup EXIT INT TERM
 
 while getopts "p:s:nh" opt; do
     case "$opt" in
@@ -86,8 +108,7 @@ if [[ -n "$PRIVATE_SUITE" ]]; then
 
     if [[ -z "$SOCKET" ]]; then
         echo "einmo_review_client: private server did not report a socket path (timed out)" >&2
-        kill "$SERVER_PID" 2>/dev/null || true
-        exit 1
+        exit 1 # the EXIT trap (registered up front) kills $SERVER_PID
     fi
 
     # Wait for the server to actually accept connections
@@ -180,20 +201,6 @@ else
     TMP="$(mktemp -d -t einmo_review_client.XXXXXX)"
 fi
 harden_dir "$TMP"
-
-cleanup() {
-    if [[ -n "${SERVER_PID:-}" ]]; then
-        kill "$SERVER_PID" 2>/dev/null || true
-        wait "$SERVER_PID" 2>/dev/null || true
-    fi
-    if [[ -n "${PRIVATE_SUITE:-}" && -n "${SOCKET:-}" ]]; then
-        rm -f "$SOCKET" "${SOCKET}.session"
-    fi
-    if [[ -n "${TMP:-}" && -d "$TMP" ]]; then
-        rm -rf "$TMP"
-    fi
-}
-trap cleanup EXIT INT TERM
 
 # --- server-side diff helper (used by vim's \d mapping) --------------------
 DIFF_HELPER="$TMP/diff-helper.sh"

@@ -375,6 +375,12 @@ pub struct Executed {
     pub id: EinmoId,
     /// A short description of what happened (e.g. `"promoted to checked"`).
     pub detail: String,
+    /// `true` if this was a promotion to `verified` signed with a
+    /// well-known computer key (a non-human attestation — post-hoc
+    /// detectable, `EIMP-1` §B.4, mirroring [`transitions::Promoted`]'s
+    /// own field of the same name). Always `false` for retract/flag
+    /// actions and for promotions to any stage other than `verified`.
+    pub non_human: bool,
 }
 
 /// The result of [`EinmoReview::execute`].
@@ -696,6 +702,14 @@ impl EinmoReview {
     /// (not a retractable baseline), or an error if `stage` holds nothing
     /// for `id`.
     pub fn retract_now(&self, id: &EinmoId, stage: Stage) -> Result<()> {
+        // Same `exec` mutex `flag_now`/`execute` already take: a concurrent
+        // `execute()` batch promoting this SAME id into `checked`/`verified`
+        // and a `retract_now()` for it must serialize, or the two can
+        // interleave unserialized (e.g. this call's existence check passing
+        // right before `execute` writes the destination file, or the
+        // reverse), leaving a retract/promote report that doesn't match
+        // final disk state.
+        let _guard = self.exec.lock().expect("exec lock poisoned");
         let rel = crate::stage::mirror_input_path(std::path::Path::new(id.as_str()));
         let files = [rel];
         let report = transitions::retract(&self.config, stage, None, Some(&files))?;
@@ -890,6 +904,19 @@ impl EinmoReview {
                     .push(id.clone());
             }
         }
+        // Resolve every group's key BEFORE mutating anything for ANY
+        // group. A missing verified-stage key must abort the whole batch
+        // with zero side effects -- never partway through, after some
+        // other group's promotion has already been written to disk. (This
+        // used to `?` out of the loop below mid-mutation: a checked-group
+        // promotion could land on disk, then a later verified-group's
+        // missing key would propagate an `Err` out of `execute` entirely,
+        // discarding `report`, skipping the flag/retract pass below, and
+        // never clearing the already-applied item's pending decision or
+        // journaling the batch -- a real disk mutation with no caller
+        // visibility and no audit trail. See
+        // `execute_missing_verified_key_aborts_the_whole_batch_untouched`.)
+        let mut resolved_groups = Vec::with_capacity(promote_groups.len());
         for ((from, to), ids) in promote_groups {
             let key = match to {
                 Stage::Verified => keys.to_verified.as_ref().ok_or_else(|| {
@@ -900,6 +927,9 @@ impl EinmoReview {
                 })?,
                 _ => &keys.to_checked,
             };
+            resolved_groups.push((from, to, ids, key));
+        }
+        for (from, to, ids, key) in resolved_groups {
             // Derive the stage key ONCE per (from, to) group (the same
             // discipline `transitions::promote` uses): Argon2id derivation
             // is ~1.8s by design, so per-case derivation would make a
@@ -908,7 +938,11 @@ impl EinmoReview {
             let keypair = StageKeypair::derive(key.passphrase());
             for id in ids {
                 match promote_one_accumulating(&self.config, from, to, &id, &keypair) {
-                    Ok(detail) => report.executed.push(Executed { id, detail }),
+                    Ok((detail, non_human)) => report.executed.push(Executed {
+                        id,
+                        detail,
+                        non_human,
+                    }),
                     Err(_) => report.skipped.push(id),
                 }
             }
@@ -927,6 +961,7 @@ impl EinmoReview {
                             report.executed.push(Executed {
                                 id: id.clone(),
                                 detail: format!("retracted from {from}"),
+                                non_human: false,
                             });
                         }
                         Ok(_) => report.skipped.push(id.clone()),
@@ -943,6 +978,7 @@ impl EinmoReview {
                             report.executed.push(Executed {
                                 id: id.clone(),
                                 detail: format!("flagged from {stage}"),
+                                non_human: false,
                             });
                         }
                         Ok(_) => report.skipped.push(id.clone()),
@@ -1125,8 +1161,11 @@ fn action_id(action: &PlannedAction) -> &EinmoId {
 /// One file's promote from `from` to `to`, applying `EIMP-1` §S.4a's
 /// content-then-key decision table — the `checked`/`verified` counterpart
 /// to `EIMP-3`'s `output`-stage version of the same idea (`write_output`).
-/// Returns a short human-readable detail string on success (what
-/// [`Executed::detail`] carries).
+/// Returns a short human-readable detail string (what [`Executed::detail`]
+/// carries) and whether this promotion's signer is a well-known computer
+/// key on a `verified` destination (what [`Executed::non_human`] carries —
+/// mirrors `transitions::promote`'s own `Promoted::non_human`, which this
+/// session-level path must not silently drop, `EIMP-1` §B.4).
 ///
 /// Unlike `EIMP-3`'s table, a content mismatch here is never a failure:
 /// promoting *is* accepting the reviewer's approved content as the new
@@ -1143,9 +1182,12 @@ fn promote_one_accumulating(
     to: Stage,
     id: &EinmoId,
     keypair: &StageKeypair,
-) -> Result<String> {
+) -> Result<(String, bool)> {
     let src_path = id.to_stage_path(config.work_dir(), from);
     let dst_path = id.to_stage_path(config.work_dir(), to);
+
+    let non_human =
+        to == Stage::Verified && crate::signature::is_computer_key(&keypair.pubkey_hex());
 
     let src_file = EinmoFile::from_file(&src_path)?; // verify-on-inspect the source
     let existing = EinmoFile::from_file(&dst_path).ok(); // absent/corrupt -> treat as absent
@@ -1160,7 +1202,10 @@ fn promote_one_accumulating(
             {
                 // True no-op: the destination already reflects this exact
                 // content, already signed by this exact key. Untouched.
-                return Ok(format!("{from} to {to}: already signed, unchanged"));
+                return Ok((
+                    format!("{from} to {to}: already signed, unchanged"),
+                    non_human,
+                ));
             }
             // Content matches, new signer: append onto the EXISTING file in
             // place, preserving every prior stamp (including other
@@ -1170,7 +1215,10 @@ fn promote_one_accumulating(
             ensure_parent_dir(&dst_path)?;
             let bytes = appended.serialize()?;
             std::fs::write(&dst_path, &bytes).map_err(|e| EinmoError::io(&dst_path, e))?;
-            return Ok(format!("{from} to {to}: co-signed by a new signer"));
+            return Ok((
+                format!("{from} to {to}: co-signed by a new signer"),
+                non_human,
+            ));
         }
     }
 
@@ -1183,7 +1231,7 @@ fn promote_one_accumulating(
     ensure_parent_dir(&dst_path)?;
     let bytes = file.serialize()?;
     std::fs::write(&dst_path, &bytes).map_err(|e| EinmoError::io(&dst_path, e))?;
-    Ok(format!("promoted {from} to {to}"))
+    Ok((format!("promoted {from} to {to}"), non_human))
 }
 
 /// Strip the `.einmo` mirror suffix and, when present, the stage-relative
@@ -1204,14 +1252,27 @@ mod tests {
     static JOURNAL_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     struct TestContext {
-        _journal_guard: std::sync::MutexGuard<'static, ()>,
-        _journal_tmp: tempfile::TempDir,
+        _journal_guard: Option<std::sync::MutexGuard<'static, ()>>,
+        _journal_tmp: Option<tempfile::TempDir>,
         suite: tempfile::TempDir,
     }
 
     impl TestContext {
         fn path(&self) -> &std::path::Path {
             self.suite.path()
+        }
+
+        /// Release `JOURNAL_ENV_LOCK` (and its scratch journal dir) early,
+        /// before `self.suite` itself is dropped. `std::sync::Mutex` isn't
+        /// reentrant, so a test that needs a *second*, independent
+        /// `TestContext` alive at the same time (e.g. comparing the review
+        /// path against a fresh CLI-driven suite) must call this once its
+        /// own journal-writing calls are done, or the second
+        /// `test_context()` call deadlocks waiting on a lock this same
+        /// thread already holds.
+        fn release_journal_lock(&mut self) {
+            self._journal_guard = None;
+            self._journal_tmp = None;
         }
     }
 
@@ -1223,8 +1284,8 @@ mod tests {
             std::env::set_var("EINMO_JOURNAL_DIR", journal_tmp.path());
         }
         TestContext {
-            _journal_guard: guard,
-            _journal_tmp: journal_tmp,
+            _journal_guard: Some(guard),
+            _journal_tmp: Some(journal_tmp),
             suite: tempfile::tempdir().unwrap(),
         }
     }
@@ -1285,6 +1346,20 @@ mod tests {
         let opts = ReviewOpts::default();
         assert_eq!(opts.mode, ReviewMode::Full);
         assert_eq!(opts.filter, None);
+    }
+
+    #[test]
+    fn signer_set_debug_never_renders_either_raw_passphrase() {
+        // SignerSet derives Debug; this proves that's still safe purely
+        // because KeySource's own hand-written Debug redacts -- no
+        // separate hand-written impl needed here.
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase("checked-secret"),
+            to_verified: Some(KeySource::from_passphrase("verified-secret")),
+        };
+        let rendered = format!("{keys:?}");
+        assert!(!rendered.contains("checked-secret"));
+        assert!(!rendered.contains("verified-secret"));
     }
 
     #[test]
@@ -1967,7 +2042,7 @@ mod tests {
 
     #[test]
     fn execute_promote_matches_cli_promote_byte_for_byte() {
-        let tmp = seeded_suite();
+        let mut tmp = seeded_suite();
         let review = EinmoReview::open(tmp.path());
         let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
 
@@ -1983,6 +2058,12 @@ mod tests {
         assert!(report.skipped.is_empty());
 
         let via_review = std::fs::read(tmp.path().join("checked").join("a.foo.einmo")).unwrap();
+
+        // This test's journal-writing calls against `tmp` are done; release
+        // its lock before opening a second, independent `TestContext` below
+        // -- `JOURNAL_ENV_LOCK` isn't reentrant, so holding both at once on
+        // this one thread would deadlock (`TestContext::release_journal_lock`).
+        tmp.release_journal_lock();
 
         // Independently reproduce via the CLI-level promote() on a fresh copy.
         let tmp2 = seeded_suite_with_same_content();
@@ -2499,6 +2580,67 @@ mod tests {
     }
 
     #[test]
+    fn retract_now_serializes_against_a_concurrent_execute_on_the_same_id() {
+        // retract_now must take the same `exec` mutex flag_now/execute
+        // already do -- a concurrent execute() promoting THIS SAME id and
+        // a retract_now() for it must never interleave. Whichever runs
+        // first, the end state must be internally consistent (never a
+        // torn write): if retract wins the race, execute's source file is
+        // gone and it reports the id as skipped, not executed; if execute
+        // wins, it promotes to verified and retract's cascade then removes
+        // both checked and verified. Either way, neither call may panic,
+        // deadlock, or leave a half-written `.einmo` file.
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let review = Arc::new(EinmoReview::open(tmp.path()));
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+
+        review.decide(
+            id.clone(),
+            Decision::Promote {
+                to: Stage::Verified,
+            },
+        );
+        let plan = review.plan();
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: Some(KeySource::from_passphrase("s3cr3t")),
+        };
+
+        let review_for_retract = Arc::clone(&review);
+        let id_for_retract = id.clone();
+        let retract_handle =
+            thread::spawn(move || review_for_retract.retract_now(&id_for_retract, Stage::Checked));
+        let review_for_execute = Arc::clone(&review);
+        let execute_handle = thread::spawn(move || review_for_execute.execute(&plan, &keys));
+
+        let retract_result = retract_handle.join().unwrap();
+        let execute_result = execute_handle.join().unwrap();
+        assert!(
+            execute_result.is_ok(),
+            "execute must not error: {execute_result:?}"
+        );
+
+        // Whichever order actually ran, neither `checked/` nor `verified/`
+        // may hold a corrupt (unreadable / chain-invalid) file for a.foo --
+        // either both are gone (retract's cascade covers both orderings)
+        // or, if retract somehow missed the file entirely and returned an
+        // IO error, whatever execute wrote must still verify cleanly.
+        for stage_dir in ["checked", "verified"] {
+            let path = tmp.path().join(stage_dir).join("a.foo.einmo");
+            if path.exists() {
+                let file = EinmoFile::from_file(&path)
+                    .unwrap_or_else(|e| panic!("{stage_dir}/a.foo.einmo must verify: {e}"));
+                assert!(
+                    file.chain_valid(),
+                    "{stage_dir}/a.foo.einmo chain must be valid"
+                );
+            }
+        }
+        let _ = retract_result; // either outcome (Ok or NotFound) is valid depending on ordering
+    }
+
+    #[test]
     fn execute_promote_to_verified_without_key_errors() {
         let tmp = seeded_suite();
         promote_output_to_checked(tmp.path());
@@ -2517,6 +2659,154 @@ mod tests {
         };
         let err = review.execute(&plan, &keys).unwrap_err();
         assert!(matches!(err, EinmoError::NoKey(_)));
+    }
+
+    #[test]
+    fn execute_reports_non_human_for_a_computer_key_verified_promotion_but_not_a_real_one() {
+        // The session `execute` path must not silently drop the
+        // `non_human` signal `transitions::promote` already computes and
+        // tests (`empty_passphrase_verified_is_flagged_non_human`,
+        // `transitions.rs`) -- an empty-passphrase verified promotion is
+        // indistinguishable from a genuine human attestation otherwise.
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let review = EinmoReview::open(tmp.path());
+        let a = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let b = EinmoId::from_input_rel(std::path::Path::new("b.foo")).unwrap();
+
+        review.decide(
+            a.clone(),
+            Decision::Promote {
+                to: Stage::Verified,
+            },
+        );
+        review.decide(
+            b.clone(),
+            Decision::Promote {
+                to: Stage::Verified,
+            },
+        );
+        let plan = review.plan();
+
+        // a.foo: the well-known computer key (empty passphrase).
+        let computer_keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: Some(KeySource::from_passphrase("")),
+        };
+        let computer_report = review
+            .execute(
+                &ExecutionPlan {
+                    actions: plan
+                        .actions
+                        .iter()
+                        .filter(|act| action_id(act) == &a)
+                        .cloned()
+                        .collect(),
+                    claims: Vec::new(),
+                },
+                &computer_keys,
+            )
+            .unwrap();
+        assert_eq!(computer_report.executed.len(), 1);
+        assert!(
+            computer_report.executed[0].non_human,
+            "empty-passphrase verified promotion must report non_human: true"
+        );
+
+        // b.foo: a real human passphrase.
+        let human_keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: Some(KeySource::from_passphrase("a-real-passphrase")),
+        };
+        let human_report = review
+            .execute(
+                &ExecutionPlan {
+                    actions: plan
+                        .actions
+                        .into_iter()
+                        .filter(|act| action_id(act) == &b)
+                        .collect(),
+                    claims: Vec::new(),
+                },
+                &human_keys,
+            )
+            .unwrap();
+        assert_eq!(human_report.executed.len(), 1);
+        assert!(
+            !human_report.executed[0].non_human,
+            "a real passphrase's verified promotion must report non_human: false"
+        );
+    }
+
+    #[test]
+    fn execute_missing_verified_key_aborts_the_whole_batch_untouched() {
+        // Two cases in the SAME batch needing DIFFERENT (from, to) groups:
+        // `a.foo` -> verified (needs a key `keys` doesn't supply) and
+        // `b.foo` -> checked (needs only the always-present checked key).
+        // `HashMap` iteration order is unspecified, so the old bug (`?`
+        // inside the mutating loop) could let `b.foo`'s promotion land on
+        // disk before `a.foo`'s missing key aborted the function -- assert
+        // NEITHER group's promotion ever took effect, regardless of which
+        // one iteration happens to reach first.
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path()); // a.foo AND b.foo now in checked/
+        let review = EinmoReview::open(tmp.path());
+        let a = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let b = EinmoId::from_input_rel(std::path::Path::new("b.foo")).unwrap();
+
+        // Retract b.foo (only) back out of checked/ so promoting it to
+        // checked again is a genuine, file-writing `(Output, Checked)`
+        // group -- distinct from a.foo's `(Checked, Verified)` group.
+        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        let b_rel = crate::stage::mirror_input_path(std::path::Path::new(b.as_str()));
+        transitions::retract(&config, Stage::Checked, None, Some(&[b_rel])).unwrap();
+
+        review.decide(
+            a.clone(),
+            Decision::Promote {
+                to: Stage::Verified,
+            },
+        );
+        review.decide(b.clone(), Decision::Promote { to: Stage::Checked });
+        let plan = review.plan();
+        assert_eq!(plan.actions.len(), 2);
+
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: None,
+        };
+        let err = review.execute(&plan, &keys).unwrap_err();
+        assert!(matches!(err, EinmoError::NoKey(_)));
+
+        assert!(
+            !tmp.path().join("checked").join("b.foo.einmo").exists(),
+            "b.foo's (Output, Checked) group must not be applied when a.foo's \
+             (Checked, Verified) group in the SAME batch is missing its key"
+        );
+        assert!(
+            !tmp.path().join("verified").join("a.foo.einmo").exists(),
+            "a.foo must not be (partially) promoted to verified either"
+        );
+
+        // Neither decision was consumed -- both are still pending, exactly
+        // as if execute() had never been called.
+        let items = review.items().unwrap();
+        let decision_for = |id: &EinmoId| {
+            items
+                .iter()
+                .find(|i| &i.id == id)
+                .and_then(|i| i.decision.clone())
+        };
+        assert_eq!(
+            decision_for(&a),
+            Some(Decision::Promote {
+                to: Stage::Verified
+            })
+        );
+        assert_eq!(
+            decision_for(&b),
+            Some(Decision::Promote { to: Stage::Checked })
+        );
     }
 
     #[test]

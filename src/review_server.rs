@@ -305,18 +305,13 @@ pub struct BodyResponse {
 
 async fn case_body(
     State(state): State<Arc<AppState>>,
-    Path((session, id, stage)): Path<(SessionId, EinmoId, String)>,
+    Path((session, id, stage)): Path<(SessionId, EinmoId, Stage)>,
 ) -> Result<Json<BodyResponse>, ApiError> {
     let review = state.get(session)?;
-    let stage = parse_stage(&stage)?;
     let body = review.body(&id, stage).map_err(ApiError::from)?;
     Ok(Json(BodyResponse {
         sections: body.sections,
     }))
-}
-
-fn parse_stage(s: &str) -> Result<Stage, ApiError> {
-    Stage::parse(s).map_err(|_| ApiError::BadRequest(format!("invalid stage {s:?}")))
 }
 
 /// One line of a [`SectionDiffResponse`], tagged by `"tag"` — the wire form
@@ -379,11 +374,9 @@ pub struct DiffResponse {
 
 async fn case_diff(
     State(state): State<Arc<AppState>>,
-    Path((session, id, left, right)): Path<(SessionId, EinmoId, String, String)>,
+    Path((session, id, left, right)): Path<(SessionId, EinmoId, Stage, Stage)>,
 ) -> Result<Json<DiffResponse>, ApiError> {
     let review = state.get(session)?;
-    let left = parse_stage(&left)?;
-    let right = parse_stage(&right)?;
     let hunks = review.diff(&id, left, right).map_err(ApiError::from)?;
     Ok(Json(DiffResponse {
         sections: hunks.sections.into_iter().map(Into::into).collect(),
@@ -612,6 +605,26 @@ impl From<crate::review::PlannedAction> for PlannedActionResponse {
     }
 }
 
+/// One active soft claim (`EIMP-1` §S.5), as returned by
+/// `GET /einmo/<session>/plan` — same shape the CLI's `cmd_plan`
+/// (`src/bin/einmo_review_server.rs`) already prints.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ClaimResponse {
+    /// The claimed case.
+    pub id: String,
+    /// Seconds remaining before the claim auto-expires.
+    pub remaining_secs: u64,
+}
+
+impl From<crate::review::ActiveClaim> for ClaimResponse {
+    fn from(claim: crate::review::ActiveClaim) -> Self {
+        ClaimResponse {
+            id: claim.id.as_str().to_string(),
+            remaining_secs: claim.remaining.as_secs(),
+        }
+    }
+}
+
 /// `GET /einmo/<session>/plan` response body — a preview of what
 /// `POST … /execute` would do right now; also the end-of-pass summary the
 /// client renders (EIMP-2 §5).
@@ -619,6 +632,9 @@ impl From<crate::review::PlannedAction> for PlannedActionResponse {
 pub struct PlanResponse {
     /// The actions a call to execute would apply, in order.
     pub actions: Vec<PlannedActionResponse>,
+    /// Every currently-active soft claim (`EIMP-1` §S.5) — advisory
+    /// display data only, never consulted by `execute` itself.
+    pub claims: Vec<ClaimResponse>,
 }
 
 async fn get_plan(
@@ -629,6 +645,7 @@ async fn get_plan(
     let plan = review.plan();
     Ok(Json(PlanResponse {
         actions: plan.actions.into_iter().map(Into::into).collect(),
+        claims: plan.claims.into_iter().map(Into::into).collect(),
     }))
 }
 
@@ -636,7 +653,7 @@ async fn get_plan(
 /// present, is used only long enough to build the `SignerSet` passed into
 /// [`EinmoReview::execute`] — never stored on `AppState` or logged
 /// (EIMP-2 §4).
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct ExecuteRequest {
     /// Must be the literal string `"PROMOTE"` for any pending promotion to
     /// apply — a typo-resistant confirmation gate, not a security boundary.
@@ -648,11 +665,39 @@ pub struct ExecuteRequest {
     pub passphrase: Option<String>,
 }
 
-/// One executed (or skipped) action, as returned by `POST … /execute`.
+impl std::fmt::Debug for ExecuteRequest {
+    /// Never renders the raw passphrase — this doc comment's own "never
+    /// logged" promise otherwise has nothing stopping the first
+    /// `tracing::debug!("{:?}", req)` (or similar) from breaking it.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExecuteRequest")
+            .field("confirm", &self.confirm)
+            .field(
+                "passphrase",
+                &self.passphrase.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+/// One completed action, as returned by `POST … /execute`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExecutedResponse {
+    /// The case id.
+    pub id: String,
+    /// What happened (e.g. `"promoted to checked"`).
+    pub detail: String,
+    /// See [`crate::review::Executed::non_human`] — `true` if this was a
+    /// promotion to `verified` signed with a well-known computer key (a
+    /// non-human attestation), never silently dropped on this path.
+    pub non_human: bool,
+}
+
+/// The result of `POST … /execute`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExecuteResponse {
-    /// `(case id, what happened)` pairs for actions that completed.
-    pub executed: Vec<(String, String)>,
+    /// Actions that completed.
+    pub executed: Vec<ExecutedResponse>,
     /// Case ids skipped because their source drifted since planning.
     pub skipped: Vec<String>,
 }
@@ -700,7 +745,11 @@ async fn post_execute(
         executed: report
             .executed
             .into_iter()
-            .map(|e| (e.id.as_str().to_string(), e.detail))
+            .map(|e| ExecutedResponse {
+                id: e.id.as_str().to_string(),
+                detail: e.detail,
+                non_human: e.non_human,
+            })
             .collect(),
         skipped: report
             .skipped
@@ -721,11 +770,10 @@ pub struct FlagRequest {
 /// (EIMP-2 §3, `EinmoReview::flag_now`).
 async fn flag_case(
     State(state): State<Arc<AppState>>,
-    Path((session, id, stage)): Path<(SessionId, EinmoId, String)>,
+    Path((session, id, stage)): Path<(SessionId, EinmoId, Stage)>,
     Json(req): Json<FlagRequest>,
 ) -> Result<StatusCode, ApiError> {
     let review = state.get(session)?;
-    let stage = parse_stage(&stage)?;
     review.flag_now(&id, stage, &req.reason)?;
     state.publish(
         session,
@@ -741,10 +789,9 @@ async fn flag_case(
 /// `checked → verified`.
 async fn retract_case(
     State(state): State<Arc<AppState>>,
-    Path((session, id, stage)): Path<(SessionId, EinmoId, String)>,
+    Path((session, id, stage)): Path<(SessionId, EinmoId, Stage)>,
 ) -> Result<StatusCode, ApiError> {
     let review = state.get(session)?;
-    let stage = parse_stage(&stage)?;
     review.retract_now(&id, stage)?;
     state.publish(
         session,
@@ -1029,7 +1076,12 @@ pub fn private_socket_path() -> std::io::Result<std::path::PathBuf> {
     use rand_core::{OsRng, RngCore};
 
     let base = private_socket_base_dir();
-    std::fs::create_dir_all(&base)?;
+    // Harden the BASE dir too, not just the per-session leaf below --
+    // otherwise, under a typical umask, `base` ends up world-readable/
+    // executable and leaks every "unpredictable" session directory's name
+    // to any local user who lists it (the leaf's own 0700 still blocks
+    // traversal INTO it, but the name itself is no longer a secret).
+    crate::journal::harden_dir(&base)?;
     for _ in 0..8 {
         let mut bytes = [0u8; 16];
         OsRng.fill_bytes(&mut bytes);
@@ -1626,6 +1678,24 @@ mod tests {
         assert!(!tmp.path().join("checked/a.foo.einmo").exists());
     }
 
+    #[test]
+    fn execute_request_debug_never_renders_the_raw_passphrase() {
+        let req = ExecuteRequest {
+            confirm: "PROMOTE".to_string(),
+            passphrase: Some("very-secret-value".to_string()),
+        };
+        let rendered = format!("{req:?}");
+        assert!(
+            !rendered.contains("very-secret-value"),
+            "Debug output must never contain the raw passphrase: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"));
+        assert!(
+            rendered.contains("PROMOTE"),
+            "non-secret fields still render"
+        );
+    }
+
     #[tokio::test]
     async fn execute_with_confirm_promotes_to_checked() {
         let tmp = seeded_suite();
@@ -1705,6 +1775,46 @@ mod tests {
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert!(tmp.path().join("verified/a.foo.einmo").exists());
+    }
+
+    #[tokio::test]
+    async fn execute_response_surfaces_non_human_for_a_computer_key_verified_promotion() {
+        // An explicit EMPTY passphrase is the well-known computer key
+        // (distinct from omitting `passphrase` entirely, which is refused
+        // above) -- promoting to verified with it must be flagged
+        // `non_human: true` in the HTTP response, the same signal
+        // `einmo promote`'s own CLI warning already surfaces (`cli.rs`).
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "promote", "to": "verified"}))
+                    .unwrap(),
+            ))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+
+        let req = Request::post(format!("/einmo/{session}/execute"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"confirm": "PROMOTE", "passphrase": ""}))
+                    .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let report: ExecuteResponse = body_json(resp).await;
+        assert_eq!(report.executed.len(), 1);
+        assert!(
+            report.executed[0].non_human,
+            "an empty-passphrase verified promotion must report non_human: true, \
+             not silently look identical to a genuine human attestation"
+        );
     }
 
     #[tokio::test]
@@ -1861,13 +1971,14 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         let plan: PlanResponse = body_json(resp).await;
-        // PlanResponse only carries actions; claims aren't in the wire type
-        // (EIMP-2's existing shape) -- this test's job is only to confirm
-        // the claim endpoint itself does not error, since claims already
-        // surface through the library's `plan().claims` (proved in
-        // review.rs's own claim tests). A dedicated 404 case below covers
-        // the unknown-case path.
         assert!(plan.actions.is_empty(), "claiming alone decides nothing");
+        assert_eq!(
+            plan.claims.len(),
+            1,
+            "the claim must surface in PlanResponse.claims"
+        );
+        assert_eq!(plan.claims[0].id, "a.foo");
+        assert!(plan.claims[0].remaining_secs > 0);
     }
 
     #[tokio::test]
@@ -2179,6 +2290,17 @@ mod tests {
         let mode = std::fs::metadata(dir).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700, "the containing directory must be mode 0700");
 
+        // The BASE dir must be hardened too, not just the per-session leaf
+        // -- under a real umask (e.g. 022) a bare `create_dir_all` would
+        // leave it world-readable/executable, letting any local user list
+        // it and see every "unpredictable" session directory's name.
+        let base_mode = std::fs::metadata(base_dir.path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(base_mode, 0o700, "the base directory must be mode 0700 too");
+
         // SAFETY: cleanup for this test's own override, same scope as above.
         unsafe {
             std::env::remove_var(PRIVATE_SOCKET_BASE_ENV);
@@ -2354,10 +2476,10 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         let plan: PlanResponse = body_json(resp).await;
-        // PlanResponse (the wire DTO) doesn't carry claims, but the same
-        // in-process review's plan() -- the source of truth GET /plan reads
-        // from -- must show the claim gone.
-        let _ = plan;
+        assert!(
+            plan.claims.is_empty(),
+            "an expired claim must be auto-reclaimed in the HTTP response, not linger"
+        );
         assert!(
             review.plan().claims.is_empty(),
             "an expired claim must be auto-reclaimed, not linger"
