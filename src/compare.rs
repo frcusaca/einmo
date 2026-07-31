@@ -139,7 +139,12 @@ pub fn compare(
 
 /// Return the names of required sections that differ (or are missing) between
 /// the two files.
-fn compare_sections(a: &EinmoFile, b: &EinmoFile, policy: MatchSections) -> Vec<String> {
+///
+/// `pub(crate)`, not private: `EinmoCase::agreement` (`EIMP-7` §S.3) reuses
+/// this directly rather than forking it — the whole point of that method
+/// existing is that `einmo test` and `einmo review` compare sections the
+/// SAME way.
+pub(crate) fn compare_sections(a: &EinmoFile, b: &EinmoFile, policy: MatchSections) -> Vec<String> {
     // Required-section names are taken from A; a missing section in B counts as
     // a difference too.
     let required = required_sections(a, policy);

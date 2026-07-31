@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
+use crate::case::{EinmoCase, PromoteOutcome};
 use crate::config::{KeySource, TestConfig};
 use crate::einmo_suite::{TestRow, body_sections, scan_tests};
 use crate::error::{EinmoError, Result};
@@ -18,7 +19,7 @@ use crate::format::EinmoFile;
 use crate::signature::StageKeypair;
 use crate::stage::EinmoId;
 use crate::stage::Stage;
-use crate::stage::ensure_parent_dir;
+use crate::storage::EinmoDirectory;
 use crate::transitions::{self, FlagReport, RetractReport};
 
 /// A reviewer's decision about one case. Replace-not-stack: a later
@@ -929,6 +930,12 @@ impl EinmoReview {
             };
             resolved_groups.push((from, to, ids, key));
         }
+        // EIMP-7 §S.3: EinmoCase::promote is the one promote
+        // implementation (moved from this module's own
+        // promote_one_accumulating). One EinmoDirectory suffices for the
+        // whole batch -- it holds no mutable state of its own, just a
+        // TestConfig clone.
+        let directory = EinmoDirectory::new(self.config.clone());
         for (from, to, ids, key) in resolved_groups {
             // Derive the stage key ONCE per (from, to) group (the same
             // discipline `transitions::promote` uses): Argon2id derivation
@@ -937,12 +944,28 @@ impl EinmoReview {
             // (`execute_derives_stage_key_once_per_batch_not_per_case`).
             let keypair = StageKeypair::derive(key.passphrase());
             for id in ids {
-                match promote_one_accumulating(&self.config, from, to, &id, &keypair) {
-                    Ok((detail, non_human)) => report.executed.push(Executed {
-                        id,
-                        detail,
-                        non_human,
-                    }),
+                let case = EinmoCase::new(id.clone(), &directory);
+                match case.promote(from, to, &keypair) {
+                    Ok(outcome) => {
+                        let (detail, non_human) = match outcome {
+                            PromoteOutcome::Promoted { non_human } => {
+                                (format!("promoted {from} to {to}"), non_human)
+                            }
+                            PromoteOutcome::CoSigned { non_human } => (
+                                format!("{from} to {to}: co-signed by a new signer"),
+                                non_human,
+                            ),
+                            PromoteOutcome::AlreadySigned { non_human } => (
+                                format!("{from} to {to}: already signed, unchanged"),
+                                non_human,
+                            ),
+                        };
+                        report.executed.push(Executed {
+                            id,
+                            detail,
+                            non_human,
+                        });
+                    }
                     Err(_) => report.skipped.push(id),
                 }
             }
@@ -1158,81 +1181,11 @@ fn action_id(action: &PlannedAction) -> &EinmoId {
     }
 }
 
-/// One file's promote from `from` to `to`, applying `EIMP-1` §S.4a's
-/// content-then-key decision table — the `checked`/`verified` counterpart
-/// to `EIMP-3`'s `output`-stage version of the same idea (`write_output`).
-/// Returns a short human-readable detail string (what [`Executed::detail`]
-/// carries) and whether this promotion's signer is a well-known computer
-/// key on a `verified` destination (what [`Executed::non_human`] carries —
-/// mirrors `transitions::promote`'s own `Promoted::non_human`, which this
-/// session-level path must not silently drop, `EIMP-1` §B.4).
-///
-/// Unlike `EIMP-3`'s table, a content mismatch here is never a failure:
-/// promoting *is* accepting the reviewer's approved content as the new
-/// baseline, fresh stamp chain and all. Only a genuinely broken read (the
-/// source fails verify-on-inspect, an I/O error) is an `Err` — the caller
-/// treats that as skip-and-report, same as a presence-based drift.
-///
-/// # Errors
-///
-/// Returns an error if the source fails verify-on-inspect or a write fails.
-fn promote_one_accumulating(
-    config: &TestConfig,
-    from: Stage,
-    to: Stage,
-    id: &EinmoId,
-    keypair: &StageKeypair,
-) -> Result<(String, bool)> {
-    let src_path = id.to_stage_path(config.work_dir(), from);
-    let dst_path = id.to_stage_path(config.work_dir(), to);
-
-    let non_human =
-        to == Stage::Verified && crate::signature::is_computer_key(&keypair.pubkey_hex());
-
-    let src_file = EinmoFile::from_file(&src_path)?; // verify-on-inspect the source
-    let existing = EinmoFile::from_file(&dst_path).ok(); // absent/corrupt -> treat as absent
-
-    if let Some(existing) = existing {
-        let sections_same = body_sections(&existing, None) == body_sections(&src_file, None);
-        if sections_same {
-            let my_pubkey = keypair.pubkey_hex();
-            if existing
-                .stamps()
-                .has_stage_stamp_from(to.stamp_key(), &my_pubkey)
-            {
-                // True no-op: the destination already reflects this exact
-                // content, already signed by this exact key. Untouched.
-                return Ok((
-                    format!("{from} to {to}: already signed, unchanged"),
-                    non_human,
-                ));
-            }
-            // Content matches, new signer: append onto the EXISTING file in
-            // place, preserving every prior stamp (including other
-            // signers') — multi-signer accumulation.
-            let mut appended = existing;
-            appended.append_stage_stamp_with(to.stamp_key(), keypair);
-            ensure_parent_dir(&dst_path)?;
-            let bytes = appended.serialize()?;
-            std::fs::write(&dst_path, &bytes).map_err(|e| EinmoError::io(&dst_path, e))?;
-            return Ok((
-                format!("{from} to {to}: co-signed by a new signer"),
-                non_human,
-            ));
-        }
-    }
-
-    // Absent, corrupt, or genuinely different content: a fresh baseline —
-    // carry the source's own (already verified) stamp chain forward and
-    // append exactly one new destination stamp. Matches
-    // `transitions::promote`'s existing single-file behavior byte-for-byte.
-    let mut file = src_file;
-    file.append_stage_stamp_with(to.stamp_key(), keypair);
-    ensure_parent_dir(&dst_path)?;
-    let bytes = file.serialize()?;
-    std::fs::write(&dst_path, &bytes).map_err(|e| EinmoError::io(&dst_path, e))?;
-    Ok((format!("promoted {from} to {to}"), non_human))
-}
+// The per-case promote worker (formerly this module's own private
+// `promote_one_accumulating`, applying EIMP-1 §S.4a's content-then-key
+// decision table) moved to `EinmoCase::promote` (`EIMP-7` §S.3) — the ONE
+// promote implementation, shared with the plain CLI path (`transitions.rs`,
+// wired in a later EIMP-7 phase) instead of a private copy living here.
 
 /// Strip the `.einmo` mirror suffix and, when present, the stage-relative
 /// wrapping — `scan_tests` already yields the mirror-relative path

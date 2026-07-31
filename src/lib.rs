@@ -19,6 +19,7 @@
 //! a tampered file is refused, never operated on. The pure verification path
 //! lives in [`verify`] with no filesystem/tty/Argon2 dependency (WASM-ready).
 
+mod case;
 mod cli;
 mod collation;
 mod compare;
@@ -37,6 +38,7 @@ mod suite_lock;
 mod transitions;
 mod verify;
 
+pub use case::{EinmoCase, PromoteOutcome, StageAgreement, StagePairAgreement};
 pub use cli::cli_main;
 pub use collation::Collation;
 pub use compare::{ComparisonResult, DiffEntry, MatchSections, compare};

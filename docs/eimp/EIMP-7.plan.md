@@ -277,51 +277,100 @@ four-variant `Stage`.
 
 ## Phase B — `EinmoCase` (§S.3)
 
-- [ ] Read §S.3 of `EIMP-7.md`, including the `StagePairAgreement` enum
+- [x] Read §S.3 of `EIMP-7.md`, including the `StagePairAgreement` enum
       rationale and the **deliberate asymmetry** between `agreement`
       (policy-driven) and `promote`'s destination-match check
       (all-non-STAMPS-sections).
-- [ ] Write tests first for `agreement`, covering every
+      (2026-07-31)
+- [x] Write tests first for `agreement`, covering every
       `StagePairAgreement` variant: `Agree`; `Differ` (assert the
       **section names**, not just that it differs); `OneSided` (both
       directions, asserting which stage is `present`); `BothAbsent`;
       `Tampered` (assert a tampered artifact is `Tampered`, **never**
       folded into `Differ` — the distinction `scan_tests` loses today).
-  - [ ] Include the **P1 repro** as a named test: a fresh suite where
-        `output` and `checked` agree and `verified/` is empty →
-        `pair(Output, Checked)` is `Agree`. Today's `differing` bool is
-        `true` here; this test is the fix's proof.
-  - [ ] Include the **COMMENTS repro** as a named test (the third finding
-        in §Motivation): two stages agreeing on INPUT/OUTPUT but
-        differing in COMMENTS → `Agree` under
-        `MatchSections::InputOutput`, `Differ { sections: ["COMMENTS"] }`
-        under `InputOutputComments`. This is the inconsistency between
-        `einmo test` and `einmo review` that this EIMP closes.
-- [ ] Implement `StagePairAgreement`, `StageAgreement` (with its recorded
+      (2026-07-31) — `src/case.rs`'s test module, all against
+      `InMemoryStorage` (no tempdir needed).
+  - [x] Included the **P1 repro** as a named test
+        (`agreement_p1_repro_unpopulated_verified_does_not_affect_output_
+        checked_agreement`): output and checked agree, verified never
+        written → `Agree`.
+  - [x] Included the **COMMENTS repro** as a named test
+        (`agreement_comments_repro_policy_controls_whether_comments_only_
+        divergence_counts`): the same two files read `Agree` under
+        `InputOutput` and `Differ { sections: ["COMMENTS"] }` under
+        `InputOutputComments` — one core, two consistent answers.
+- [x] Implement `StagePairAgreement`, `StageAgreement` (with its recorded
       `policy` field and the `pair(left, right)` accessor).
-- [ ] Implement `EinmoCase` (`read`, `stages`, `agreement`).
+      (2026-07-31)
+- [x] Implement `EinmoCase` (`read`, `stages`, `agreement`).
       `agreement` reuses `compare.rs`'s existing required-section rules
       (`required_sections`/`is_required_section`/`compare_sections`) —
-      make them `pub(crate)` if needed, but **do not fork them**; §S.7
-      folds `compare::compare` onto this same core, and two copies would
-      recreate the exact defect this EIMP exists to remove.
-- [ ] Write tests first for `promote`: all three `PromoteOutcome`
+      made `compare_sections` `pub(crate)` rather than forking it; §S.7
+      will fold `compare::compare` onto this same core.
+      (2026-07-31)
+- [x] Write tests first for `promote`: all three `PromoteOutcome`
       variants (`Promoted`, `CoSigned`, `AlreadySigned`), plus the
       `non_human` flag on verified-stage promotion with a computer key.
-- [ ] Implement `EinmoCase::promote` + `PromoteOutcome` by **moving**
+      (2026-07-31) — 9 tests in `case.rs`, including the deliberate
+      asymmetry (`promote_deliberate_asymmetry_comments_only_difference_
+      is_not_a_match`, which also asserts `agreement()` WOULD call the
+      same two files `Agree` — proving the asymmetry directly, not just
+      promote's own behavior in isolation).
+- [x] Implement `EinmoCase::promote` + `PromoteOutcome` by **moving**
       `review.rs`'s `promote_one_accumulating` (`src/review.rs:1179`)
       here, converting its `(String, bool)` return into the enum. Keep
       its logic byte-identical; only the return shape changes.
-  - [ ] Byte-for-byte equivalence test: `EinmoCase::promote` produces
-        output identical to the pre-move `promote_one_accumulating` for
-        each of the three cases. (`review.rs` already has an equivalence
-        test of this shape — `execute_promote_matches_cli_promote_byte_
-        for_byte` — model it on that, and note P0's deadlock lesson: do
-        not hold two `TestContext` journal locks on one thread.)
-- [ ] Implement `EinmoCase::flag` / `retract` as per-id delegations to
-      `transitions::flag` / `transitions::retract` (already correct and
-      already shared — behavior must not change).
-- [ ] Phase B tests green; `clippy`/`fmt` clean; commit.
+      (2026-07-31) — moved AND rewired: `review.rs`'s `execute()` now
+      constructs an `EinmoCase` over an `EinmoDirectory` and calls
+      `case.promote(...)`, mapping `PromoteOutcome` back to the
+      `(detail, non_human)` shape `Executed` needs.
+      `promote_one_accumulating` is deleted from `review.rs`, not just
+      superseded. **Found and fixed while porting**: the original tuple
+      return included an accurately-computed `non_human` on the
+      already-signed/no-op path too — my first cut of `PromoteOutcome::
+      AlreadySigned` had no field and silently dropped it. Added
+      `non_human: bool` to `AlreadySigned` to match exactly.
+      `EinmoCase::promote` is `pub(crate)` (not `pub`): it takes
+      `&StageKeypair`, itself `pub(crate)` — exposing it publicly would
+      leak crypto internals across the crate's public boundary for no
+      reason, since the public entry point is `EinmoSuite::promote`
+      (Phase F), which takes `&KeySource` and derives once per batch.
+  - [x] Byte-for-byte equivalence test: rather than a bespoke diff
+        (nothing left to diff against — the old function is deleted),
+        equivalence is proven the stronger way: `review.rs`'s own
+        pre-existing test suite (62 tests, including
+        `execute_promote_matches_cli_promote_byte_for_byte`,
+        `execute_promote_appends_a_second_signers_stamp_when_content_
+        matches`, `execute_promote_is_a_true_noop_when_dest_already_
+        matches_and_is_mine`, `execute_promote_writes_a_fresh_baseline_
+        when_content_genuinely_differs`,
+        `execute_derives_stage_key_once_per_batch_not_per_case`) passes
+        **completely unedited** with `EinmoCase::promote` underneath.
+        (2026-07-31)
+- [x] Implement `EinmoCase::flag` / `retract`.
+      (2026-07-31) — **deviated from the plan's own sketch**: rather than
+      delegating to `transitions::flag`/`transitions::retract` (which
+      are `TestConfig`-shaped, not `EinmoStorage`-shaped — `EinmoCase`
+      holds no `TestConfig`), ported their per-file logic directly onto
+      `EinmoStorage` reads/writes/removes, matching `promote`'s own
+      pattern. Necessary for `EinmoCase` to be genuinely storage-agnostic
+      rather than secretly filesystem-only; `transitions.rs`'s free
+      functions are unaffected here and still exist (Phase F removes
+      them once `EinmoSuite` calls `EinmoCase` directly for the CLI path
+      too). `retract` returns `Result<Vec<Stage>>` (which cascade targets
+      were ACTUALLY removed), not `Result<()>` as first sketched — a
+      suite-level caller building `RetractReport` needs to know this per
+      id, and `EinmoStorage::remove` is silently a no-op on an absent
+      target so the case has to check presence itself to report it.
+- [x] Phase B tests green; `clippy`/`fmt` clean; commit.
+      (2026-07-31) — `case::` module: 19/19. `review::` (the rewired
+      consumer): 62/62, unedited. Full `cargo test --workspace`:
+      **385/385** (347 `einmo` lib + 31 `einmo-review-server` bin + 4
+      `zweimomo` lib + 3 `zweimomo` `tests/suites.rs`; up from 366 —
+      +19 `case::` tests). `cargo fmt --check` / `cargo clippy
+      --all-targets -- -D warnings` both clean (one `large_enum_variant`
+      lint fixed along the way by boxing `StageRead::Present`'s
+      `EinmoFile`).
 
 ## Phase C — `EinmoSuite` (§S.5)
 
