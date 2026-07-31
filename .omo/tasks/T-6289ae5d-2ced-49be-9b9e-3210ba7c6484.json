@@ -1,0 +1,10 @@
+{
+  "id": "T-6289ae5d-2ced-49be-9b9e-3210ba7c6484",
+  "subject": "Update AGENTS.md and README.md: primary branch is 'jia'",
+  "description": "Per the crash-stash: update documentation to insist that the primary branch of einmo is 'jia', not 'main'.",
+  "status": "completed",
+  "activeForm": "Updating branch documentation",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_04a1d6ad8ffe9lFXK9db78cgAJ"
+}

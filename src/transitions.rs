@@ -1095,4 +1095,55 @@ mod tests {
         .unwrap();
         assert_eq!(report.promoted.len(), 1, "files must override --filter");
     }
+
+    // EIMP-1 S.3: notes/ round-trip — a promoted note passes
+    // verify-on-inspect, and its stage:notes stamp verifies against the
+    // passphrase-derived key. Also confirms notes/ is signed while
+    // flagged/ carries only the original stamps (no stage:notes stamp).
+
+    #[test]
+    fn promote_flag_to_note_round_trip_verify_on_inspect_and_key_match() {
+        let (_tmp, config) = suite();
+        write_output(&config, "a.foo", "5");
+        flag(&config, Stage::Output, None, "needs attention", None).unwrap();
+
+        let note_key = KeySource::from_passphrase("a-note-signer");
+        let report = promote_flag_to_note(&config, &note_key, None, None).unwrap();
+        assert_eq!(report.noted, vec![PathBuf::from("a.foo.einmo")]);
+
+        // The note must pass verify-on-inspect (the real from_file path).
+        let note_path = config.stage_dir_for_notes().join("a.foo.einmo");
+        let note =
+            EinmoFile::from_file(&note_path).expect("a promoted note must pass verify-on-inspect");
+        assert!(note.chain_valid(), "stamp chain must be fully valid");
+
+        // The stage:notes stamp's pubkey must match the passphrase-derived key.
+        let (_, expected_vk) = derive_keypair("a-note-signer");
+        let stage_stamp = note
+            .stamps()
+            .entries()
+            .iter()
+            .find(|s| s.key() == "stage:notes")
+            .expect("stage:notes stamp must be present");
+        assert_eq!(
+            stage_stamp.pubkey_hex(),
+            hex::encode(expected_vk.to_bytes()),
+            "the note's stamp must verify against the passphrase-derived key"
+        );
+
+        // The flagged file still verifies (it kept its original stamps) but
+        // has NO stage:notes stamp — notes/ participates in signature checks
+        // while flagged/ does not add a new attestation.
+        let flagged_path = config.stage_dir(Stage::Flagged).join("a.foo.einmo");
+        let flagged =
+            EinmoFile::from_file(&flagged_path).expect("flagged file must still verify-on-inspect");
+        assert!(
+            flagged
+                .stamps()
+                .entries()
+                .iter()
+                .all(|s| s.key() != "stage:notes"),
+            "flagged/ must not carry a stage:notes stamp"
+        );
+    }
 }

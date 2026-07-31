@@ -1201,6 +1201,34 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
 
+    static JOURNAL_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct TestContext {
+        _journal_guard: std::sync::MutexGuard<'static, ()>,
+        _journal_tmp: tempfile::TempDir,
+        suite: tempfile::TempDir,
+    }
+
+    impl TestContext {
+        fn path(&self) -> &std::path::Path {
+            self.suite.path()
+        }
+    }
+
+    fn test_context() -> TestContext {
+        let guard = JOURNAL_ENV_LOCK.lock().unwrap();
+        let journal_tmp = tempfile::tempdir().unwrap();
+        // SAFETY: serialized by `JOURNAL_ENV_LOCK`.
+        unsafe {
+            std::env::set_var("EINMO_JOURNAL_DIR", journal_tmp.path());
+        }
+        TestContext {
+            _journal_guard: guard,
+            _journal_tmp: journal_tmp,
+            suite: tempfile::tempdir().unwrap(),
+        }
+    }
+
     fn write_input(dir: &std::path::Path, rel: &str, content: &str) {
         let path = dir.join("input").join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1214,14 +1242,14 @@ mod tests {
         }
     }
 
-    fn seeded_suite() -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().unwrap();
-        write_input(tmp.path(), "a.foo", "{1+1;}");
-        write_input(tmp.path(), "b.foo", "{2+2;}");
-        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+    fn seeded_suite() -> TestContext {
+        let ctx = test_context();
+        write_input(ctx.path(), "a.foo", "{1+1;}");
+        write_input(ctx.path(), "b.foo", "{2+2;}");
+        let config = TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output);
         let suite = crate::einmo_suite::EinmoSuite::new(config);
         suite.evaluate_all(&Echo).unwrap();
-        tmp
+        ctx
     }
 
     fn promote_output_to_checked(dir: &std::path::Path) {
@@ -1756,6 +1784,82 @@ mod tests {
         assert_eq!(resumed.decision(&id), None);
     }
 
+    #[test]
+    fn resume_reconstructs_multiple_decisions_and_undecides() {
+        let tmp = seeded_suite();
+        let a = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let b = EinmoId::from_input_rel(std::path::Path::new("b.foo")).unwrap();
+        let session_id = {
+            let review = EinmoReview::open(tmp.path());
+            review.decide(a.clone(), Decision::Promote { to: Stage::Checked });
+            review.decide(b.clone(), Decision::Skip);
+            review.decide(
+                a.clone(),
+                Decision::Flag {
+                    stage: Stage::Output,
+                    reason: "changed my mind".into(),
+                },
+            );
+            review.undecide(&b);
+            review.session_id().to_string()
+        };
+
+        let resumed = EinmoReview::resume(tmp.path(), &session_id, ReviewOpts::default()).unwrap();
+        assert_eq!(
+            resumed.decision(&a),
+            Some(Decision::Flag {
+                stage: Stage::Output,
+                reason: "changed my mind".into(),
+            }),
+            "the last decide for a.foo must win (replace-not-stack)"
+        );
+        assert_eq!(
+            resumed.decision(&b),
+            None,
+            "undecide must clear b.foo even after a decide"
+        );
+    }
+
+    #[test]
+    fn resume_tolerates_a_truncated_journal_tail() {
+        let tmp = seeded_suite();
+        let a = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let b = EinmoId::from_input_rel(std::path::Path::new("b.foo")).unwrap();
+        let session_id = {
+            let review = EinmoReview::open(tmp.path());
+            review.decide(a.clone(), Decision::Promote { to: Stage::Checked });
+            review.decide(b.clone(), Decision::Skip);
+            review.session_id().to_string()
+        };
+
+        // Simulate a crash mid-write: append a truncated JSON line.
+        let journal_path = crate::journal::journal_path(&session_id);
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&journal_path)
+                .unwrap();
+            writeln!(
+                f,
+                "{{\"timestamp\":\"2026-01-01T00:00:00Z\",\"event\":\"decide\""
+            )
+            .unwrap();
+        }
+
+        let resumed = EinmoReview::resume(tmp.path(), &session_id, ReviewOpts::default()).unwrap();
+        assert_eq!(
+            resumed.decision(&a),
+            Some(Decision::Promote { to: Stage::Checked }),
+            "the valid decide for a.foo must survive a truncated tail"
+        );
+        assert_eq!(
+            resumed.decision(&b),
+            Some(Decision::Skip),
+            "the valid decide for b.foo must survive a truncated tail"
+        );
+    }
+
     // EIMP-1 S.5: soft claims.
 
     #[test]
@@ -1899,7 +2003,7 @@ mod tests {
         assert!(!via_cli.is_empty());
     }
 
-    fn seeded_suite_with_same_content() -> tempfile::TempDir {
+    fn seeded_suite_with_same_content() -> TestContext {
         seeded_suite()
     }
 
@@ -2175,6 +2279,54 @@ mod tests {
     }
 
     #[test]
+    fn execute_retract_from_verified_removes_only_verified() {
+        let tmp = seeded_suite();
+        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        transitions::promote(
+            &config,
+            Stage::Output,
+            Stage::Checked,
+            &KeySource::from_passphrase(""),
+            None,
+            None,
+        )
+        .unwrap();
+        transitions::promote(
+            &config,
+            Stage::Checked,
+            Stage::Verified,
+            &KeySource::from_passphrase(""),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let review = EinmoReview::open(tmp.path());
+        let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        review.decide(
+            id.clone(),
+            Decision::Retract {
+                from: Stage::Verified,
+            },
+        );
+        let plan = review.plan();
+        let keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: None,
+        };
+        let report = review.execute(&plan, &keys).unwrap();
+        assert_eq!(report.executed.len(), 1);
+        assert!(
+            !tmp.path().join("verified/a.foo.einmo").exists(),
+            "verified artifact must be removed"
+        );
+        assert!(
+            tmp.path().join("checked/a.foo.einmo").exists(),
+            "checked baseline must survive — verified is the top of the chain"
+        );
+    }
+
+    #[test]
     fn execute_flag_moves_and_writes_advisory_no_signing() {
         let tmp = seeded_suite();
         let review = EinmoReview::open(tmp.path());
@@ -2365,5 +2517,314 @@ mod tests {
         };
         let err = review.execute(&plan, &keys).unwrap_err();
         assert!(matches!(err, EinmoError::NoKey(_)));
+    }
+
+    #[test]
+    fn concurrent_execute_calls_do_not_corrupt_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        for i in 0..4 {
+            write_input(tmp.path(), &format!("case{i}.foo"), "{1+1;}");
+        }
+        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        suite.evaluate_all(&Echo).unwrap();
+
+        let review = Arc::new(EinmoReview::open(tmp.path()));
+        for i in 0..4 {
+            let id =
+                EinmoId::from_input_rel(std::path::Path::new(&format!("case{i}.foo"))).unwrap();
+            review.decide(id, Decision::Promote { to: Stage::Checked });
+        }
+
+        let keys = Arc::new(SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: None,
+        });
+
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let review = Arc::clone(&review);
+                let keys = Arc::clone(&keys);
+                thread::spawn(move || {
+                    let plan = review.plan();
+                    review.execute(&plan, &keys)
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert!(
+            results.iter().all(|r| r.is_ok()),
+            "both concurrent executes must succeed: {results:?}"
+        );
+
+        for i in 0..4 {
+            let path = tmp
+                .path()
+                .join("checked")
+                .join(format!("case{i}.foo.einmo"));
+            assert!(path.exists(), "case{i} must have been promoted");
+            let file = EinmoFile::from_file(&path).unwrap();
+            assert!(file.chain_valid(), "case{i} stamp chain must be valid");
+        }
+    }
+
+    /// EIMP-1 comprehensive integration test: a scripted multi-reviewer
+    /// end-to-end session over a 3-case fixture suite.
+    ///
+    /// Exercises:
+    /// 1. Setup — 3 cases, all output promoted to checked.
+    /// 2. Reviewer A — promotes `a.foo` to verified.
+    /// 3. Reviewer B — promotes `b.foo` to verified (different session, same
+    ///    passphrase — both stamps coexist).
+    /// 4. Crash-resume — a third session decides `c.foo` then drops without
+    ///    executing; `resume` reconstructs the pending decision from the
+    ///    journal.
+    /// 5. Drift detection — `c.foo`'s output is regenerated; `refresh()`
+    ///    reports it; fresh decide + execute succeeds.
+    /// 6. Stamp chain verification — every `.einmo` in `checked/` and
+    ///    `verified/` passes `EinmoFile::from_file`; all three verified
+    ///    files carry a `stage:verified` stamp.
+    /// 7. Journal reconstruction — the resumed session's journal contains
+    ///    the expected decide and execute-batch events.
+    fn collect_einmo_files_recursive(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_einmo_files_recursive(&path, out);
+                } else if path.extension().is_some_and(|e| e == "einmo") {
+                    out.push(path);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn comprehensive_multi_reviewer_end_to_end() {
+        // ── Step 1: fixture suite with 3 cases, all promoted to checked ──
+
+        let ctx = test_context();
+        write_input(ctx.path(), "a.foo", "{1+1;}");
+        write_input(ctx.path(), "b.foo", "{2+2;}");
+        write_input(ctx.path(), "c.foo", "{3+3;}");
+        let config = TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output);
+        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        suite.evaluate_all(&Echo).unwrap();
+        promote_output_to_checked(ctx.path());
+
+        let passphrase = "comprehensive-reviewer";
+        let a = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let b = EinmoId::from_input_rel(std::path::Path::new("b.foo")).unwrap();
+        let c = EinmoId::from_input_rel(std::path::Path::new("c.foo")).unwrap();
+
+        let verified_keys = SignerSet {
+            to_checked: KeySource::from_passphrase(""),
+            to_verified: Some(KeySource::from_passphrase(passphrase)),
+        };
+
+        // ── Step 2: Reviewer A promotes a.foo to verified ──
+
+        let session_a_id;
+        {
+            let review_a = EinmoReview::open(ctx.path());
+            review_a.decide(
+                a.clone(),
+                Decision::Promote {
+                    to: Stage::Verified,
+                },
+            );
+            let report = review_a.execute(&review_a.plan(), &verified_keys).unwrap();
+            assert_eq!(report.executed.len(), 1);
+            assert!(report.executed.iter().any(|e| e.id == a));
+            session_a_id = review_a.session_id().to_string();
+        }
+
+        // ── Step 3: Reviewer B promotes b.foo to verified (different session) ──
+
+        let session_b_id;
+        {
+            let review_b = EinmoReview::open(ctx.path());
+            review_b.decide(
+                b.clone(),
+                Decision::Promote {
+                    to: Stage::Verified,
+                },
+            );
+            let report = review_b.execute(&review_b.plan(), &verified_keys).unwrap();
+            assert_eq!(report.executed.len(), 1);
+            assert!(report.executed.iter().any(|e| e.id == b));
+            session_b_id = review_b.session_id().to_string();
+        }
+
+        // Sessions A and B must be distinct — the whole point is two
+        // independent reviewers.
+        assert_ne!(session_a_id, session_b_id);
+
+        // Both verified files exist with valid stamp chains and carry a
+        // stage:verified stamp — the multi-reviewer coexistence proof.
+        let a_verified = EinmoFile::from_file(&ctx.path().join("verified/a.foo.einmo")).unwrap();
+        assert!(a_verified.chain_valid(), "a.foo chain must be valid");
+        assert!(
+            a_verified
+                .stamps()
+                .entries()
+                .iter()
+                .any(|s| s.key() == Stage::Verified.stamp_key()),
+            "a.foo must carry a stage:verified stamp"
+        );
+
+        let b_verified = EinmoFile::from_file(&ctx.path().join("verified/b.foo.einmo")).unwrap();
+        assert!(b_verified.chain_valid(), "b.foo chain must be valid");
+        assert!(
+            b_verified
+                .stamps()
+                .entries()
+                .iter()
+                .any(|s| s.key() == Stage::Verified.stamp_key()),
+            "b.foo must carry a stage:verified stamp"
+        );
+
+        // ── Step 4: crash-resume — decide c.foo then drop without execute ──
+
+        let crash_session_id;
+        {
+            let crash_review = EinmoReview::open(ctx.path());
+            crash_review.decide(
+                c.clone(),
+                Decision::Promote {
+                    to: Stage::Verified,
+                },
+            );
+            crash_session_id = crash_review.session_id().to_string();
+            // crash_review drops here — simulates a crash with c.foo pending
+        }
+
+        let resumed =
+            EinmoReview::resume(ctx.path(), &crash_session_id, ReviewOpts::default()).unwrap();
+        assert_eq!(
+            resumed.decision(&c),
+            Some(Decision::Promote {
+                to: Stage::Verified
+            }),
+            "resume must reconstruct the pending c.foo decision from the journal"
+        );
+
+        // ── Step 5: drift detection — regenerate c.foo, refresh, re-decide ──
+
+        write_input(ctx.path(), "c.foo", "{99+99;}");
+        let config = TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output);
+        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        suite
+            .regenerate_output(std::path::Path::new("c.foo"), &Echo)
+            .unwrap();
+        // Re-promote output→checked so the checked baseline (the decision's
+        // basis for a checked→verified promotion) reflects the new content.
+        transitions::promote(
+            &TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output),
+            Stage::Output,
+            Stage::Checked,
+            &KeySource::from_passphrase(""),
+            Some("c.foo"),
+            None,
+        )
+        .unwrap();
+
+        let drifted = resumed.refresh();
+        assert!(
+            drifted.contains(&c),
+            "refresh must report c.foo as drifted after content change"
+        );
+
+        // Decide fresh against the new output and execute.
+        resumed.decide(
+            c.clone(),
+            Decision::Promote {
+                to: Stage::Verified,
+            },
+        );
+        let report = resumed.execute(&resumed.plan(), &verified_keys).unwrap();
+        assert_eq!(report.executed.len(), 1);
+        assert!(report.executed.iter().any(|e| e.id == c));
+
+        // ── Step 6: stamp chain verification — every .einmo is valid ──
+
+        for stage_dir in &["checked", "verified"] {
+            let dir = ctx.path().join(stage_dir);
+            if !dir.exists() {
+                continue;
+            }
+            let mut einmo_files: Vec<std::path::PathBuf> = Vec::new();
+            collect_einmo_files_recursive(&dir, &mut einmo_files);
+            einmo_files.sort();
+            for path in &einmo_files {
+                let file = EinmoFile::from_file(path).unwrap();
+                assert!(
+                    file.chain_valid(),
+                    "{}/{} stamp chain must be valid",
+                    stage_dir,
+                    path.strip_prefix(ctx.path()).unwrap_or(path).display()
+                );
+            }
+        }
+
+        // Specific: all three verified files carry stage:verified.
+        let c_verified = EinmoFile::from_file(&ctx.path().join("verified/c.foo.einmo")).unwrap();
+        assert!(c_verified.chain_valid(), "c.foo chain must be valid");
+        assert!(
+            c_verified
+                .stamps()
+                .entries()
+                .iter()
+                .any(|s| s.key() == Stage::Verified.stamp_key()),
+            "c.foo must carry a stage:verified stamp"
+        );
+        assert_eq!(
+            c_verified.section("OUTPUT").unwrap().body(),
+            "{99+99;}",
+            "c.foo verified content must reflect the regenerated output"
+        );
+
+        // ── Step 7: journal reconstruction — verify expected events ──
+
+        let journal_lines =
+            crate::journal::Journal::replay(&crate::journal::journal_path(&crash_session_id));
+
+        // Must contain SessionOpen for the crash session.
+        assert!(
+            journal_lines.iter().any(|l| matches!(
+                &l.event,
+                crate::journal::JournalEvent::SessionOpen { session, .. }
+                    if session == &crash_session_id
+            )),
+            "journal must contain SessionOpen for the crash session"
+        );
+
+        // At least two Decide events for c.foo: the crash session's original
+        // decide, the resumed session's replayed decide, and the fresh decide
+        // after drift.
+        let decide_for_c = journal_lines
+            .iter()
+            .filter(|l| {
+                matches!(
+                    &l.event,
+                    crate::journal::JournalEvent::Decide { id, .. } if id == c.as_str()
+                )
+            })
+            .count();
+        assert!(
+            decide_for_c >= 2,
+            "journal must contain at least 2 Decide events for c.foo, found {decide_for_c}"
+        );
+
+        // Must contain an ExecuteBatch that actually executed c.foo.
+        assert!(
+            journal_lines.iter().any(|l| matches!(
+                &l.event,
+                crate::journal::JournalEvent::ExecuteBatch { executed, .. }
+                    if executed.contains(&c.as_str().to_string())
+            )),
+            "journal must contain an ExecuteBatch with c.foo in executed"
+        );
     }
 }

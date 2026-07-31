@@ -51,3 +51,73 @@ cargo run -p einmo --bin einmo -- promote output to checked suites/javascript/da
 
 The passphrase is read from `day.1/einmo.toml` automatically — no
 `--passphrase` flag needed on the command line.
+
+## Reviewing with einmo-review-server
+
+The review server (`einmo-review-server`) provides backend capabilities —
+worklist management, decision tracking, verified-body caching, and
+execution — exposed as a JSON API over unix-domain sockets. It supports
+three review modes: **Full** (every case), **NewOrBroken** (only
+mismatches), and **Random** (shuffled order for sampling).
+
+The TUI client script (`einmo_review_client.sh`) is the user-facing tool.
+It launches its own private server, passes the mode, drives the review in
+vim, and tears everything down on exit.
+
+### Reviewing zweimomo suites
+
+```bash
+# Full review of day.1 (every case):
+./scripts/einmo_review_client.sh -p suites/javascript/day.1
+
+# Only new or broken cases (skip anything already matching):
+./scripts/einmo_review_client.sh -p suites/javascript/day.1 -n
+
+# Filter to cases matching a substring:
+./scripts/einmo_review_client.sh -p suites/javascript/day.1 "alarm"
+```
+
+### Vim keybindings
+
+| Key | Action |
+|---|---|
+| `c` | Promote to checked |
+| `v` | Promote to verified |
+| `f` | Flag with a reason |
+| `k` | Kick (retract from highest stage) |
+| `u` | Undo decision |
+| `\d` | Fetch server-side diff hunks (output vs checked) |
+| `\D` | Toggle vim's built-in diff mode across all panes |
+| `Enter` | Next case |
+| `q` | Quit and show the execution plan |
+
+At the end of the pass, the script shows the plan and asks you to type
+`PROMOTE` to execute all pending promotions. If any promotion targets
+`verified`, you'll be prompted for a passphrase.
+
+### Session persistence and crash recovery
+
+Every session writes an append-only JSONL journal. If the process crashes
+mid-review, resume with `--session <id>` — the journal replays every
+decision and the session picks up where it left off. The session id is
+printed to stderr on every command.
+
+### Multi-reviewer accumulation
+
+Two reviewers can work the same suite concurrently with different session
+ids. Each reviewer's promotions are independently signed — multiple
+`stage:verified` stamps on the same file are accumulated attestation, not
+a conflict. See `EIMP-1.md` §S.4a for the content-then-key decision
+table.
+
+---
+
+## Last Updated
+
+**Date**: 2026-07-31
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Added "Reviewing with einmo-review-server" section documenting
+the review architecture (server as backend with mode capabilities, TUI as
+user-facing tool), TUI client workflow for zweimomo suites, vim
+keybindings, session persistence, crash recovery, and multi-reviewer
+accumulation.

@@ -1,0 +1,10 @@
+{
+  "id": "T-bb615f0f-c2fe-4ce8-8581-db81b4e9da2a",
+  "subject": "Phase D: Wire new client to diff/ReviewMode/claims",
+  "description": "Wire einmo_review_client.sh to surface diff hunks, ReviewMode selection, and claims from Phase A/C additions.",
+  "status": "pending",
+  "activeForm": "Wiring client to new features",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_04a1d6ad8ffe9lFXK9db78cgAJ"
+}

@@ -57,7 +57,10 @@ EIMPs progress through statuses: `Draft` → `Brewing` → `Final` →
 `Implementing` → complete.
 
 Unlike FOOP, EIMP has **no worktree/per-feature-branch stage** — einmo is
-small enough that plans execute directly on `main` with regular commits.
+small enough that plans execute directly on `jia` with regular commits.
+
+> **Primary branch is `jia`, not `main`.** The `main` branch has no meaning
+> in this repository. All work, commits, and EIMP execution happen on `jia`.
 
 - **Creating or planning an EIMP** → load the `eimp-write-plan` skill.
 - **Finding, executing, backburnering, cancelling, or maintaining an
@@ -114,9 +117,9 @@ convention `foolish-rust` (einmo's origin project) uses.
 
 ## Last Updated
 
-**Date**: 2026-07-29
-**Updated By**: Claude Code (Sonnet 5)
-**Changes**: Created this file when porting the EIMP process, `eimp.md`,
-`rust_instructions.md`, and the `eimp-write-plan`/`eimp-use-maintain`
-skills from the `foolish-rust` workspace into einmo's own standalone
+**Date**: 2026-07-31
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Updated primary branch from `main` to `jia` throughout (branch
+name correction per maintainer). Added journal isolation to test modules to
+prevent unbounded log accumulation.
 repository.

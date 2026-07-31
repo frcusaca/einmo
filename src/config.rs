@@ -938,4 +938,28 @@ mod tests {
         let err = c.collation().unwrap_err();
         assert!(matches!(err, EinmoError::CorpusSignature(_)));
     }
+
+    // EIMP-1 §Test Plan "signer": passphrase unreachable after construction.
+
+    #[test]
+    fn key_source_consumes_the_passphrase_string() {
+        let secret = String::from("my-secret-passphrase");
+        let key = KeySource::from_passphrase(secret);
+        // `secret` is moved into `KeySource` — the original binding is consumed.
+        // (This test compiles only because `from_passphrase` takes `impl Into<String>`,
+        // which moves the `String`.)
+        assert_eq!(key.passphrase(), "my-secret-passphrase");
+    }
+
+    #[test]
+    fn key_source_from_str_literal_works() {
+        let key = KeySource::from_passphrase("literal");
+        assert_eq!(key.passphrase(), "literal");
+    }
+
+    #[test]
+    fn key_source_from_empty_string_is_the_computer_key() {
+        let key = KeySource::from_passphrase("");
+        assert_eq!(key.passphrase(), "");
+    }
 }

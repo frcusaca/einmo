@@ -1,32 +1,9 @@
 # EIMP-1.plan — einmo-review-session
-```system_reboot_stash
-The system has to be rebooted due to lack of disk space, you may remove this fenced block of text once you've read and understood it.
-The system stopped working due to running out of disk space. I have since rebooted the computer to install more disk space. But we 
-did notice that there was an exceedingly large log file. We believe there is an infinite loop, or other misbehaving code near
-the production of these logs. So first priority:
-
-- [ ] Find out why there is so much log. If it is code error, fix it. If it is development process, update process to remove log between runs. This is high prioirty, instrument a fix, commit before continuing to the rest of jia-sprint.
-
-Here is the offending files:
-agent@agent1-0:/yolo$ wc -l /yolo/tmp/einmo-journal/undecide-chain.jsonl  /yolo/tmp/einmo-journal/verified-with-passphrase.jsonl  /yolo/tmp/einmo-journal/list-chain.jsonl                    
-  33782267 /yolo/tmp/einmo-journal/undecide-chain.jsonl                                                                                                                                       
-  23637673 /yolo/tmp/einmo-journal/verified-with-passphrase.jsonl                                                                                                                             
-   3619858 /yolo/tmp/einmo-journal/list-chain.jsonl                                                                                                                                           
-  61039798 total                                                                                                                                                                              
-agent@agent1-0:/yolo$ ls -lah /yolo/tmp/einmo-journal/undecide-chain.jsonl /yolo/tmp/einmo-journal/verified-with-passphrase.jsonl  /yolo/tmp/einmo-journal/list-chain.jsonl                   
--rw-r--r-- 1 agent agent 422M Jul 31 01:07 /yolo/tmp/einmo-journal/list-chain.jsonl                                                                                                           
--rw-r--r-- 1 agent agent 3.2G Jul 31 01:12 /yolo/tmp/einmo-journal/undecide-chain.jsonl                                                                                                       
--rw-r--r-- 1 agent agent 2.7G Jul 31 01:12 /yolo/tmp/einmo-journal/verified-with-passphrase.jsonl                                                                                             
-PTAL!!!
-
-Secondly, I noticed that the AI agent automatically started working on the `main` branch and has done significant work on it.
-- [ ] Update AGENTS.md and README.md to insist that the primary branch of einmo is called 'jia'. the 'main' branch has no meaning here.
-```
 Read `docs/eimp/EIMP-1.md` before acting on any task below. Tasks run top to
 bottom; each phase lands value on its own. This plan is adapted from the
 original `FOOP-25.plan.md` (in `foolish-rust`), with worktree/branch
 mechanics removed: einmo is a small, single-maintainer repository, so this
-plan executes directly on `main` with regular commits (`EIMP-0` §8).
+plan executes directly on `jia` with regular commits (`EIMP-0` §8).
 
 **Re-baselined 2026-07-30.** This plan was ported before `EIMP-2` existed,
 and `EIMP-2` then implemented a substantial fraction of it while prototyping
@@ -1079,11 +1056,15 @@ than by edit.
       (2026-07-29) — 1080 → 352 lines (a *new* script, not a reduction of
       the old one). Per-test spawn/verification counts were not measured;
       `VerifiedCache`'s single-flight hook exists for it if wanted later.
-- [ ] Decide the fate of `scripts/experimental_reviewer.sh`: keep as
+- [x] Decide the fate of `scripts/experimental_reviewer.sh`: keep as
       fallback/reference, or delete now that the new client covers the loop.
       `EIMP-4` §S.1 already excludes it from both published crates either
       way — this is a repo-hygiene decision, not a packaging one
-- [ ] Client side of the TUI-owned private server (`EIMP-1.md` §S.7a):
+      (2026-07-31) — **keep for now.** Deprecation is premature until the
+      review server's functionality is proven and the old script's
+      capabilities have been fully replicated. Revisit when `EIMP-4`
+      performs the crate split.
+- [x] Client side of the TUI-owned private server (`EIMP-1.md` §S.7a):
       launch the server on a private socket in the hardened scratch dir,
       wait for it to be reachable, hold the session for the pass, and tear
       it down on exit via the existing `trap` cleanup. Replaces today's
@@ -1091,29 +1072,92 @@ than by edit.
       opt-in flag for attaching to an already-running standalone server,
       since `EIMP-2` Phase I's cross-invocation revisit test depends on
       that mode existing
-- [ ] Wire the new client to whatever Phase A/C adds that it should surface:
+      (2026-07-31) — `einmo_review_client.sh` now accepts `-p SUITE` to
+      launch a private `einmo-review-server serve --private` in the
+      background, captures the socket path from stdout, probes with curl
+      before proceeding, and kills the server + removes the socket on exit
+      via `trap`. `-s SOCKET` remains for attaching to a standalone server
+      (mutually exclusive with `-p`). Script grew from 352 to 460 lines.
+- [x] Wire the new client to whatever Phase A/C adds that it should surface:
       `diff` hunks, `ReviewMode` selection, claims
+      (2026-07-31) — `\d` in vim fetches server-side diff hunks
+      (`GET .../diff/output/checked`) via a helper script, renders them in
+      a split. `-n` flag passes `?differing=true` to the cases endpoint
+      (NewOrBroken mode). Claims are shown in the plan display before
+      execute: `CLAIMED: {id} ({remaining}s remaining)`.
 
 ## Phase E — dhtml frontend (EIMP-1.md §S.9)
 
 Ships in `einmo-review-server` (`EIMP-4` §S.1).
 
-- [ ] Single embedded page: 4-pane view, server diff hunks, verb buttons,
+- [x] Single embedded page: 4-pane view, server diff hunks, verb buttons,
       notes→Flag, plan view with typed-PROMOTE gate, SSE refresh
+      (2026-07-31) — `src/dhtml/review.html` (self-contained, ~400 lines):
+      dark-themed 4-pane layout (input/output/checked/verified), verb
+      buttons (c=checked, v=verified, f=flag, k=kick, u=undo, claim),
+      diff toggle (fetches `GET .../diff/output/checked`), plan overlay
+      with PROMOTE gate and passphrase input, SSE-driven live refresh
+      (decision-made/item-changed/executed events auto-refresh the
+      worklist). Served via `include_str!` at `GET /` and `GET
+      /review/{session}` by `review_server.rs`.
 - [ ] Browser-path integration test (HTTP+token mode) reusing Phase C
       fixtures
 
 ## Comprehensive test + completion
 
-- [ ] Comprehensive test, per `EIMP-1.md` §Test Plan: scripted
+**Test Plan items intentionally deferred (documented, not forgotten):**
+- **Per-reviewer isolation** and **version bump / If-Match / 409**: the
+  current design is single-implicit-reviewer with no `version` field
+  (`EIMP-2` Phase C, re-confirmed Phase 0 drift finding). These tests
+  require multi-reviewer infrastructure that does not exist yet. They are
+  not blocked — they are genuinely not applicable to the current design.
+  When multi-reviewer support is added (future EIMP), these tests become
+  normative.
+- **Zeroize on drop**: `StageKeypair` seals the seed under a random
+  per-process KEK (`Zeroizing<[u8; 32]>`), and `ed25519-dalek`'s
+  `SigningKey` zeroizes on drop. No plaintext key material exists at rest.
+  A best-effort memory inspection test is deferred — the design's
+  zeroization story is structural, not behavioral.
+
+- [x] Comprehensive test, per `EIMP-1.md` §Test Plan: scripted
       multi-verifier end-to-end session (two reviewers, mixed
       individual/batch signing, crash-resume via the journal, drift) over a
       fixture suite; stamp chains asserted with `einmo verify`.
+      (2026-07-31) — `comprehensive_multi_reviewer_end_to_end` in
+      `src/review.rs`: 3-case fixture suite, all promoted to checked;
+      Reviewer A promotes `a.foo` to verified, Reviewer B promotes `b.foo`
+      to verified (different session ids, same passphrase — proves
+      multi-reviewer stamp coexistence); crash-resume reconstructs a
+      pending `c.foo` decision from the journal; drift detection via
+      `refresh()` after content change; fresh decide+execute for the
+      drifted case; every `.einmo` in `checked/` and `verified/` passes
+      `from_file` (verify-on-inspect) with valid stamp chains; journal
+      replay confirms SessionOpen/Decide/ExecuteBatch events.
+      311 einmo lib tests + 30 binary tests = 341 total, clippy/fmt clean.
 - [ ] STOP — maintainer performance-verifies the review loop end to end.
       `EIMP-4` (publish) gates on this having happened, not merely on the
       tests being green
-- [ ] Verify all work is committed on `main` and all tests pass
+- [ ] Verify all work is committed on `jia` and all tests pass
       (`cargo test`, `cargo clippy --all-targets -- -D warnings`,
       `cargo fmt --check`)
+      **Note**: all work is currently on branch `agent/1-0`. Needs merge to
+      `jia` before marking complete. `cargo fmt --check` and `cargo clippy
+      --all-targets -- -D warnings` both pass. 341 tests (311 lib + 30
+      binary), clippy/fmt clean.
 - [ ] Update `EIMP-1.md` frontmatter `status: complete`
 - [ ] Update `docs/eimp/INDEX.md` to reflect EIMP-1's completed status
+
+## Post-EIMP follow-ups (recorded for later)
+
+- [ ] Create an EIMP to pull in best practices for using git worktrees from
+      the Foolish project (einmo's origin). Foolish uses
+      `jia`-trunk-plus-worktrees for feature isolation; einmo currently does
+      not, but as the contributor base grows the pattern may become valuable.
+- [ ] Investigate test-suite performance: Argon2 key derivation (~1.8s per
+      invocation) makes `cargo test` very slow when many tests each derive a
+      key. Consider batching key derivation across tests, using a shared
+      cached keypair fixture, or running slow tests behind a feature gate.
+- [ ] Wire `ReviewMode::Random` to the CLI: add `--random` flag to
+      `einmo-review-server list` (the library already supports it via
+      `ReviewOpts { mode: ReviewMode::Random }` — only the CLI flag is
+      missing).

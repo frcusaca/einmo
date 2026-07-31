@@ -1,0 +1,65 @@
+2026-07-31T01:53:33.566088Z  INFO rust_mcp_server: Starting Rust MCP Server: Args { log_level: "info", log_file: Some("mcp.log"), disabled_tools: [], workspace: None, registry: None, generate_docs: None, no_recommendations: false }
+2026-07-31T01:53:33.566448Z  INFO rust_mcp_server: Server version: 0.4.0.
+2026-07-31T01:53:33.566456Z  INFO rust_mcp_server: RMCP crate version: unknown
+2026-07-31T01:53:33.566461Z  INFO rust_mcp_server: No workspace root specified, workspace auto-detection enabled
+2026-07-31T01:53:33.575447Z  INFO serve_inner: rmcp::service: Service initialized as server peer_info=Some(InitializeRequestParams { meta: None, protocol_version: ProtocolVersion("2025-11-25"), capabilities: ClientCapabilities { experimental: None, extensions: None, roots: Some(RootsCapabilities { list_changed: None }), sampling: None, elicitation: None, tasks: None }, client_info: Implementation { name: "opencode", title: None, version: "1.18.10", description: None, icons: None, website_url: None } })
+2026-07-31T01:53:33.609375Z  INFO serve_inner: rmcp::service: received notification notification=InitializedNotification(NotificationNoParam { method: InitializedNotificationMethod, extensions: Extensions })
+2026-07-31T01:53:33.609491Z  INFO serve_inner: rust_mcp_server::rmcp_server: MCP client initialized
+2026-07-31T01:53:33.609513Z  INFO serve_inner: rust_mcp_server::workspace: Checking current working directory for Cargo project: Some("/yolo/einmo")
+2026-07-31T01:53:33.609529Z  INFO serve_inner: rust_mcp_server::workspace: Cargo.toml found in CWD (/yolo/einmo), using it as workspace root (no auto-detection needed)
+2026-07-31T01:53:35.231507Z  INFO serve_inner: rmcp::service: input stream terminated
+2026-07-31T01:53:35.231634Z  INFO serve_inner: rmcp::service: serve finished quit_reason=Closed
+2026-07-31T01:53:35.231740Z  INFO rust_mcp_server: Server closed normally
+2026-07-31T01:55:05.136413Z  INFO rust_mcp_server: Starting Rust MCP Server: Args { log_level: "info", log_file: Some("mcp.log"), disabled_tools: [], workspace: None, registry: None, generate_docs: None, no_recommendations: false }
+2026-07-31T01:55:05.136438Z  INFO rust_mcp_server: Server version: 0.4.0.
+2026-07-31T01:55:05.136442Z  INFO rust_mcp_server: RMCP crate version: unknown
+2026-07-31T01:55:05.136444Z  INFO rust_mcp_server: No workspace root specified, workspace auto-detection enabled
+2026-07-31T01:55:05.164880Z  INFO serve_inner: rmcp::service: Service initialized as server peer_info=Some(InitializeRequestParams { meta: None, protocol_version: ProtocolVersion("2025-11-25"), capabilities: ClientCapabilities { experimental: None, extensions: None, roots: Some(RootsCapabilities { list_changed: None }), sampling: None, elicitation: None, tasks: None }, client_info: Implementation { name: "opencode", title: None, version: "1.18.10", description: None, icons: None, website_url: None } })
+2026-07-31T01:55:05.193645Z  INFO serve_inner: rmcp::service: received notification notification=InitializedNotification(NotificationNoParam { method: InitializedNotificationMethod, extensions: Extensions })
+2026-07-31T01:55:05.193739Z  INFO serve_inner: rust_mcp_server::rmcp_server: MCP client initialized
+2026-07-31T01:55:05.193762Z  INFO serve_inner: rust_mcp_server::workspace: Checking current working directory for Cargo project: Some("/yolo/einmo")
+2026-07-31T01:55:05.193783Z  INFO serve_inner: rust_mcp_server::workspace: Cargo.toml found in CWD (/yolo/einmo), using it as workspace root (no auto-detection needed)
+2026-07-31T02:55:57.843526Z  INFO rust_mcp_server::command: Executing command for cargo-check: cargo check --all-targets --locked --quiet
+2026-07-31T02:56:01.800847Z  INFO rust_mcp_server::command: Command executed successfully for cargo-check
+stdout=
+
+
+stderr=
+
+2026-07-31T02:56:03.704028Z  INFO serve_inner: rmcp::service: received notification notification=CancelledNotification(Notification { method: CancelledNotificationMethod, params: CancelledNotificationParam { request_id: Some(Number(2)), reason: Some("AbortError: The operation was aborted."), meta: None }, extensions: Extensions })
+2026-07-31T02:56:09.639343Z  INFO rust_mcp_server::command: Executing command for cargo-clippy: cargo clippy --all-targets --locked --quiet
+2026-07-31T02:56:14.729928Z  INFO rust_mcp_server::command: Command executed successfully for cargo-clippy
+stdout=
+
+
+stderr=
+
+2026-07-31T02:56:15.083944Z  INFO serve_inner: rmcp::service: received notification notification=CancelledNotification(Notification { method: CancelledNotificationMethod, params: CancelledNotificationParam { request_id: Some(Number(3)), reason: Some("AbortError: The operation was aborted."), meta: None }, extensions: Extensions })
+2026-07-31T03:22:10.137720Z  INFO rust_mcp_server::command: Executing command for cargo-fmt: cargo fmt --check --quiet
+2026-07-31T03:22:10.425574Z  INFO rust_mcp_server::command: Command executed successfully for cargo-fmt
+stdout=
+
+
+stderr=
+
+2026-07-31T03:22:10.642619Z  INFO rust_mcp_server::command: Executing command for cargo-clippy: cargo clippy --all-targets --locked --quiet
+2026-07-31T03:22:15.199501Z  INFO rust_mcp_server::command: Command executed successfully for cargo-clippy
+stdout=
+
+
+stderr=
+
+2026-07-31T03:22:15.417477Z  INFO serve_inner: rmcp::service: received notification notification=CancelledNotification(Notification { method: CancelledNotificationMethod, params: CancelledNotificationParam { request_id: Some(Number(4)), reason: Some("AbortError: The operation was aborted."), meta: None }, extensions: Extensions })
+2026-07-31T03:22:15.417568Z  INFO serve_inner: rmcp::service: received notification notification=CancelledNotification(Notification { method: CancelledNotificationMethod, params: CancelledNotificationParam { request_id: Some(Number(5)), reason: Some("AbortError: The operation was aborted."), meta: None }, extensions: Extensions })
+2026-07-31T14:23:19.610758Z  INFO serve_inner: rmcp::service: input stream terminated
+2026-07-31T14:23:19.610863Z  INFO serve_inner: rmcp::service: serve finished quit_reason=Closed
+2026-07-31T14:23:19.610948Z  INFO rust_mcp_server: Server closed normally
+2026-07-31T14:23:31.249496Z  INFO rust_mcp_server: Starting Rust MCP Server: Args { log_level: "info", log_file: Some("mcp.log"), disabled_tools: [], workspace: None, registry: None, generate_docs: None, no_recommendations: false }
+2026-07-31T14:23:31.249517Z  INFO rust_mcp_server: Server version: 0.4.0.
+2026-07-31T14:23:31.249520Z  INFO rust_mcp_server: RMCP crate version: unknown
+2026-07-31T14:23:31.249522Z  INFO rust_mcp_server: No workspace root specified, workspace auto-detection enabled
+2026-07-31T14:23:31.276223Z  INFO serve_inner: rmcp::service: Service initialized as server peer_info=Some(InitializeRequestParams { meta: None, protocol_version: ProtocolVersion("2025-11-25"), capabilities: ClientCapabilities { experimental: None, extensions: None, roots: Some(RootsCapabilities { list_changed: None }), sampling: None, elicitation: None, tasks: None }, client_info: Implementation { name: "opencode", title: None, version: "1.18.10", description: None, icons: None, website_url: None } })
+2026-07-31T14:23:31.300713Z  INFO serve_inner: rmcp::service: received notification notification=InitializedNotification(NotificationNoParam { method: InitializedNotificationMethod, extensions: Extensions })
+2026-07-31T14:23:31.300806Z  INFO serve_inner: rust_mcp_server::rmcp_server: MCP client initialized
+2026-07-31T14:23:31.300852Z  INFO serve_inner: rust_mcp_server::workspace: Checking current working directory for Cargo project: Some("/yolo/einmo")
+2026-07-31T14:23:31.300891Z  INFO serve_inner: rust_mcp_server::workspace: Cargo.toml found in CWD (/yolo/einmo), using it as workspace root (no auto-detection needed)

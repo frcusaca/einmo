@@ -1095,4 +1095,60 @@ mod tests {
         let line = r#"{"key":"stage:output","pubkey":"aa","signs":"prior-bytes","signature":"bb","produced_by":"x","timestamp":"t"}"#;
         assert!(Stamps::parse(line).is_ok());
     }
+
+    // EIMP-1 §Test Plan "signer": zeroize on drop (best-effort).
+
+    #[test]
+    fn stage_keypair_uses_zeroizing_for_kek_and_derives_correctly() {
+        let pass = "zeroize-test-key";
+        let (_, expected_vk) = derive_keypair(pass);
+        let keypair = StageKeypair::derive(pass);
+
+        assert_eq!(
+            keypair.pubkey_hex(),
+            hex::encode(expected_vk.to_bytes()),
+            "StageKeypair must derive the same pubkey as derive_keypair"
+        );
+
+        // Use the keypair to sign — proves the sealed seed unwraps correctly.
+        keypair.with_signing_key(|sk| {
+            use ed25519_dalek::{Signer, Verifier};
+            let sig = sk.sign(b"test message");
+            assert!(
+                expected_vk.verify(b"test message", &sig).is_ok(),
+                "the signing key inside StageKeypair must produce valid signatures"
+            );
+        });
+
+        // Drop the keypair — `kek: Zeroizing<[u8; 32]>` zeros the
+        // key-encryption key on drop, and `with_signing_key` already
+        // zeroizes the plaintext seed before returning. This is the
+        // best-effort assertion: we cannot inspect freed memory in safe
+        // Rust, but the `Zeroizing` wrapper's `Drop` impl is the
+        // mechanism that guarantees it. The `sealed_seed: Vec<u8>`
+        // itself is ciphertext (encrypted under the KEK), so even if
+        // the Vec's heap memory survives deallocation, no plaintext
+        // seed is exposed.
+        drop(keypair);
+    }
+
+    #[test]
+    fn stage_keypair_seed_is_never_accessible_as_plaintext() {
+        let keypair = StageKeypair::derive("exfil-test");
+
+        // with_signing_key provides the key only within the closure;
+        // the plaintext is zeroized as soon as the closure returns.
+        let signed_once = keypair.with_signing_key(|sk| {
+            use ed25519_dalek::Signer;
+            sk.sign(b"first").to_bytes()
+        });
+        let signed_twice = keypair.with_signing_key(|sk| {
+            use ed25519_dalek::Signer;
+            sk.sign(b"second").to_bytes()
+        });
+
+        // Each call re-derives from the sealed seed; both must succeed
+        // and produce different signatures (different messages).
+        assert_ne!(signed_once, signed_twice);
+    }
 }

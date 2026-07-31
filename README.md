@@ -363,6 +363,76 @@ Promotion key resolution follows a cascade: `--passphrase` >
 prompt, skipping all other tiers. An explicit empty string is "set to empty"
 (the computer key), never "unset".
 
+## Review Server
+
+Einmo's review system has two layers:
+
+- **`einmo-review-server`** — a background process that holds a live
+  `EinmoReview` session (worklist, decisions, verified-body cache,
+  execution). It exposes a JSON API over unix-domain sockets (default) or
+  TCP (with bearer-token auth). The server supports three review modes as
+  backend capabilities: **Full** (every case), **NewOrBroken** (only
+  mismatches), and **Random** (shuffled order for sampling).
+- **`einmo_review_client.sh`** — a vim-based TUI that launches its own
+  private server, drives the review loop, and tears everything down on
+  exit. This is the user-facing tool — it passes the mode to the server
+  and presents the results.
+
+### Reviewing with the TUI client
+
+```bash
+# Full review — every case in the suite (default):
+./scripts/einmo_review_client.sh -p /path/to/suite
+
+# New or broken — only cases with no baseline or a content mismatch:
+./scripts/einmo_review_client.sh -p /path/to/suite -n
+
+# Filter to cases matching a substring:
+./scripts/einmo_review_client.sh -p /path/to/suite "alarm"
+```
+
+The `-p` flag launches a private server for the given suite directory.
+The server binds an unpredictable socket in a mode-700 scratch dir and is
+torn down on exit. To attach to an already-running standalone server
+instead, use `-s /path/to/socket`.
+
+Inside vim:
+
+| Key | Action |
+|---|---|
+| `c` | Promote to checked |
+| `v` | Promote to verified |
+| `f` | Flag with a reason |
+| `k` | Kick (retract from highest stage) |
+| `u` | Undo decision |
+| `\d` | Fetch server-side diff hunks (output vs checked) |
+| `\D` | Toggle vim's built-in diff mode across all panes |
+| `Enter` | Next case |
+| `q` | Quit and show the execution plan |
+
+At the end of the pass, the script shows the plan and asks you to type
+`PROMOTE` to execute all pending promotions. If any promotion targets
+`verified`, you'll be prompted for a passphrase.
+
+### Session persistence and crash recovery
+
+Every session writes an append-only JSONL journal. If the process crashes
+mid-review, resume with `--session <id>` — the journal replays every
+decision and the session picks up where it left off.
+
+### Standalone server (for scripting or multi-client setups)
+
+A long-lived server can be started separately and attached to by multiple
+clients:
+
+```bash
+# Start a standalone server:
+einmo-review-server serve /path/to/suite
+
+# Attach the TUI client:
+./scripts/einmo_review_client.sh -s .einmo-review.sock
+```
+
 ## Catastrophe Crumb Defense
 
 Before each evaluator call, einmo writes a **signed** `.einmo` "catastrophe
@@ -1207,3 +1277,14 @@ The passphrase is resolved through the cascade: CLI `--passphrase` > env
 `EINMO_PASSPHRASE` > `einmo.toml [signing.<stage>]` > interactive prompt.
 For development, the empty passphrase is the default and requires no
 configuration.
+
+---
+
+## Last Updated
+
+**Date**: 2026-07-31
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Added "Review Server" section documenting the review
+architecture (server as backend, TUI as user-facing tool), the three
+review modes as server capabilities, TUI client workflow, vim keybindings,
+and crash recovery.

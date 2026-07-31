@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>einmo review</title>
+<style>
+  :root {
+    --bg: #1a1a2e; --surface: #16213e; --border: #0f3460;
+    --text: #e0e0e0; --dim: #888; --accent: #e94560;
+    --green: #4ecca3; --yellow: #f0c040; --red: #e94560;
+    --blue: #4ea8de; --mono: 'Menlo', 'Consolas', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 14px; font-weight: 600; }
+  header .session { font-size: 12px; color: var(--dim); font-family: var(--mono); }
+  header .stats { font-size: 12px; color: var(--dim); margin-left: auto; }
+  #app { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  .case-list { flex: 0 0 200px; overflow-y: auto; background: var(--surface); border-right: 1px solid var(--border); }
+  .case-item { padding: 6px 12px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+  .case-item:hover { background: rgba(255,255,255,0.05); }
+  .case-item.active { background: var(--border); }
+  .case-item .id { font-family: var(--mono); font-size: 12px; }
+  .case-item .badge { font-size: 10px; padding: 2px 6px; border-radius: 3px; }
+  .badge.ok { background: var(--green); color: #000; }
+  .badge.diff { background: var(--yellow); color: #000; }
+  .badge.missing { background: var(--red); color: #fff; }
+  .badge.decided { background: var(--blue); color: #fff; }
+
+  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .panes { flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); overflow: hidden; }
+  .pane { background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
+  .pane-header { padding: 4px 8px; background: var(--surface); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+  .pane-body { flex: 1; overflow: auto; padding: 8px; font-family: var(--mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
+
+  .controls { padding: 8px 16px; background: var(--surface); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .controls button { padding: 4px 12px; border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; font-size: 12px; border-radius: 3px; }
+  .controls button:hover { background: var(--border); }
+  .controls button.primary { background: var(--green); color: #000; border-color: var(--green); }
+  .controls button.danger { background: var(--red); color: #fff; border-color: var(--red); }
+  .controls input { padding: 4px 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 12px; font-family: var(--mono); border-radius: 3px; }
+  .controls .spacer { flex: 1; }
+
+  .diff-line { font-family: var(--mono); font-size: 12px; line-height: 1.5; }
+  .diff-line.equal { color: var(--dim); }
+  .diff-line.removed { color: var(--red); background: rgba(233,69,96,0.1); }
+  .diff-line.added { color: var(--green); background: rgba(78,204,163,0.1); }
+
+  .plan-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; justify-content: center; align-items: center; }
+  .plan-overlay.visible { display: flex; }
+  .plan-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; }
+  .plan-box h2 { font-size: 16px; margin-bottom: 12px; }
+  .plan-box .action { padding: 4px 0; font-family: var(--mono); font-size: 13px; }
+  .plan-box .action .kind { font-weight: 600; }
+  .plan-box .action .kind.promote { color: var(--green); }
+  .plan-box .action .kind.retract { color: var(--yellow); }
+  .plan-box .action .kind.flag { color: var(--red); }
+  .plan-box .claims { margin-top: 12px; padding: 8px; background: var(--bg); border-radius: 4px; font-size: 12px; }
+  .plan-box .gate { margin-top: 16px; display: flex; gap: 8px; align-items: center; }
+  .plan-box .gate input { flex: 1; padding: 8px; font-family: var(--mono); font-size: 14px; }
+
+  .toast { position: fixed; bottom: 16px; right: 16px; padding: 8px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; font-size: 13px; z-index: 200; opacity: 0; transition: opacity 0.3s; }
+  .toast.visible { opacity: 1; }
+
+  .event-log { position: fixed; bottom: 0; left: 0; right: 0; background: var(--surface); border-top: 1px solid var(--border); padding: 4px 16px; font-size: 11px; color: var(--dim); font-family: var(--mono); max-height: 24px; overflow: hidden; }
+</style>
+</head>
+<body>
+<header>
+  <h1>einmo review</h1>
+  <span class="session" id="session-id"></span>
+  <span class="stats" id="stats"></span>
+</header>
+<div id="app" style="flex-direction: row;">
+  <div class="case-list" id="case-list"></div>
+  <div class="main">
+    <div class="panes" id="panes">
+      <div class="pane"><div class="pane-header">input</div><div class="pane-body" id="pane-input">select a case</div></div>
+      <div class="pane"><div class="pane-header">output</div><div class="pane-body" id="pane-output"></div></div>
+      <div class="pane"><div class="pane-header">checked</div><div class="pane-body" id="pane-checked"></div></div>
+      <div class="pane"><div class="pane-header">verified</div><div class="pane-body" id="pane-verified"></div></div>
+    </div>
+    <div class="controls">
+      <button onclick="decide('promote','checked')" title="promote to checked">c: checked</button>
+      <button onclick="decide('promote','verified')" title="promote to verified">v: verified</button>
+      <button onclick="flagCurrent()" title="flag with reason">f: flag</button>
+      <button onclick="retractCurrent()" title="retract (kick)">k: kick</button>
+      <button onclick="undecide()" title="undo decision">u: undo</button>
+      <button onclick="claimCurrent()" title="soft claim">claim</button>
+      <span class="spacer"></span>
+      <button onclick="toggleDiff()" title="toggle diff view">diff</button>
+      <button onclick="showPlan()" class="primary" title="review and execute plan">plan</button>
+      <button onclick="refreshCases()" title="refresh worklist">refresh</button>
+    </div>
+  </div>
+</div>
+
+<div class="plan-overlay" id="plan-overlay" onclick="if(event.target===this)closePlan()">
+  <div class="plan-box">
+    <h2>execution plan</h2>
+    <div id="plan-actions"></div>
+    <div id="plan-claims" class="claims" style="display:none"></div>
+    <div class="gate">
+      <input id="plan-confirm" placeholder="type PROMOTE to confirm" autocomplete="off">
+      <input id="plan-passphrase" type="password" placeholder="passphrase (if verified needed)" autocomplete="off">
+      <button class="primary" onclick="executePlan()">execute</button>
+      <button onclick="closePlan()">cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="event-log" id="event-log">connecting…</div>
+
+<script>
+const BASE = location.origin;
+let sessionId = null;
+let cases = [];
+let currentIdx = -1;
+let diffMode = false;
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'content-type': 'application/json' } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const r = await fetch(`${BASE}${path}`, opts);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function toast(msg, ms = 2000) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('visible');
+  setTimeout(() => el.classList.remove('visible'), ms);
+}
+
+async function init() {
+  const path = location.pathname;
+  const m = path.match(/\/review\/([0-9a-f]+)/);
+  if (m) {
+    sessionId = m[1];
+  } else {
+    const s = await api('POST', '/einmo/sessions');
+    sessionId = s.session;
+    history.replaceState(null, '', `/review/${sessionId}`);
+  }
+  document.getElementById('session-id').textContent = sessionId;
+  await refreshCases();
+  connectSSE();
+}
+
+async function refreshCases() {
+  const differing = new URLSearchParams(location.search).get('differing');
+  let url = `/einmo/${sessionId}/cases`;
+  if (differing) url += `?differing=true`;
+  cases = await api('GET', url);
+  renderCaseList();
+  document.getElementById('stats').textContent = `${cases.length} case(s)`;
+  if (currentIdx >= 0 && currentIdx < cases.length) selectCase(currentIdx);
+}
+
+function renderCaseList() {
+  const el = document.getElementById('case-list');
+  el.innerHTML = '';
+  cases.forEach((c, i) => {
+    const div = document.createElement('div');
+    div.className = `case-item${i === currentIdx ? ' active' : ''}`;
+    const hasDecision = c.decision && c.decision !== 'untouched';
+    const differing = c.differing;
+    let badge = '';
+    if (hasDecision) badge = `<span class="badge decided">${c.decision}</span>`;
+    else if (differing) badge = '<span class="badge diff">diff</span>';
+    else badge = '<span class="badge ok">ok</span>';
+    div.innerHTML = `<span class="id">${c.id}</span>${badge}`;
+    div.onclick = () => selectCase(i);
+    el.appendChild(div);
+  });
+}
+
+async function selectCase(idx) {
+  currentIdx = idx;
+  renderCaseList();
+  const c = cases[idx];
+  if (!c) return;
+
+  for (const stage of ['output', 'checked', 'verified']) {
+    const pane = document.getElementById(`pane-${stage}`);
+    pane.textContent = 'loading…';
+    try {
+      const body = await api('GET', `/einmo/${sessionId}/cases/${c.id}/body/${stage}`);
+      pane.textContent = body.sections.map(s => `=== ${s[0]} ===\n${s[1]}`).join('\n\n');
+    } catch (e) {
+      pane.textContent = `(${stage}: ${e.message})`;
+    }
+  }
+
+  document.getElementById('pane-input').textContent =
+    `(input for ${c.id} — see output pane for evaluated content)`;
+}
+
+async function decide(kind, to) {
+  if (currentIdx < 0) return;
+  const c = cases[currentIdx];
+  const body = { kind, to };
+  try {
+    await api('PUT', `/einmo/${sessionId}/cases/${c.id}/decision`, body);
+    toast(`decided: ${kind} ${c.id} → ${to}`);
+    await refreshCases();
+  } catch (e) {
+    toast(`error: ${e.message}`);
+  }
+}
+
+async function undecide() {
+  if (currentIdx < 0) return;
+  const c = cases[currentIdx];
+  try {
+    await api('DELETE', `/einmo/${sessionId}/cases/${c.id}/decision`);
+    toast(`undone: ${c.id} is untouched`);
+    await refreshCases();
+  } catch (e) {
+    toast(`error: ${e.message}`);
+  }
+}
+
+async function flagCurrent() {
+  if (currentIdx < 0) return;
+  const c = cases[currentIdx];
+  const reason = prompt('flag reason:');
+  if (!reason) return;
+  const stage = c.stages ? c.stages.filter(s => s[1]).pop()?.[0] || 'output' : 'output';
+  try {
+    await api('POST', `/einmo/${sessionId}/cases/${c.id}/flag/${stage}`, { reason });
+    toast(`flagged ${c.id} from ${stage}`);
+    await refreshCases();
+  } catch (e) {
+    toast(`error: ${e.message}`);
+  }
+}
+
+async function retractCurrent() {
+  if (currentIdx < 0) return;
+  const c = cases[currentIdx];
+  const stage = c.stages ? c.stages.filter(s => s[1] && (s[0] === 'checked' || s[0] === 'verified')).pop()?.[0] : null;
+  if (!stage) { toast('nothing to kick: not checked or verified'); return; }
+  try {
+    await api('POST', `/einmo/${sessionId}/cases/${c.id}/retract/${stage}`);
+    toast(`kicked ${c.id} from ${stage}`);
+    await refreshCases();
+  } catch (e) {
+    toast(`error: ${e.message}`);
+  }
+}
+
+async function claimCurrent() {
+  if (currentIdx < 0) return;
+  const c = cases[currentIdx];
+  try {
+    await api('POST', `/einmo/${sessionId}/cases/${c.id}/claim`);
+    toast(`claimed ${c.id} (5 min)`);
+  } catch (e) {
+    toast(`error: ${e.message}`);
+  }
+}
+
+async function toggleDiff() {
+  if (currentIdx < 0) return;
+  diffMode = !diffMode;
+  if (!diffMode) { await selectCase(currentIdx); return; }
+  const c = cases[currentIdx];
+  const pane = document.getElementById('pane-output');
+  pane.textContent = 'loading diff…';
+  try {
+    const hunks = await api('GET', `/einmo/${sessionId}/cases/${c.id}/diff/output/checked`);
+    let html = '';
+    for (const sec of hunks.sections) {
+      html += `=== ${sec.name} ===\n`;
+      for (const line of sec.lines) {
+        const cls = line.Equal ? 'equal' : line.Removed ? 'removed' : 'added';
+        const text = line.Equal || line.Removed || line.Added;
+        const prefix = line.Equal ? ' ' : line.Removed ? '-' : '+';
+        html += `<div class="diff-line ${cls}">${prefix} ${escHtml(text)}</div>`;
+      }
+    }
+    pane.innerHTML = html;
+  } catch (e) {
+    pane.textContent = `diff error: ${e.message}`;
+  }
+}
+
+async function showPlan() {
+  const plan = await api('GET', `/einmo/${sessionId}/plan`);
+  const el = document.getElementById('plan-actions');
+  el.innerHTML = '';
+  if (plan.actions.length === 0) {
+    el.innerHTML = '<p style="color:var(--dim)">nothing pending</p>';
+  }
+  for (const a of plan.actions) {
+    const div = document.createElement('div');
+    div.className = 'action';
+    const kind = a.kind || 'unknown';
+    const target = a.to || a.from || a.stage || '';
+    div.innerHTML = `<span class="kind ${kind}">${kind}</span> ${escHtml(a.id)}${target ? ' → ' + target : ''}`;
+    el.appendChild(div);
+  }
+  const claimsEl = document.getElementById('plan-claims');
+  if (plan.claims && plan.claims.length > 0) {
+    claimsEl.style.display = 'block';
+    claimsEl.innerHTML = '<strong>active claims:</strong><br>' +
+      plan.claims.map(c => `  ${escHtml(c.id)} (${Math.round(c.remaining_secs)}s remaining)`).join('<br>');
+  } else {
+    claimsEl.style.display = 'none';
+  }
+  document.getElementById('plan-confirm').value = '';
+  document.getElementById('plan-passphrase').value = '';
+  document.getElementById('plan-overlay').classList.add('visible');
+}
+
+function closePlan() {
+  document.getElementById('plan-overlay').classList.remove('visible');
+}
+
+async function executePlan() {
+  const confirm = document.getElementById('plan-confirm').value.trim();
+  if (confirm !== 'PROMOTE') { toast('type PROMOTE to confirm'); return; }
+  const passphrase = document.getElementById('plan-passphrase').value || undefined;
+  try {
+    const body = { confirm: 'PROMOTE' };
+    if (passphrase) body.passphrase = passphrase;
+    const r = await api('POST', `/einmo/${sessionId}/execute`, body);
+    toast(`executed: ${r.executed?.length || 0}, skipped: ${r.skipped?.length || 0}`);
+    closePlan();
+    await refreshCases();
+  } catch (e) {
+    toast(`execute failed: ${e.message}`);
+  }
+}
+
+function connectSSE() {
+  const es = new EventSource(`${BASE}/einmo/${sessionId}/events`);
+  const log = document.getElementById('event-log');
+  es.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      log.textContent = JSON.stringify(data);
+      if (data.event === 'decision-made' || data.event === 'item-changed' || data.event === 'executed') {
+        refreshCases();
+        if (currentIdx >= 0) selectCase(currentIdx);
+      }
+    } catch { log.textContent = e.data; }
+  };
+  es.onerror = () => { log.textContent = 'SSE disconnected'; };
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+init();
+</script>
+</body>
+</html>

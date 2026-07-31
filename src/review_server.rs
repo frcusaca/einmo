@@ -780,6 +780,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/einmo/{session}/plan", get(get_plan))
         .route("/einmo/{session}/execute", post(post_execute))
         .route("/einmo/{session}/events", get(session_events))
+        .route("/review/{session}", get(serve_review_dhtml))
+        .route("/", get(serve_review_dhtml_root))
         .with_state(state)
 }
 
@@ -1047,12 +1049,56 @@ pub fn private_socket_path() -> std::io::Result<std::path::PathBuf> {
     ))
 }
 
+const REVIEW_DHTML: &str = include_str!("dhtml/review.html");
+
+async fn serve_review_dhtml() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        REVIEW_DHTML,
+    )
+}
+
+async fn serve_review_dhtml_root() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        REVIEW_DHTML,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
     use tower::ServiceExt;
+
+    static JOURNAL_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct TestContext {
+        _journal_guard: std::sync::MutexGuard<'static, ()>,
+        _journal_tmp: tempfile::TempDir,
+        suite: tempfile::TempDir,
+    }
+
+    impl TestContext {
+        fn path(&self) -> &std::path::Path {
+            self.suite.path()
+        }
+    }
+
+    fn test_context() -> TestContext {
+        let guard = JOURNAL_ENV_LOCK.lock().unwrap();
+        let journal_tmp = tempfile::tempdir().unwrap();
+        // SAFETY: serialized by `JOURNAL_ENV_LOCK`.
+        unsafe {
+            std::env::set_var("EINMO_JOURNAL_DIR", journal_tmp.path());
+        }
+        TestContext {
+            _journal_guard: guard,
+            _journal_tmp: journal_tmp,
+            suite: tempfile::tempdir().unwrap(),
+        }
+    }
 
     fn write_input(dir: &std::path::Path, rel: &str, content: &str) {
         let path = dir.join("input").join(rel);
@@ -1067,14 +1113,14 @@ mod tests {
         }
     }
 
-    fn seeded_suite() -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().unwrap();
-        write_input(tmp.path(), "a.foo", "{1+1;}");
+    fn seeded_suite() -> TestContext {
+        let ctx = test_context();
+        write_input(ctx.path(), "a.foo", "{1+1;}");
         let config =
-            crate::config::TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+            crate::config::TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output);
         let suite = crate::einmo_suite::EinmoSuite::new(config);
         suite.evaluate_all(&Echo).unwrap();
-        tmp
+        ctx
     }
 
     fn promote_output_to_checked(dir: &std::path::Path) {

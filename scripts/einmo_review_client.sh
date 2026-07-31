@@ -9,47 +9,104 @@ set -euo pipefail
 # list of case ids the server hands back and asks the server for
 # everything else (worklist, verified bodies, decisions).
 #
-# ── PHASE E: read-only (list + view) ────────────────────────────────────
-#
-# This increment only lists cases and shows their input/output/checked/
-# verified panes in vim (read-only, `-M`) — no decisions, no promote/flag/
-# retract yet. Those land in later phases (F: flag, G: retract, H: promote,
-# I: undo), each wired to the server's corresponding endpoint, per
-# docs/eimp/EIMP-2.plan.md.
-#
 # ── USAGE ─────────────────────────────────────────────────────────────────
 #
-#     ./einmo_review_client.sh [-s SOCKET] [name-filter]
+#     ./einmo_review_client.sh [-p SUITE] [-s SOCKET] [-n] [name-filter]
 #
-#     -s SOCKET   path to the einmo-review-server unix-domain socket
-#                 (default: .einmo-review.sock in the current directory)
+#     -p SUITE    launch a private einmo-review-server for the given suite
+#                 directory (EIMP-1 §S.7a: the TUI-owned private-server
+#                 shape). The server binds an unpredictable socket in a
+#                 mode-700 scratch dir, is torn down on exit, and its path
+#                 is never exposed. Mutually exclusive with -s.
+#     -s SOCKET   attach to an already-running standalone server at SOCKET
+#                 (default: .einmo-review.sock in the current directory).
+#                 Mutually exclusive with -p.
+#     -n          only show cases that are new or broken — differ between
+#                 output and checked stages (ReviewMode::NewOrBroken).
 #     [name-filter]   substring of a case id (e.g. foop/23)
 #
-# The server must already be running (`einmo-review-server` or
-# `cargo einmo-review-server`) — this script never falls back to a direct
-# `einmo` call or to experimental_reviewer.sh. If no server socket (and its
+# With -p, the server is launched in the background, its socket path is
+# captured from the first line of stdout, and a trap kills the server
+# process and removes the socket on exit. Without -p, the server must
+# already be running — this script never falls back to a direct `einmo`
+# call or to experimental_reviewer.sh. If no server socket (and its
 # `<socket>.session` sidecar file) is found, it fails fast with a message
 # telling you how to start one.
+#
+# Inside vim, \\d fetches server-side diff hunks (output vs checked) and
+# \\D toggles vim's built-in diff mode across all panes.
 
 SOCKET=".einmo-review.sock"
+PRIVATE_SUITE=""
+NEW_OR_BROKEN=""
+SERVER_PID=""
 
-while getopts "s:h" opt; do
+while getopts "p:s:nh" opt; do
     case "$opt" in
-        s) SOCKET="$OPTARG" ;;
-        h) sed -n '3,30p' "$0"; exit 0 ;;
+        p) PRIVATE_SUITE="$OPTARG" ;;
+        s) SOCKET="$OPTARG"; SOCKET_EXPLICIT=1 ;;
+        n) NEW_OR_BROKEN=1 ;;
+        h) sed -n '3,37p' "$0"; exit 0 ;;
         *) echo "Try: $0 -h" >&2; exit 2 ;;
     esac
 done
 shift $((OPTIND - 1))
 
+if [[ -n "$PRIVATE_SUITE" && -n "${SOCKET_EXPLICIT:-}" ]]; then
+    echo "einmo_review_client: -p (private) and -s (socket) are mutually exclusive" >&2
+    exit 2
+fi
+
 FILTER="${1:-}"
+
+# --- private server launch (EIMP-1 §S.7a) ----------------------------------
+# When -p is given, launch einmo-review-server in background with --private,
+# capture the socket path from its first stdout line, wait for it to become
+# reachable, and arrange to kill it on exit.
+if [[ -n "$PRIVATE_SUITE" ]]; then
+    if [[ ! -d "$PRIVATE_SUITE" ]]; then
+        echo "einmo_review_client: suite directory not found: $PRIVATE_SUITE" >&2
+        exit 1
+    fi
+    SOCKET_PATH_FILE="$(mktemp -t einmo_sock.XXXXXX)"
+    einmo-review-server serve --private "$PRIVATE_SUITE" \
+        >"$SOCKET_PATH_FILE" 2>/dev/null &
+    SERVER_PID=$!
+
+    # Poll for the socket path (server prints it as first stdout line)
+    SOCKET=""
+    for _i in $(seq 1 50); do
+        if [[ -s "$SOCKET_PATH_FILE" ]]; then
+            SOCKET="$(head -1 "$SOCKET_PATH_FILE")"
+            break
+        fi
+        sleep 0.1
+    done
+    rm -f "$SOCKET_PATH_FILE"
+
+    if [[ -z "$SOCKET" ]]; then
+        echo "einmo_review_client: private server did not report a socket path (timed out)" >&2
+        kill "$SERVER_PID" 2>/dev/null || true
+        exit 1
+    fi
+
+    # Wait for the server to actually accept connections
+    for _i in $(seq 1 50); do
+        if curl -sS --unix-socket "$SOCKET" -o /dev/null \
+            "http://einmo-review-client/" 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+    done
+fi
 
 # --- find the server (no fallback — EIMP-2.md §6) -------------------------
 SESSION_FILE="${SOCKET}.session"
 if [[ ! -S "$SOCKET" ]]; then
     echo "einmo_review_client: no server socket at $SOCKET" >&2
     echo "  Start one first:  cargo einmo-review-server --socket $SOCKET <suite>" >&2
-    echo "  or:                einmo-review-server --socket $SOCKET <suite>" >&2
+    echo "  or:                einmo-review-server serve --socket $SOCKET <suite>" >&2
+    echo "  or:                $0 -p <suite>  (launch a private server)" >&2
     exit 1
 fi
 if [[ ! -f "$SESSION_FILE" ]]; then
@@ -125,19 +182,57 @@ fi
 harden_dir "$TMP"
 
 cleanup() {
+    if [[ -n "${SERVER_PID:-}" ]]; then
+        kill "$SERVER_PID" 2>/dev/null || true
+        wait "$SERVER_PID" 2>/dev/null || true
+    fi
+    if [[ -n "${PRIVATE_SUITE:-}" && -n "${SOCKET:-}" ]]; then
+        rm -f "$SOCKET" "${SOCKET}.session"
+    fi
     if [[ -n "${TMP:-}" && -d "$TMP" ]]; then
         rm -rf "$TMP"
     fi
 }
 trap cleanup EXIT INT TERM
 
+# --- server-side diff helper (used by vim's \d mapping) --------------------
+DIFF_HELPER="$TMP/diff-helper.sh"
+cat > "$DIFF_HELPER" << 'DIFFEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+SOCKET="$1" SESSION="$2" CASE_ID="$3" OUTFILE="$4"
+json="$(curl -sS --unix-socket "$SOCKET" \
+    "http://einmo-review-client/einmo/$SESSION/cases/$CASE_ID/diff/output/checked" \
+    2>/dev/null || true)"
+if [[ -z "$json" ]]; then
+    echo "(( diff unavailable ))" > "$OUTFILE"
+else
+    echo "$json" | jq -r '
+        .sections[] |
+        ("=== " + .name + " ==="),
+        (.lines[] |
+            if .tag == "equal" then "  " + .text
+            elif .tag == "removed" then "- " + .text
+            elif .tag == "added" then "+ " + .text
+            else "" end)
+    ' > "$OUTFILE" 2>/dev/null || echo "(( diff parse error ))" > "$OUTFILE"
+fi
+DIFFEOF
+chmod +x "$DIFF_HELPER"
+
 # --- the one array this script needs: an ordered list of case ids --------
 # Everything else (decisions, per-case status) is a question asked of the
 # server, never local state (EIMP-2.md §5).
 list_json="$(api GET "/einmo/$SESSION/cases")"
-mapfile -t ids < <(echo "$list_json" | jq -r \
-    --arg filter "$FILTER" \
-    '.[] | select($filter == "" or (.id | contains($filter))) | .id')
+if [[ -n "$NEW_OR_BROKEN" ]]; then
+    mapfile -t ids < <(echo "$list_json" | jq -r \
+        --arg filter "$FILTER" \
+        '.[] | select(.differing == true) | select($filter == "" or (.id | contains($filter))) | .id')
+else
+    mapfile -t ids < <(echo "$list_json" | jq -r \
+        --arg filter "$FILTER" \
+        '.[] | select($filter == "" or (.id | contains($filter))) | .id')
+fi
 
 if (( ${#ids[@]} == 0 )); then
     echo "No cases to review${FILTER:+ matching '$FILTER'}."
@@ -195,13 +290,25 @@ while (( idx < ${#ids[@]} )); do
     # script) to stay well under that ceiling regardless of how many panes
     # or mappings later phases add.
     vim_cmds="set laststatus=2
-let &g:statusline = 'einmo_review_client (read-only) . ]c/[c jump . \\\\d diff here . \\\\D diff all . :qa next'
+let &g:statusline = 'einmo_review_client . \\\\d server diff . \\\\D vim diff . :qa next'
+let g:einmo_diff_helper = '$DIFF_HELPER'
+let g:einmo_socket = '$SOCKET'
+let g:einmo_session = '$SESSION'
+let g:einmo_case_id = '$(printf '%s' "$id" | sed "s/'/'\\\\''/g")'
+let g:einmo_diff_out = '$TMP/server-diff--$base'
 botright split $(vimesc "$TMP/input--$base")
 vertical belowright split $(vimesc "${pane[output]}")
 vertical belowright split $(vimesc "${pane[checked]}")
 vertical belowright split $(vimesc "${pane[verified]}")
-function! EinmoReviewToggleDiffHere()
-    if &diff | diffoff | else | diffthis | endif
+function! EinmoReviewServerDiff()
+    call system(printf('bash %s %s %s %s %s',
+        \ shellescape(g:einmo_diff_helper),
+        \ shellescape(g:einmo_socket),
+        \ shellescape(g:einmo_session),
+        \ shellescape(g:einmo_case_id),
+        \ shellescape(g:einmo_diff_out)))
+    execute 'split ' . fnameescape(g:einmo_diff_out)
+    setlocal buftype=nofile bufhidden=wipe noswapfile nomodifiable
 endfunction
 function! EinmoReviewToggleDiffAll()
     let l:cur = winnr()
@@ -215,7 +322,7 @@ function! EinmoReviewToggleDiffAll()
     endfor
     execute l:cur . 'wincmd w'
 endfunction
-nnoremap <silent> \\d :call EinmoReviewToggleDiffHere()<CR>
+nnoremap <silent> \\d :call EinmoReviewServerDiff()<CR>
 nnoremap <silent> \\D :call EinmoReviewToggleDiffAll()<CR>"
 
     vim -M -n -c "$vim_cmds" "${pane[output]}" </dev/tty >/dev/tty 2>&1 || true
@@ -319,6 +426,7 @@ if (( plan_count == 0 )); then
 else
     echo "── pending plan (${plan_count} action(s)) ──"
     echo "$plan_json" | jq -r '.actions[] | "  " + .kind + " " + .id + (if .to then " -> " + .to else "" end)'
+    echo "$plan_json" | jq -r '.claims // [] | .[] | "  CLAIMED: \(.id) (\(.remaining_secs)s remaining)"' 2>/dev/null || true
 
     needs_verified="$(echo "$plan_json" | jq '[.actions[] | select(.kind == "promote" and .to == "verified")] | length > 0')"
     passphrase=""

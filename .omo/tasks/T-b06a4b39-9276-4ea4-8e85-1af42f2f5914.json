@@ -1,0 +1,10 @@
+{
+  "id": "T-b06a4b39-9276-4ea4-8e85-1af42f2f5914",
+  "subject": "Write comprehensive_multi_reviewer_end_to_end test",
+  "description": "Write one test function in src/review.rs mod tests covering: setup (3 cases, promote to checked), two reviewers promoting to verified, crash-resume, drift detection, stamp chain verification, and journal reconstruction.",
+  "status": "completed",
+  "activeForm": "Writing comprehensive integration test",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_049e1be34ffeabJec574LasBGE"
+}

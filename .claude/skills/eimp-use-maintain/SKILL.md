@@ -1,6 +1,6 @@
 ---
 name: eimp-use-maintain
-description: "MUST USE when FINDING, EXECUTING, UPDATING, BACKBURNERING, or CANCELLING existing EIMPs (Einmo Improvement Process). Covers: listing/finding EIMPs in chronological order (little-endian ls|rev|sort -V|rev, eimp_check.py list/get_last/check), the EIMP-0 pinned meta-document, the two-file system (must read both spec and plan before executing), status lifecycle (Draft→Brewing→Final→Implementing→complete), plan execution flow (begin→work-on-main→commit-regularly→mark-complete), checkbox lifecycle (completing with timestamp, backburnering with [x] backburnered, cancelling with [x] Canceled + [-] per-item), sub-task execution patterns (parent not checked until children done), comprehensive test verification via cargo test, human communication protocol (PTAL reminder with EIMP number), and safety invariants. Gives exact copy-pasteable commands with <NUMBER> and <SHORT_DESCRIPTION> placeholders. Triggers: 'find eimp', 'list eimp', 'execute eimp', 'eimp status', 'eimp execution', 'check eimp checkbox', 'backburner eimp', 'cancel eimp', 'deprecate eimp', 'eimp begun', 'eimp progress', 'resume eimp'."
+description: "MUST USE when FINDING, EXECUTING, UPDATING, BACKBURNERING, or CANCELLING existing EIMPs (Einmo Improvement Process). Covers: listing/finding EIMPs in chronological order (little-endian ls|rev|sort -V|rev, eimp_check.py list/get_last/check), the EIMP-0 pinned meta-document, the two-file system (must read both spec and plan before executing), status lifecycle (Draft→Brewing→Final→Implementing→complete), plan execution flow (begin→work-on-jia→commit-regularly→mark-complete), checkbox lifecycle (completing with timestamp, backburnering with [x] backburnered, cancelling with [x] Canceled + [-] per-item), sub-task execution patterns (parent not checked until children done), comprehensive test verification via cargo test, human communication protocol (PTAL reminder with EIMP number), and safety invariants. Gives exact copy-pasteable commands with <NUMBER> and <SHORT_DESCRIPTION> placeholders. Triggers: 'find eimp', 'list eimp', 'execute eimp', 'eimp status', 'eimp execution', 'check eimp checkbox', 'backburner eimp', 'cancel eimp', 'deprecate eimp', 'eimp begun', 'eimp progress', 'resume eimp'."
 ---
 
 # EIMP — Using and Maintaining
@@ -9,7 +9,7 @@ This skill covers **finding, executing, updating, backburnering, and cancelling*
 
 > **Authoritative source**: `eimp.md` at the repository root. When this skill and `eimp.md` appear to disagree, `eimp.md` wins. Read `eimp.md` before executing or maintaining any EIMP.
 >
-> EIMP is adapted from the Foolish project's FOOP process (see `docs/eimp/EIMP-0.md` §References). Einmo is a small, single-maintainer repository, so this skill has no worktree/merge-to-trunk stage — EIMP plans execute directly on `main`.
+> EIMP is adapted from the Foolish project's FOOP process (see `docs/eimp/EIMP-0.md` §References). Einmo is a small, single-maintainer repository, so this skill has no worktree/merge-to-trunk stage — EIMP plans execute directly on `jia`.
 
 ---
 
@@ -123,7 +123,7 @@ Draft → Brewing → Final → Implementing → complete
 | `Brewing` | Ready for maintainer review. The spec is complete enough for discussion. |
 | `Final` | Accepted. The design is frozen. Ready for implementation planning. |
 | `Implementing` | Active coding. The plan is being executed. Open Questions section should be empty (design frozen). |
-| `complete` | All work done, tests green, committed to `main`. |
+| `complete` | All work done, tests green, committed to `jia`. |
 
 To change status, edit the `status:` field in the EIMP's frontmatter:
 
@@ -150,7 +150,7 @@ begun: [x]   # work has begun
    - Check the `begun: [x]` box in the EIMP's frontmatter.
    - Commit the EIMP file stating that work has commenced on this EIMP.
 
-3. **Work directly on `main`.** Unlike FOOP (Foolish's process, which EIMP is adapted from), there is **no worktree or per-EIMP branch** — einmo is a small, single-maintainer repository. Implementation, and any further edits to the EIMP spec or plan, all happen as regular commits on `main`.
+3. **Work directly on `jia`.** Unlike FOOP (Foolish's process, which EIMP is adapted from), there is **no worktree or per-EIMP branch** — einmo is a small, single-maintainer repository. Implementation, and any further edits to the EIMP spec or plan, all happen as regular commits on `jia`.
 
 4. **Commit regularly** as progress is made. Good progress should be committed frequently, as logical units complete — not batched into one commit at the end.
 
@@ -162,7 +162,7 @@ begun: [x]   # work has begun
 
 Always remind them of context:
 
-> Above message comes from EIMP-<NUMBER> working to <brief description>; changes are on `main`. PTAL
+> Above message comes from EIMP-<NUMBER> working to <brief description>; changes are on `jia`. PTAL
 
 ---
 
@@ -252,7 +252,7 @@ If an EIMP was in progress and work was interrupted:
 1. **Find the EIMP**: `python3 docs/eimp/scripts/eimp_check.py list` or look for `begun: [x]` in frontmatter.
 2. **Read both files**: `EIMP-<NUMBER>.md` and `EIMP-<NUMBER>.plan.md`.
 3. **Check the plan for completed checkboxes** — they have timestamps, so you can see where work stopped.
-4. **Continue from the next unchecked checkbox**, directly on `main` (no worktree to recreate).
+4. **Continue from the next unchecked checkbox**, directly on `jia` (no worktree to recreate).
 
 ### Finding backburnered plans to revive
 
@@ -289,7 +289,7 @@ cargo fmt --check
 
 1. **Read `eimp.md` before executing or maintaining any EIMP.** This skill is a cookbook; `eimp.md` is the authority.
 2. **Read BOTH files (spec + plan) before acting.** The plan assumes the spec's context.
-3. **Work happens directly on `main`.** No worktree, no per-EIMP branch — commit regularly.
+3. **Work happens directly on `jia`.** No worktree, no per-EIMP branch — commit regularly.
 4. **Execute checkboxes top-to-bottom.** Parent tasks are not checked until all children are complete.
 5. **Every checkbox completion gets a timestamp** on the next indented line (to the minute).
 6. **Backburnered plans are excluded** from "ready/pending/active" queries. Only found by explicitly saying "backburnered."

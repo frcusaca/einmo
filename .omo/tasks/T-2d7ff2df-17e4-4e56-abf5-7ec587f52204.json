@@ -1,0 +1,9 @@
+{
+  "id": "T-2d7ff2df-17e4-4e56-abf5-7ec587f52204",
+  "subject": "Implement TUI-owned private server + wire diff/claims/ReviewMode",
+  "description": "Modify einmo_review_client.sh to: 1) Add --private mode (launch server, capture socket, trap cleanup), 2) Wire diff hunks (\\d mapping), 3) Wire claims display, 4) Wire --new-or-broken ReviewMode, 5) Update help text",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_049f125ddffe925pa2HDQWvws8"
+}

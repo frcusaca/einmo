@@ -9,7 +9,7 @@ This skill covers **creating** EIMPs: writing the specification and constructing
 
 > **Authoritative source**: `eimp.md` at the repository root. When this skill and `eimp.md` appear to disagree, `eimp.md` wins. Read `eimp.md` before creating or editing any EIMP.
 >
-> EIMP is adapted from the Foolish project's FOOP process (see `docs/eimp/EIMP-0.md` §References). Einmo is a small, single-maintainer repository, so this skill drops FOOP's worktree/multi-branch mechanics — EIMP plans execute directly on `main`.
+> EIMP is adapted from the Foolish project's FOOP process (see `docs/eimp/EIMP-0.md` §References). Einmo is a small, single-maintainer repository, so this skill drops FOOP's worktree/multi-branch mechanics — EIMP plans execute directly on `jia`.
 
 ---
 
@@ -236,7 +236,7 @@ Build the plan so that:
 
 ### No Worktree Stage
 
-FOOP (Foolish's process, which EIMP is adapted from) isolates each feature's work in a dedicated git worktree/branch, merged back to a trunk branch (`jia`) on completion. **EIMP does not do this.** Einmo is a small, single-maintainer repository; EIMP plans execute **directly on `main`**, with regular commits marking progress. Do not add worktree-creation, worktree-cleanup, or merge-to-`jia`-style checkboxes to an EIMP plan — they describe a workflow this repository does not use. If einmo's contributor base grows enough to need isolation, a new Process EIMP should introduce it explicitly (see `EIMP-0` Rejected Alternative D).
+FOOP (Foolish's process, which EIMP is adapted from) isolates each feature's work in a dedicated git worktree/branch, merged back to a trunk branch (`jia`) on completion. **EIMP does not do this.** Einmo is a small, single-maintainer repository; EIMP plans execute **directly on `jia`**, with regular commits marking progress. Do not add worktree-creation, worktree-cleanup, or merge-to-`jia`-style checkboxes to an EIMP plan — they describe a workflow this repository does not use. If einmo's contributor base grows enough to need isolation, a new Process EIMP should introduce it explicitly (see `EIMP-0` Rejected Alternative D).
 
 ### Checkbox Format
 
@@ -317,6 +317,6 @@ $EDITOR docs/eimp/EIMP-<NUMBER>.plan.md             # write from spec, expand al
 1. **Read `eimp.md` before creating or editing any EIMP.** This skill is a cookbook; `eimp.md` is the authority.
 2. **Always run `gen_next` before creating a new EIMP.** Never guess the next number. Never assign `EIMP-0` — it is reserved for the process meta-document.
 3. **At least one Rejected Alternative must be listed** in the spec, even if it's "do nothing."
-4. **No worktree/branch checkboxes.** EIMP plans execute directly on `main`.
+4. **No worktree/branch checkboxes.** EIMP plans execute directly on `jia`.
 5. **Never start substantive work when tests are broken.** Fix first.
 6. **Never commit from inside this skill** unless the user explicitly asks.

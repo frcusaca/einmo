@@ -1,0 +1,10 @@
+{
+  "id": "T-14390562-d9ff-4bc2-961a-0b4740f6251e",
+  "subject": "Phase E: DHTML frontend (4-pane review page)",
+  "description": "Single embedded page: 4-pane view, server diff hunks, verb buttons, notes→Flag, plan view with typed-PROMOTE gate, SSE refresh. Embedded via include_str! in the binary.",
+  "status": "pending",
+  "activeForm": "Building DHTML frontend",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_04a1d6ad8ffe9lFXK9db78cgAJ"
+}

@@ -1196,6 +1196,34 @@ mod tests {
 
     // --- functional tests over a seeded suite ---
 
+    static JOURNAL_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct TestContext {
+        _journal_guard: std::sync::MutexGuard<'static, ()>,
+        _journal_tmp: tempfile::TempDir,
+        suite: tempfile::TempDir,
+    }
+
+    impl TestContext {
+        fn path(&self) -> &std::path::Path {
+            self.suite.path()
+        }
+    }
+
+    fn test_context() -> TestContext {
+        let guard = JOURNAL_ENV_LOCK.lock().unwrap();
+        let journal_tmp = tempfile::tempdir().unwrap();
+        // SAFETY: serialized by `JOURNAL_ENV_LOCK`.
+        unsafe {
+            std::env::set_var("EINMO_JOURNAL_DIR", journal_tmp.path());
+        }
+        TestContext {
+            _journal_guard: guard,
+            _journal_tmp: journal_tmp,
+            suite: tempfile::tempdir().unwrap(),
+        }
+    }
+
     struct Echo;
     impl einmo::Evaluator for Echo {
         fn evaluate(&self, source: &str) -> std::result::Result<Vec<String>, String> {
@@ -1209,13 +1237,13 @@ mod tests {
         std::fs::write(path, content).unwrap();
     }
 
-    fn seeded_suite() -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().unwrap();
-        write_input(tmp.path(), "a.foo", "{1+1;}");
-        let config = TestConfig::new(tmp.path(), ValidationLevel::Output);
+    fn seeded_suite() -> TestContext {
+        let ctx = test_context();
+        write_input(ctx.path(), "a.foo", "{1+1;}");
+        let config = TestConfig::new(ctx.path(), ValidationLevel::Output);
         let suite = einmo::EinmoSuite::new(config);
         suite.evaluate_all(&Echo).unwrap();
-        tmp
+        ctx
     }
 
     fn session_args(work_dir: &Path, session: &str) -> SessionArgs {

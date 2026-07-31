@@ -1,0 +1,9 @@
+{
+  "id": "T-82ec7846-819d-427d-aab3-0358481aaf77",
+  "subject": "Write missing tests from EIMP-1 §Test Plan",
+  "description": "Write tests for 7 specific gaps in the EIMP-1 test plan across review.rs, transitions.rs, journal.rs, signature.rs, verify.rs",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_049f0d0a4ffeHKjBO6Mb1JNTJD"
+}
