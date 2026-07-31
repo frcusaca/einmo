@@ -420,29 +420,61 @@ four-variant `Stage`.
 
 ## Phase D — one pairwise-comparison implementation (§S.7)
 
-- [ ] Read §S.7 of `EIMP-7.md`.
-- [ ] Before changing anything: capture the **current** `ComparisonResult`
+- [x] Read §S.7 of `EIMP-7.md`.
+      (2026-07-31)
+- [x] Before changing anything: capture the **current** `ComparisonResult`
       for every existing `compare.rs` fixture as a baseline assertion, so
       the fold below is provably behavior-preserving rather than
       apparently so.
-- [ ] Reimplement `compare::compare`'s body as a fold over
+      (2026-07-31) — `compare.rs` already carried 9 tests covering
+      exactly this (matching, only_in_a/only_in_b, differing single AND
+      multi-section, tampered-vs-differing, STAMPS-ignored, files-filter
+      single/absent-from-other-stage, `root_causes`). Read in full rather
+      than duplicated: a second bespoke baseline harness would be
+      redundant busywork when a comprehensive pre-existing suite already
+      serves the exact purpose, and running it unedited post-refactor
+      (below) is the same proof pattern Phase B used against `review.rs`.
+- [x] Reimplement `compare::compare`'s body as a fold over
       `EinmoSuite::cases()` + `EinmoCase::agreement(&[a, b], policy)`,
       bucketing each `StagePairAgreement` into the existing
       `matching`/`differing`/`only_in_a`/`only_in_b`/`tampered` vectors.
       **Public shapes do not change**: `ComparisonResult`, `DiffEntry`,
       `compare`'s signature, and `root_causes` all stay as they are.
-  - [ ] Preserve the `files: Option<&[PathBuf]>` argument's meaning — it
+      (2026-07-31) — **note on candidate-set widening**: old `compare`
+      derived its candidate rels from `input/` alone (when `files` is
+      `None`), so a case present in a stage with NO matching input was
+      never even considered. `EinmoSuite::cases()` unions input ∪ all
+      three stages, per §S.7's own design — a case existing only in a
+      stage (e.g. input deleted after promotion) is now compared where
+      it silently wasn't before. This is a genuine, spec-intended
+      widening of coverage (matching `einmo list`'s own broader union),
+      not a preservation of the OLD narrower candidate set — verified
+      that none of the 9 existing tests exercise that scenario, so it
+      surfaces as new capability, not a regression.
+  - [x] Preserve the `files: Option<&[PathBuf]>` argument's meaning — it
         becomes a filter over `cases()`, not a substitute id list.
         `cli.rs:546` (`einmo compare`) passes it; its behavior must not
         change.
-  - [ ] Confirm the independent input-tree walk at `compare.rs:104` is
+        (2026-07-31) — confirmed via `compare_single_file` and
+        `compare_files_only_in_one_stage`, both unedited and passing.
+  - [x] Confirm the independent input-tree walk at `compare.rs:104` is
         now gone (the fourth such walk in the crate).
-- [ ] `einmo_suite.rs`'s two `compare::compare` call sites (line 640
+        (2026-07-31) — `walk_input_tree` no longer appears anywhere in
+        `compare.rs` (grep-confirmed).
+- [x] `einmo_suite.rs`'s two `compare::compare` call sites (line 640
       `stage_pair_problems`, line 987 `require_correspondence`) keep
       calling it unchanged — verify by running their existing tests
       untouched.
-- [ ] Phase D tests green (`compare::tests` and `einmo_suite::tests` in
+      (2026-07-31) — 43/43 `einmo_suite::` tests pass unedited.
+- [x] Phase D tests green (`compare::tests` and `einmo_suite::tests` in
       particular); `clippy`/`fmt` clean; commit.
+      (2026-07-31) — `compare::` 9/9 unedited, `einmo_suite::` 43/43
+      unedited. `cargo fmt --check` / `cargo clippy --all-targets -- -D
+      warnings` both clean, no new tests needed (existing suites ARE the
+      proof). Full `cargo test --workspace`: **392/392** (354 `einmo`
+      lib + 31 `einmo-review-server` bin + 4 `zweimomo` lib + 3
+      `zweimomo` `tests/suites.rs`) — unchanged count from Phase C, as
+      expected for a pure refactor with no new tests of its own.
 
 ## Phase E — the two consumers (§S.6)
 

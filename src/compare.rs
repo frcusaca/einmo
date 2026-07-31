@@ -6,11 +6,14 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::case::StagePairAgreement;
 pub use crate::config::MatchSections;
 use crate::config::TestConfig;
 use crate::error::Result;
 use crate::format::EinmoFile;
-use crate::stage::{Stage, mirror_input_path, walk_input_tree};
+use crate::stage::{Stage, mirror_input_path};
+use crate::storage::EinmoDirectory;
+use crate::suite::EinmoSuite;
 use crate::transitions::normalize_file_path;
 
 /// A file that differs, naming which configured section(s) diverged.
@@ -72,15 +75,26 @@ fn is_required_section(name: &str, policy: MatchSections) -> bool {
     always || comments
 }
 
-/// Compare `a` against `b` over the mirrored input tree.
+/// Compare `a` against `b` over the suite.
+///
+/// `EIMP-7` §S.7: a thin fold over [`EinmoSuite`] — `EinmoCase::agreement`
+/// is the actual per-pair comparison (verify-on-inspect both sides,
+/// `compare_sections` under `sections`), this function just buckets the
+/// result into [`ComparisonResult`]'s existing shape. Retires the
+/// independent input-tree walk this function used to perform on its own —
+/// the suite is scanned once, the same way `einmo list`/`einmo test`/
+/// `einmo review` scan it.
 ///
 /// When `files` is `Some`, only those user-provided paths (normalized to
-/// mirror-relative) are compared; the full input-tree walk is skipped. When
-/// `None`, all mirrored `.einmo` files present in either stage are compared.
+/// mirror-relative) are compared — a filter over the suite's cases, not a
+/// substitute id list; a path naming a case absent from the ENTIRE suite
+/// (present at neither stage, nor input, nor any other stage) is silently
+/// skipped, same as before. When `None`, every case in the suite is
+/// compared.
 ///
 /// # Errors
 ///
-/// Returns [`crate::EinmoError::Io`] if the input tree cannot be walked.
+/// Returns [`crate::EinmoError::Io`] if the suite cannot be scanned.
 pub fn compare(
     config: &TestConfig,
     a: Stage,
@@ -88,11 +102,7 @@ pub fn compare(
     sections: MatchSections,
     files: Option<&[PathBuf]>,
 ) -> Result<ComparisonResult> {
-    let dir_a = config.stage_dir(a);
-    let dir_b = config.stage_dir(b);
-    let mut result = ComparisonResult::default();
-
-    let rels: Vec<PathBuf> = if let Some(files) = files {
+    let wanted: Option<Vec<PathBuf>> = files.map(|files| {
         let mut v: Vec<PathBuf> = files
             .iter()
             .map(|p| normalize_file_path(p, config))
@@ -100,38 +110,39 @@ pub fn compare(
         v.sort();
         v.dedup();
         v
-    } else {
-        let inputs = walk_input_tree(&config.input_path(), config.walk_depth_limit())?;
-        inputs.into_iter().map(|p| mirror_input_path(&p)).collect()
-    };
+    });
 
-    for rel in &rels {
-        let path_a = dir_a.join(rel);
-        let path_b = dir_b.join(rel);
-        match (path_a.exists(), path_b.exists()) {
-            (false, false) => {}
-            (true, false) => result.only_in_a.push(rel.clone()),
-            (false, true) => result.only_in_b.push(rel.clone()),
-            (true, true) => {
-                // Verify-on-inspect both; a failure means tampered, not differing.
-                let (file_a, file_b) =
-                    match (EinmoFile::from_file(&path_a), EinmoFile::from_file(&path_b)) {
-                        (Ok(fa), Ok(fb)) => (fa, fb),
-                        _ => {
-                            result.tampered.push(rel.clone());
-                            continue;
-                        }
-                    };
-                let diverged = compare_sections(&file_a, &file_b, sections);
-                if diverged.is_empty() {
-                    result.matching.push(rel.clone());
+    let directory = EinmoDirectory::new(config.clone());
+    let suite = EinmoSuite::scan(directory, None)?;
+    let mut result = ComparisonResult::default();
+
+    for case in suite.cases() {
+        let rel = mirror_input_path(Path::new(case.id().as_str()));
+        if let Some(wanted) = &wanted
+            && !wanted.contains(&rel)
+        {
+            continue;
+        }
+
+        let agreement = case.agreement(&[a, b], sections)?;
+        match agreement.pair(a, b) {
+            Some(StagePairAgreement::Agree) => result.matching.push(rel),
+            Some(StagePairAgreement::Differ { sections }) => result.differing.push(DiffEntry {
+                rel_path: rel,
+                sections: sections.clone(),
+            }),
+            Some(StagePairAgreement::OneSided { present, .. }) => {
+                if *present == a {
+                    result.only_in_a.push(rel);
                 } else {
-                    result.differing.push(DiffEntry {
-                        rel_path: rel.clone(),
-                        sections: diverged,
-                    });
+                    result.only_in_b.push(rel);
                 }
             }
+            Some(StagePairAgreement::Tampered { .. }) => result.tampered.push(rel),
+            // Neither side present: not counted anywhere, matching the
+            // pre-EIMP-7 behavior of never even adding such a rel to the
+            // candidate list.
+            Some(StagePairAgreement::BothAbsent) | None => {}
         }
     }
     Ok(result)
