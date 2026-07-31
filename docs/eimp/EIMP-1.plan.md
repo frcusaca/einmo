@@ -18,6 +18,9 @@ agent@agent1-0:/yolo$ ls -lah /yolo/tmp/einmo-journal/undecide-chain.jsonl /yolo
 -rw-r--r-- 1 agent agent 3.2G Jul 31 01:12 /yolo/tmp/einmo-journal/undecide-chain.jsonl                                                                                                       
 -rw-r--r-- 1 agent agent 2.7G Jul 31 01:12 /yolo/tmp/einmo-journal/verified-with-passphrase.jsonl                                                                                             
 PTAL!!!
+
+Secondly, I noticed that the AI agent automatically started working on the `main` branch and has done significant work on it.
+- [ ] Update AGENTS.md and README.md to insist that the primary branch of einmo is called 'jia'. the 'main' branch has no meaning here.
 ```
 Read `docs/eimp/EIMP-1.md` before acting on any task below. Tasks run top to
 bottom; each phase lands value on its own. This plan is adapted from the
