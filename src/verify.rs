@@ -412,7 +412,12 @@ mod tests {
 
         // Flag the artifact (move to output/flagged/ with advisory --
         // EIMP-7 §S.2a nests the sink inside its origin stage).
-        crate::transitions::flag(&config, Stage::Output, None, "broken", None).unwrap();
+        let directory = crate::storage::EinmoDirectory::new(config.clone());
+        let case = crate::case::EinmoCase::new(
+            crate::stage::EinmoId::from_input_rel(std::path::Path::new("t.foo")).unwrap(),
+            &directory,
+        );
+        case.flag(Stage::Output, "broken").unwrap();
         assert!(!out_path.exists());
         let flagged_path = config.flagged_dir(Stage::Output).join("t.foo.einmo");
         assert!(flagged_path.exists());

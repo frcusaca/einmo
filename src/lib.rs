@@ -73,7 +73,7 @@ pub use suite::{DirectoryNode, EinmoSuite};
 pub use suite_lock::{SuiteLock, suite_lock_path};
 pub use transitions::{
     FlagReport, NoteReport, PromotionReport, RetractReport, SignatureReport, confirm_signatures,
-    flag, promote, promote_flag_to_note, retract,
+    promote_flag_to_note,
 };
 pub use verify::{
     FileVerification, StampVerification, VerificationReport, verify, verify_all, verify_bytes,

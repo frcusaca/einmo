@@ -292,15 +292,22 @@ impl<'s, S: EinmoStorage> EinmoCase<'s, S> {
     /// would make the stamp attest to content that was never inspected.
     ///
     /// # Errors
-    /// Returns [`EinmoError::Verification`] if the source is absent or
-    /// fails verify-on-inspect. Propagates any [`EinmoStorage`] I/O
-    /// failure.
+    /// Returns [`EinmoError::IllegalTransition`] for a disallowed
+    /// `(from, to)` pair, [`EinmoError::Verification`] if the source is
+    /// absent or fails verify-on-inspect. Propagates any [`EinmoStorage`]
+    /// I/O failure.
     pub(crate) fn promote(
         &self,
         from: Stage,
         to: Stage,
         key: &StageKeypair,
     ) -> Result<PromoteOutcome> {
+        if !crate::transitions::is_legal_transition(from, to) {
+            return Err(EinmoError::IllegalTransition {
+                from: from.to_string(),
+                to: to.to_string(),
+            });
+        }
         let non_human = to == Stage::Verified && is_computer_key(&key.pubkey_hex());
 
         let src_bytes = self
@@ -940,6 +947,29 @@ mod tests {
         assert!(matches!(err, EinmoError::Verification(_)));
     }
 
+    /// Found during Phase F's audit: this check was missing entirely from
+    /// the initial port -- `EinmoCase::promote` must refuse an illegal
+    /// `(from, to)` pair itself, the same guarantee `transitions::promote`
+    /// always gave, since this is now a general-purpose primitive a CLI
+    /// caller can invoke with any pair a user names.
+    #[test]
+    fn promote_refuses_an_illegal_transition() {
+        let storage = InMemoryStorage::new();
+        let case_id = id("a.foo");
+        storage
+            .write(
+                &case_id,
+                ArtifactLocation::Stage(Stage::Verified),
+                &signed_bytes("a.foo", "5", ""),
+            )
+            .unwrap();
+        let case = EinmoCase::new(case_id, &storage);
+        let err = case
+            .promote(Stage::Verified, Stage::Output, &derive(""))
+            .unwrap_err();
+        assert!(matches!(err, EinmoError::IllegalTransition { .. }));
+    }
+
     // ---- flag() / retract() ----
 
     #[test]
@@ -1043,6 +1073,57 @@ mod tests {
         assert!(matches!(
             case.retract(Stage::Output).unwrap_err(),
             EinmoError::Config(_)
+        ));
+    }
+
+    /// Retracting `verified` removes only verified — it is the top of the
+    /// chain, and the `checked` baseline beneath it survives untouched.
+    #[test]
+    fn retract_verified_leaves_checked() {
+        let storage = InMemoryStorage::new();
+        let case_id = id("a.foo");
+        let case = EinmoCase::new(case_id.clone(), &storage);
+        let bytes = signed_bytes("a.foo", "5", "");
+        storage
+            .write(&case_id, ArtifactLocation::Stage(Stage::Checked), &bytes)
+            .unwrap();
+        storage
+            .write(&case_id, ArtifactLocation::Stage(Stage::Verified), &bytes)
+            .unwrap();
+
+        let retracted = case.retract(Stage::Verified).unwrap();
+        assert_eq!(retracted, vec![Stage::Verified]);
+        assert!(
+            case.read(ArtifactLocation::Stage(Stage::Checked))
+                .unwrap()
+                .is_some(),
+            "the checked baseline survives"
+        );
+    }
+
+    /// `promote` refuses a source that fails verify-on-inspect (tampered),
+    /// distinct from an absent source (`promote_errors_when_source_is_
+    /// absent`) — both raise `Verification`, but for different reasons,
+    /// and this is the "corrupted, not just missing" case
+    /// `transitions::promote`'s own test suite used to cover.
+    #[test]
+    fn promote_refuses_tampered_source() {
+        let storage = InMemoryStorage::new();
+        let case_id = id("a.foo");
+        storage
+            .write(
+                &case_id,
+                ArtifactLocation::Stage(Stage::Output),
+                b"not a valid einmo envelope",
+            )
+            .unwrap();
+        let case = EinmoCase::new(case_id, &storage);
+        let err = case
+            .promote(Stage::Output, Stage::Checked, &derive(""))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            EinmoError::Verification(_) | EinmoError::Parse(_)
         ));
     }
 }

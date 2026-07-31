@@ -2585,7 +2585,11 @@ mod tests {
 
         let config = TestConfig::new(tmp.path(), ValidationLevel::Output);
         let key = crate::config::KeySource::from_passphrase("");
-        let report = crate::promote(&config, Stage::Output, Stage::Checked, &key, None, None)
+        let suite =
+            crate::suite::EinmoSuite::scan(crate::storage::EinmoDirectory::new(config), None)
+                .unwrap();
+        let report = suite
+            .promote(Stage::Output, Stage::Checked, &key, None, None)
             .expect("promote should succeed on the signed crash-crumb");
         assert_eq!(report.promoted.len(), 1);
 

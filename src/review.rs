@@ -19,9 +19,8 @@ use crate::format::EinmoFile;
 use crate::signature::StageKeypair;
 use crate::stage::EinmoId;
 use crate::stage::Stage;
-use crate::storage::EinmoDirectory;
+use crate::storage::{ArtifactLocation, EinmoDirectory};
 use crate::suite::EinmoSuite;
-use crate::transitions::{self, FlagReport, RetractReport};
 
 /// A reviewer's decision about one case. Replace-not-stack: a later
 /// [`EinmoReview::decide`] call for the same [`EinmoId`] replaces, never
@@ -697,10 +696,9 @@ impl EinmoReview {
         // write — the same `exec` mutex `execute` already holds for its
         // whole duration.
         let _guard = self.exec.lock().expect("exec lock poisoned");
-        let rel = crate::stage::mirror_input_path(std::path::Path::new(id.as_str()));
-        let files = [rel];
-        let report = transitions::flag(&self.config, stage, None, reason, Some(&files))?;
-        if report.flagged.is_empty() {
+        let directory = EinmoDirectory::new(self.config.clone());
+        let case = EinmoCase::new(id.clone(), &directory);
+        if case.read(ArtifactLocation::Stage(stage))?.is_none() {
             return Err(EinmoError::io(
                 id.to_stage_path(self.config.work_dir(), stage),
                 std::io::Error::new(
@@ -709,6 +707,7 @@ impl EinmoReview {
                 ),
             ));
         }
+        case.flag(stage, reason)?;
         self.decisions
             .write()
             .expect("decisions lock poisoned")
@@ -720,13 +719,13 @@ impl EinmoReview {
     /// convenience call, unlike promote. Retraction needs no signing and no
     /// gate (it only removes files), so there is nothing a two-call shape
     /// would protect (EIMP-2 §3). Cascades `checked → verified` per
-    /// [`transitions::retract`]. Also clears any pending decision for `id`.
+    /// [`EinmoCase::retract`]. Also clears any pending decision for `id`.
     ///
     /// # Errors
     ///
-    /// Returns [`EinmoError::Config`] if `stage` is `output` or `flagged`
-    /// (not a retractable baseline), or an error if `stage` holds nothing
-    /// for `id`.
+    /// Returns [`EinmoError::Config`] if `stage` is `output` (not a
+    /// retractable baseline), or an error if `stage` holds nothing for
+    /// `id`.
     pub fn retract_now(&self, id: &EinmoId, stage: Stage) -> Result<()> {
         // Same `exec` mutex `flag_now`/`execute` already take: a concurrent
         // `execute()` batch promoting this SAME id into `checked`/`verified`
@@ -736,10 +735,14 @@ impl EinmoReview {
         // reverse), leaving a retract/promote report that doesn't match
         // final disk state.
         let _guard = self.exec.lock().expect("exec lock poisoned");
-        let rel = crate::stage::mirror_input_path(std::path::Path::new(id.as_str()));
-        let files = [rel];
-        let report = transitions::retract(&self.config, stage, None, Some(&files))?;
-        if report.retracted.is_empty() {
+        let directory = EinmoDirectory::new(self.config.clone());
+        let case = EinmoCase::new(id.clone(), &directory);
+        // `EinmoCase::retract` checks `stage == Output` FIRST, before
+        // touching storage, so this call errors immediately for Output —
+        // no separate pre-check needed to match `transitions::retract`'s
+        // old ordering.
+        let retracted = case.retract(stage)?;
+        if retracted.is_empty() {
             return Err(EinmoError::io(
                 id.to_stage_path(self.config.work_dir(), stage),
                 std::io::Error::new(
@@ -1000,36 +1003,28 @@ impl EinmoReview {
             match action {
                 PlannedAction::Promote { .. } => {} // handled in the grouped pass above
                 PlannedAction::Retract { id, from } => {
-                    let rel = crate::stage::mirror_input_path(std::path::Path::new(id.as_str()));
-                    let files = [rel];
-                    let outcome: Result<RetractReport> =
-                        transitions::retract(&self.config, *from, None, Some(&files));
-                    match outcome {
-                        Ok(r) if !r.retracted.is_empty() => {
+                    let case = EinmoCase::new(id.clone(), &directory);
+                    match case.retract(*from) {
+                        Ok(retracted) if !retracted.is_empty() => {
                             report.executed.push(Executed {
                                 id: id.clone(),
                                 detail: format!("retracted from {from}"),
                                 non_human: false,
                             });
                         }
-                        Ok(_) => report.skipped.push(id.clone()),
-                        Err(_) => report.skipped.push(id.clone()),
+                        Ok(_) | Err(_) => report.skipped.push(id.clone()),
                     }
                 }
                 PlannedAction::Flag { id, stage, reason } => {
-                    let rel = crate::stage::mirror_input_path(std::path::Path::new(id.as_str()));
-                    let files = [rel];
-                    let outcome: Result<FlagReport> =
-                        transitions::flag(&self.config, *stage, None, reason, Some(&files));
-                    match outcome {
-                        Ok(r) if !r.flagged.is_empty() => {
+                    let case = EinmoCase::new(id.clone(), &directory);
+                    match case.flag(*stage, reason) {
+                        Ok(()) => {
                             report.executed.push(Executed {
                                 id: id.clone(),
                                 detail: format!("flagged from {stage}"),
                                 non_human: false,
                             });
                         }
-                        Ok(_) => report.skipped.push(id.clone()),
                         Err(_) => report.skipped.push(id.clone()),
                     }
                 }
@@ -1284,15 +1279,16 @@ mod tests {
 
     fn promote_output_to_checked(dir: &std::path::Path) {
         let config = TestConfig::new(dir, crate::einmo_suite::ValidationLevel::Output);
-        transitions::promote(
-            &config,
-            Stage::Output,
-            Stage::Checked,
-            &KeySource::from_passphrase(""),
-            None,
-            None,
-        )
-        .unwrap();
+        EinmoSuite::scan(EinmoDirectory::new(config.clone()), None)
+            .unwrap()
+            .promote(
+                Stage::Output,
+                Stage::Checked,
+                &KeySource::from_passphrase(""),
+                None,
+                None,
+            )
+            .unwrap();
     }
 
     #[test]
@@ -1378,24 +1374,26 @@ mod tests {
         // test's own premise ("b.foo stays output-only") was revealed to
         // have been false all along. Filtering to "a.foo" here makes the
         // premise true, not just the assertion.
-        transitions::promote(
-            &config,
-            Stage::Output,
-            Stage::Checked,
-            &KeySource::from_passphrase(""),
-            Some("a.foo"),
-            None,
-        )
-        .unwrap();
-        transitions::promote(
-            &config,
-            Stage::Checked,
-            Stage::Verified,
-            &KeySource::from_passphrase(""),
-            Some("a.foo"),
-            None,
-        )
-        .unwrap();
+        EinmoSuite::scan(EinmoDirectory::new(config.clone()), None)
+            .unwrap()
+            .promote(
+                Stage::Output,
+                Stage::Checked,
+                &KeySource::from_passphrase(""),
+                Some("a.foo"),
+                None,
+            )
+            .unwrap();
+        EinmoSuite::scan(EinmoDirectory::new(config.clone()), None)
+            .unwrap()
+            .promote(
+                Stage::Checked,
+                Stage::Verified,
+                &KeySource::from_passphrase(""),
+                Some("a.foo"),
+                None,
+            )
+            .unwrap();
 
         // b.foo stays output-only: no checked/verified baseline at all, so
         // it qualifies as "new" under NewOrBroken.
@@ -2318,24 +2316,26 @@ mod tests {
     fn execute_retract_matches_cli_retract_and_cascades() {
         let tmp = seeded_suite();
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        transitions::promote(
-            &config,
-            Stage::Output,
-            Stage::Checked,
-            &KeySource::from_passphrase(""),
-            None,
-            None,
-        )
-        .unwrap();
-        transitions::promote(
-            &config,
-            Stage::Checked,
-            Stage::Verified,
-            &KeySource::from_passphrase(""),
-            None,
-            None,
-        )
-        .unwrap();
+        EinmoSuite::scan(EinmoDirectory::new(config.clone()), None)
+            .unwrap()
+            .promote(
+                Stage::Output,
+                Stage::Checked,
+                &KeySource::from_passphrase(""),
+                None,
+                None,
+            )
+            .unwrap();
+        EinmoSuite::scan(EinmoDirectory::new(config.clone()), None)
+            .unwrap()
+            .promote(
+                Stage::Checked,
+                Stage::Verified,
+                &KeySource::from_passphrase(""),
+                None,
+                None,
+            )
+            .unwrap();
         assert!(tmp.path().join("verified/a.foo.einmo").exists());
 
         let review = EinmoReview::open(tmp.path());
@@ -2367,24 +2367,26 @@ mod tests {
     fn execute_retract_from_verified_removes_only_verified() {
         let tmp = seeded_suite();
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        transitions::promote(
-            &config,
-            Stage::Output,
-            Stage::Checked,
-            &KeySource::from_passphrase(""),
-            None,
-            None,
-        )
-        .unwrap();
-        transitions::promote(
-            &config,
-            Stage::Checked,
-            Stage::Verified,
-            &KeySource::from_passphrase(""),
-            None,
-            None,
-        )
-        .unwrap();
+        EinmoSuite::scan(EinmoDirectory::new(config.clone()), None)
+            .unwrap()
+            .promote(
+                Stage::Output,
+                Stage::Checked,
+                &KeySource::from_passphrase(""),
+                None,
+                None,
+            )
+            .unwrap();
+        EinmoSuite::scan(EinmoDirectory::new(config.clone()), None)
+            .unwrap()
+            .promote(
+                Stage::Checked,
+                Stage::Verified,
+                &KeySource::from_passphrase(""),
+                None,
+                None,
+            )
+            .unwrap();
 
         let review = EinmoReview::open(tmp.path());
         let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
@@ -2525,15 +2527,16 @@ mod tests {
         let tmp = seeded_suite();
         promote_output_to_checked(tmp.path());
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        transitions::promote(
-            &config,
-            Stage::Checked,
-            Stage::Verified,
-            &KeySource::from_passphrase(""),
-            None,
-            None,
-        )
-        .unwrap();
+        EinmoSuite::scan(EinmoDirectory::new(config.clone()), None)
+            .unwrap()
+            .promote(
+                Stage::Checked,
+                Stage::Verified,
+                &KeySource::from_passphrase(""),
+                None,
+                None,
+            )
+            .unwrap();
         let review = EinmoReview::open(tmp.path());
         let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
 
@@ -2765,8 +2768,10 @@ mod tests {
         // checked again is a genuine, file-writing `(Output, Checked)`
         // group -- distinct from a.foo's `(Checked, Verified)` group.
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let b_rel = crate::stage::mirror_input_path(std::path::Path::new(b.as_str()));
-        transitions::retract(&config, Stage::Checked, None, Some(&[b_rel])).unwrap();
+        EinmoSuite::scan(EinmoDirectory::new(config), None)
+            .unwrap()
+            .retract(Stage::Checked, None, Some(std::slice::from_ref(&b)))
+            .unwrap();
 
         review.decide(
             a.clone(),
@@ -3017,8 +3022,15 @@ mod tests {
             .unwrap();
         // Re-promote output→checked so the checked baseline (the decision's
         // basis for a checked→verified promotion) reflects the new content.
-        transitions::promote(
-            &TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output),
+        EinmoSuite::scan(
+            EinmoDirectory::new(TestConfig::new(
+                ctx.path(),
+                crate::einmo_suite::ValidationLevel::Output,
+            )),
+            None,
+        )
+        .unwrap()
+        .promote(
             Stage::Output,
             Stage::Checked,
             &KeySource::from_passphrase(""),

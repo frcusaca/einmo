@@ -16,7 +16,9 @@ use crate::config::{KeyCascadeInputs, KeySource, MatchSections, TestConfig, reso
 use crate::einmo_suite::{FailurePolicy, ValidationLevel};
 use crate::error::{EinmoError, Result};
 use crate::format::EinmoFile;
-use crate::stage::Stage;
+use crate::stage::{EinmoId, Stage};
+use crate::storage::EinmoDirectory;
+use crate::suite::EinmoSuite;
 
 /// The `einmo` command-line interface.
 #[derive(Parser, Debug)]
@@ -405,6 +407,35 @@ fn files_ref(files: &[PathBuf]) -> Option<&[PathBuf]> {
     if files.is_empty() { None } else { Some(files) }
 }
 
+/// Resolve user-provided file paths (any of `test.foo`, bare/stage-relative/
+/// absolute `.einmo` paths — see [`crate::transitions::normalize_file_path`])
+/// into [`EinmoId`]s for [`EinmoSuite::promote`]/`flag`/`retract`'s `ids`
+/// parameter. This is the one place path normalization happens: `EinmoSuite`
+/// itself is storage-agnostic and knows nothing about stage-relative or
+/// absolute filesystem paths, only ids — normalization is a filesystem/
+/// `TestConfig` concept, so it lives here, in the CLI layer that has both.
+///
+/// A path that fails id validation is silently dropped — matching
+/// `transitions.rs`'s prior behavior of silently producing nothing for a
+/// bogus/nonexistent path rather than erroring.
+fn files_ref_to_ids(files: &[PathBuf], config: &TestConfig) -> Option<Vec<EinmoId>> {
+    if files.is_empty() {
+        return None;
+    }
+    let mut ids: Vec<EinmoId> = files
+        .iter()
+        .map(|p| crate::transitions::normalize_file_path(p, config))
+        .filter_map(|mirror_rel| {
+            let s = mirror_rel.to_string_lossy();
+            let stripped = s.strip_suffix(".einmo").unwrap_or(&s);
+            EinmoId::from_input_rel(Path::new(stripped)).ok()
+        })
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Some(ids)
+}
+
 /// Split promote's positional arguments into `(from, to, work_dir, files)`.
 ///
 /// Accepts two shapes:
@@ -441,14 +472,9 @@ fn cmd_promote(args: PromoteArgs) -> Result<ExitCode> {
     }
     let key = resolve_promotion_key(to, &args, &config)?;
     let files = resolve_files(positional_files)?;
-    let report = crate::promote(
-        &config,
-        from,
-        to,
-        &key,
-        args.filter.as_deref(),
-        files_ref(&files),
-    )?;
+    let ids = files_ref_to_ids(&files, &config);
+    let suite = EinmoSuite::scan(EinmoDirectory::new(config), None)?;
+    let report = suite.promote(from, to, &key, args.filter.as_deref(), ids.as_deref())?;
 
     // Warn on any non-human verified attestation.
     for promoted in &report.promoted {
@@ -496,13 +522,9 @@ fn cmd_flag(args: FlagArgs) -> Result<ExitCode> {
         config = config.with_walk_depth_limit(limit);
     }
     let files = resolve_files(args.files)?;
-    let report = crate::flag(
-        &config,
-        stage,
-        args.filter.as_deref(),
-        &args.reason,
-        files_ref(&files),
-    )?;
+    let ids = files_ref_to_ids(&files, &config);
+    let suite = EinmoSuite::scan(EinmoDirectory::new(config), None)?;
+    let report = suite.flag(stage, &args.reason, args.filter.as_deref(), ids.as_deref())?;
     if args.json {
         println!("{{\"flagged\":{}}}", report.flagged.len());
     } else {
@@ -518,7 +540,9 @@ fn cmd_retract(args: RetractArgs) -> Result<ExitCode> {
         config = config.with_walk_depth_limit(limit);
     }
     let files = resolve_files(args.files)?;
-    let report = crate::retract(&config, stage, args.filter.as_deref(), files_ref(&files))?;
+    let ids = files_ref_to_ids(&files, &config);
+    let suite = EinmoSuite::scan(EinmoDirectory::new(config), None)?;
+    let report = suite.retract(stage, args.filter.as_deref(), ids.as_deref())?;
     if args.json {
         println!("{{\"retracted\":{}}}", report.retracted.len());
     } else {

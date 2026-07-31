@@ -4,11 +4,15 @@
 //! and `einmo review` both already call through today.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
-use crate::case::EinmoCase;
-use crate::error::Result;
-use crate::stage::{EinmoId, Stage};
+use crate::case::{EinmoCase, PromoteOutcome};
+use crate::config::KeySource;
+use crate::error::{EinmoError, Result};
+use crate::signature::StageKeypair;
+use crate::stage::{EinmoId, Stage, mirror_input_path};
 use crate::storage::{ArtifactLocation, EinmoStorage};
+use crate::transitions::{FlagReport, Promoted, PromotionReport, RetractReport};
 
 /// An in-memory snapshot of one suite: every [`EinmoId`] with something at
 /// `input/` or any stage, built by one scan.
@@ -74,6 +78,138 @@ impl<S: EinmoStorage> EinmoSuite<S> {
             .map(|_| EinmoCase::new(id.clone(), &self.storage))
     }
 
+    /// The cases [`Self::promote`]/[`Self::flag`]/[`Self::retract`]
+    /// select: `ids`, when given, names the EXACT cases and `filter` is
+    /// ignored — a name absent from this suite is silently skipped,
+    /// matching `transitions.rs`'s existing `files`-overrides-`filter`
+    /// precedent. When `ids` is `None`, every case matching `filter` (or
+    /// every case, if `filter` is also `None`) is selected.
+    fn select(&self, filter: Option<&str>, ids: Option<&[EinmoId]>) -> Vec<EinmoCase<'_, S>> {
+        match ids {
+            Some(ids) => ids.iter().filter_map(|id| self.case(id)).collect(),
+            None => self
+                .cases()
+                .filter(|c| filter.is_none_or(|f| c.id().as_str().contains(f)))
+                .collect(),
+        }
+    }
+
+    /// Promote every selected case from `from` to `to`, deriving the
+    /// destination `StageKeypair` ONCE for the whole batch and lending it
+    /// to each [`EinmoCase::promote`] call (`EIMP-7` §S.10 — Argon2id is
+    /// ~1.8s by design; per-case derivation made a 161-case promotion
+    /// take ~5 minutes of pure CPU). This is the public entry point;
+    /// `EinmoCase::promote` itself is `pub(crate)`.
+    ///
+    /// A case with nothing at `from` is silently skipped, not an error —
+    /// matching `transitions::promote`'s existing behavior of only ever
+    /// considering cases present at the source stage. Selection follows
+    /// [`Self::select`].
+    ///
+    /// # Errors
+    /// Returns [`EinmoError::IllegalTransition`] for a disallowed pair —
+    /// checked here, UNCONDITIONALLY, before selection, so this errors
+    /// even for an empty selection (an empty suite, or a filter matching
+    /// nothing) rather than silently succeeding with an empty report.
+    /// `EinmoCase::promote` repeats the same check per case; redundant on
+    /// this call path (the suite-level check always fires first) but is
+    /// what protects a caller that constructs an `EinmoCase` directly
+    /// (`EinmoReview::execute`). Propagates any [`EinmoStorage`] I/O or
+    /// verify-on-inspect failure from a case that WAS present at `from`.
+    pub fn promote(
+        &self,
+        from: Stage,
+        to: Stage,
+        key: &KeySource,
+        filter: Option<&str>,
+        ids: Option<&[EinmoId]>,
+    ) -> Result<PromotionReport> {
+        if !crate::transitions::is_legal_transition(from, to) {
+            return Err(EinmoError::IllegalTransition {
+                from: from.to_string(),
+                to: to.to_string(),
+            });
+        }
+        let keypair = StageKeypair::derive(key.passphrase());
+        let mut report = PromotionReport::default();
+        for case in self.select(filter, ids) {
+            if case.read(ArtifactLocation::Stage(from))?.is_none() {
+                continue;
+            }
+            let outcome = case.promote(from, to, &keypair)?;
+            let non_human = match outcome {
+                PromoteOutcome::Promoted { non_human }
+                | PromoteOutcome::CoSigned { non_human }
+                | PromoteOutcome::AlreadySigned { non_human } => non_human,
+            };
+            report.promoted.push(Promoted {
+                rel_path: mirror_input_path(Path::new(case.id().as_str())),
+                stamp_pubkey: keypair.pubkey_hex(),
+                non_human,
+            });
+        }
+        Ok(report)
+    }
+
+    /// Flag every selected case's `stage` artifact — see
+    /// [`EinmoCase::flag`]. A case with nothing at `stage` is silently
+    /// skipped. Selection follows [`Self::select`].
+    ///
+    /// # Errors
+    /// Propagates any [`EinmoStorage`] I/O or verify-on-inspect failure
+    /// from a case that WAS present at `stage`.
+    pub fn flag(
+        &self,
+        stage: Stage,
+        reason: &str,
+        filter: Option<&str>,
+        ids: Option<&[EinmoId]>,
+    ) -> Result<FlagReport> {
+        let mut report = FlagReport::default();
+        for case in self.select(filter, ids) {
+            if case.read(ArtifactLocation::Stage(stage))?.is_none() {
+                continue;
+            }
+            case.flag(stage, reason)?;
+            report
+                .flagged
+                .push(mirror_input_path(Path::new(case.id().as_str())));
+        }
+        Ok(report)
+    }
+
+    /// Retract every selected case from `stage` (cascading `checked` →
+    /// `verified`) — see [`EinmoCase::retract`]. Selection follows
+    /// [`Self::select`].
+    ///
+    /// # Errors
+    /// Returns [`EinmoError::Config`] if `stage` is `output` — checked
+    /// here, UNCONDITIONALLY, before selection, for the same "must error
+    /// even on an empty selection" reason as [`Self::promote`]'s
+    /// transition check; `EinmoCase::retract` repeats the same check per
+    /// case. Propagates any [`EinmoStorage`] I/O failure.
+    pub fn retract(
+        &self,
+        stage: Stage,
+        filter: Option<&str>,
+        ids: Option<&[EinmoId]>,
+    ) -> Result<RetractReport> {
+        if stage == Stage::Output {
+            return Err(EinmoError::Config(
+                "cannot retract from output/: it is regenerated every run".into(),
+            ));
+        }
+        let mut report = RetractReport::default();
+        for case in self.select(filter, ids) {
+            let retracted = case.retract(stage)?;
+            let rel = mirror_input_path(Path::new(case.id().as_str()));
+            for target in retracted {
+                report.retracted.push((target, rel.clone()));
+            }
+        }
+        Ok(report)
+    }
+
     /// Group this suite's cases by their [`EinmoId`]'s path components —
     /// `foop/23/sub_feature/test1` nests under `foop` → `foop/23` →
     /// `foop/23/sub_feature`. Pure and on-demand: no separate tree state
@@ -129,6 +265,8 @@ pub struct DirectoryNode<'a, S: EinmoStorage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
     use crate::config::TestConfig;
     use crate::einmo_suite::ValidationLevel;
     use crate::storage::{EinmoDirectory, InMemoryStorage};
@@ -336,5 +474,273 @@ mod tests {
         let via_directory = EinmoSuite::scan(dir, None).unwrap();
         let via_memory = EinmoSuite::scan(mem, None).unwrap();
         assert_eq!(via_directory.ids(), via_memory.ids());
+    }
+
+    // ---- promote() / flag() / retract() ----
+    //
+    // Batch/selection-specific behavior for the one promote/flag/retract
+    // implementation (`EIMP-7` §S.4, §S.10) -- single-case mechanics
+    // (stamp chains, co-signing, tampered-source refusal, illegal-
+    // transition refusal, re-flag concatenation) are `EinmoCase`'s own
+    // tests in `case.rs`; these prove the SUITE-level selection and batch
+    // discipline built on top of it, ported from `transitions.rs`'s
+    // former `promote`/`flag`/`retract` free-function tests.
+
+    fn signed_bytes(rel: &str, output: &str) -> Vec<u8> {
+        use crate::format::{DEFAULT_SEPARATOR, EinmoFile, Metadata, Section, Status};
+        use crate::signature::{Stamps, derive_keypair};
+        let bodies = vec![
+            Section::new("INPUT", "{5;}"),
+            Section::new("OUTPUT", output),
+            Section::new("COMMENTS", ""),
+        ];
+        let meta = Metadata {
+            test: rel.into(),
+            suite: "s".into(),
+            producer: "abc".into(),
+            producer_diff: String::new(),
+            generated: "2026-07-11T07:00:00Z".into(),
+            status: Status::Normal,
+            status_detail: String::new(),
+            reference: String::new(),
+            sections: vec![
+                "INPUT".into(),
+                "OUTPUT".into(),
+                "COMMENTS".into(),
+                "STAMPS".into(),
+            ],
+        };
+        let mut file = EinmoFile::new("utf-8", DEFAULT_SEPARATOR, meta, bodies, Stamps::new());
+        let (configured, _) = derive_keypair("cfg");
+        let (stage, _) = derive_keypair("");
+        file.set_stamps(Stamps::generate(&file.signed_prefix(), &configured, &stage));
+        file.serialize().unwrap()
+    }
+
+    fn three_case_suite() -> EinmoSuite<InMemoryStorage> {
+        let storage = InMemoryStorage::new();
+        for (rel, output) in [("a.foo", "5"), ("b.foo", "6"), ("c.foo", "7")] {
+            storage
+                .write(
+                    &id(rel),
+                    ArtifactLocation::Stage(Stage::Output),
+                    &signed_bytes(rel, output),
+                )
+                .unwrap();
+        }
+        EinmoSuite::scan(storage, None).unwrap()
+    }
+
+    #[test]
+    fn promote_selects_every_case_matching_filter() {
+        let suite = three_case_suite();
+        let key = KeySource::from_passphrase("");
+        let report = suite
+            .promote(Stage::Output, Stage::Checked, &key, Some("a.foo"), None)
+            .unwrap();
+        assert_eq!(report.promoted.len(), 1);
+        assert_eq!(report.promoted[0].rel_path, PathBuf::from("a.foo.einmo"));
+    }
+
+    #[test]
+    fn promote_ids_overrides_filter() {
+        let suite = three_case_suite();
+        let key = KeySource::from_passphrase("");
+        // A filter that would match nothing is ignored once `ids` is given
+        // -- matching `transitions.rs`'s old files-overrides-filter
+        // precedent (`EIMP-7` §S.10's `select`).
+        let report = suite
+            .promote(
+                Stage::Output,
+                Stage::Checked,
+                &key,
+                Some("matches-nothing"),
+                Some(&[id("a.foo"), id("c.foo")]),
+            )
+            .unwrap();
+        let promoted: Vec<PathBuf> = report.promoted.iter().map(|p| p.rel_path.clone()).collect();
+        assert_eq!(promoted.len(), 2);
+        assert!(promoted.contains(&PathBuf::from("a.foo.einmo")));
+        assert!(promoted.contains(&PathBuf::from("c.foo.einmo")));
+    }
+
+    #[test]
+    fn promote_silently_skips_a_case_absent_at_the_source_stage() {
+        let suite = three_case_suite();
+        let key = KeySource::from_passphrase("");
+        // Checked is empty for every case -- promoting FROM Checked must
+        // select nothing, not error, matching transitions::promote's old
+        // "only ever considers cases present at the source" behavior.
+        let report = suite
+            .promote(Stage::Checked, Stage::Verified, &key, None, None)
+            .unwrap();
+        assert!(report.promoted.is_empty());
+    }
+
+    #[test]
+    fn promote_refuses_an_illegal_transition_even_for_an_empty_suite() {
+        let storage = InMemoryStorage::new();
+        let suite = EinmoSuite::scan(storage, None).unwrap();
+        let key = KeySource::from_passphrase("");
+        let err = suite
+            .promote(Stage::Verified, Stage::Output, &key, None, None)
+            .unwrap_err();
+        assert!(matches!(err, EinmoError::IllegalTransition { .. }));
+    }
+
+    /// The change this EIMP exists to make (`EIMP-7` §S.4): promoting the
+    /// SAME content with two different keys co-signs, it does not clobber
+    /// stamp history. Today's (pre-EIMP-7) `transitions::promote` would
+    /// have overwritten the first signer's stamp entirely.
+    #[test]
+    fn promote_the_same_content_with_two_different_keys_co_signs_both() {
+        let suite = three_case_suite();
+        suite
+            .promote(
+                Stage::Output,
+                Stage::Checked,
+                &KeySource::from_passphrase("signer-one"),
+                Some("a.foo"),
+                None,
+            )
+            .unwrap();
+        suite
+            .promote(
+                Stage::Output,
+                Stage::Checked,
+                &KeySource::from_passphrase("signer-two"),
+                Some("a.foo"),
+                None,
+            )
+            .unwrap();
+
+        let checked = suite
+            .case(&id("a.foo"))
+            .unwrap()
+            .read(ArtifactLocation::Stage(Stage::Checked))
+            .unwrap()
+            .unwrap();
+        let checked_stamps = checked
+            .stamps()
+            .entries()
+            .iter()
+            .filter(|s| s.key() == "stage:checked")
+            .count();
+        assert_eq!(
+            checked_stamps, 2,
+            "both signers' stage:checked stamps must survive"
+        );
+    }
+
+    /// Argon2id derivation is ~1.8s by design (`EIMP-7` §S.10); a 5-case
+    /// batch deriving per-case rather than once would take ~9s. This is
+    /// the kind of performance invariant a refactor silently loses if
+    /// nothing pins it — mirrors `review.rs`'s own
+    /// `execute_derives_stage_key_once_per_batch_not_per_case`.
+    #[test]
+    fn promote_derives_the_stage_key_once_per_batch_not_per_case() {
+        let storage = InMemoryStorage::new();
+        for i in 0..5 {
+            let rel = format!("case{i}.foo");
+            storage
+                .write(
+                    &id(&rel),
+                    ArtifactLocation::Stage(Stage::Output),
+                    &signed_bytes(&rel, "5"),
+                )
+                .unwrap();
+        }
+        let suite = EinmoSuite::scan(storage, None).unwrap();
+
+        let start = std::time::Instant::now();
+        let report = suite
+            .promote(
+                Stage::Output,
+                Stage::Checked,
+                &KeySource::from_passphrase("a-non-empty-batch-passphrase"),
+                None,
+                None,
+            )
+            .unwrap();
+        let elapsed = start.elapsed();
+
+        assert_eq!(report.promoted.len(), 5);
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "5-case batch took {elapsed:?} -- looks like the stage key was derived per \
+             case (~1.8s each) instead of once for the whole batch"
+        );
+    }
+
+    #[test]
+    fn flag_selects_every_case_matching_filter_and_skips_absent_ones() {
+        let suite = three_case_suite();
+        let report = suite
+            .flag(Stage::Output, "one bad", Some("b.foo"), None)
+            .unwrap();
+        assert_eq!(report.flagged, vec![PathBuf::from("b.foo.einmo")]);
+
+        let b = suite.case(&id("b.foo")).unwrap();
+        assert!(
+            b.read(ArtifactLocation::Stage(Stage::Output))
+                .unwrap()
+                .is_none(),
+            "origin vacated"
+        );
+        assert!(
+            b.read(ArtifactLocation::Flagged(Stage::Output))
+                .unwrap()
+                .is_some()
+        );
+        // a.foo and c.foo untouched.
+        for rel in ["a.foo", "c.foo"] {
+            assert!(
+                suite
+                    .case(&id(rel))
+                    .unwrap()
+                    .read(ArtifactLocation::Stage(Stage::Output))
+                    .unwrap()
+                    .is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn retract_refuses_output_even_for_an_empty_selection() {
+        let storage = InMemoryStorage::new();
+        let suite = EinmoSuite::scan(storage, None).unwrap();
+        // No cases at all, let alone matching any filter -- must still
+        // error, not silently succeed with an empty report. This is what
+        // the suite-level Output check (checked unconditionally, before
+        // selection) exists for.
+        let err = suite.retract(Stage::Output, None, None).unwrap_err();
+        assert!(matches!(err, EinmoError::Config(_)));
+    }
+
+    #[test]
+    fn retract_selects_every_case_matching_filter() {
+        let storage = InMemoryStorage::new();
+        for rel in ["a.foo", "b.foo"] {
+            let bytes = signed_bytes(rel, "5");
+            storage
+                .write(&id(rel), ArtifactLocation::Stage(Stage::Checked), &bytes)
+                .unwrap();
+        }
+        let suite = EinmoSuite::scan(storage, None).unwrap();
+
+        let report = suite.retract(Stage::Checked, Some("a.foo"), None).unwrap();
+        assert_eq!(
+            report.retracted,
+            vec![(Stage::Checked, PathBuf::from("a.foo.einmo"))]
+        );
+        assert!(
+            suite
+                .case(&id("b.foo"))
+                .unwrap()
+                .read(ArtifactLocation::Stage(Stage::Checked))
+                .unwrap()
+                .is_some(),
+            "b.foo did not match the filter and must survive"
+        );
     }
 }

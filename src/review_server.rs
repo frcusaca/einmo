@@ -1178,15 +1178,16 @@ mod tests {
     fn promote_output_to_checked(dir: &std::path::Path) {
         let config =
             crate::config::TestConfig::new(dir, crate::einmo_suite::ValidationLevel::Output);
-        crate::transitions::promote(
-            &config,
-            Stage::Output,
-            Stage::Checked,
-            &crate::config::KeySource::from_passphrase(""),
-            None,
-            None,
-        )
-        .unwrap();
+        crate::suite::EinmoSuite::scan(crate::storage::EinmoDirectory::new(config), None)
+            .unwrap()
+            .promote(
+                Stage::Output,
+                Stage::Checked,
+                &crate::config::KeySource::from_passphrase(""),
+                None,
+                None,
+            )
+            .unwrap();
     }
 
     async fn body_json<T: serde::de::DeserializeOwned>(response: Response) -> T {

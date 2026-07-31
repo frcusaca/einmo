@@ -584,19 +584,51 @@ four-variant `Stage`.
 
 ## Phase F — one promote implementation; the suite directs the cases (§S.4, §S.10)
 
-- [ ] Read §S.4 and §S.10 of `EIMP-7.md`. **This phase contains the
+- [x] Read §S.4 and §S.10 of `EIMP-7.md`. **This phase contains the
       EIMP's one intentional behavior change** — treat it deliberately,
       not as cleanup.
-- [ ] Write the test first: promote the same content to the same stage
+      (2026-07-31)
+- [x] **Correction found while re-reading before implementing**:
+      auditing `EinmoCase::promote` (Phase B) against `transitions::
+      promote` turned up a real gap — the illegal-transition check
+      (`is_legal_transition`) was never ported. `EinmoCase::promote`
+      would have happily promoted e.g. `Verified → Output`. Not caught
+      by Phase B's tests (none constructed an illegal pair) or by
+      `review.rs`'s use of it (its own callers only ever produce legal
+      pairs by construction). Fixed by making `is_legal_transition`
+      `pub(crate)` and checking it at the top of `EinmoCase::promote`,
+      with a new regression test
+      (`case::tests::promote_refuses_an_illegal_transition`) before
+      moving on to Phase F proper — this is exactly the kind of gap a
+      "general-purpose primitive a CLI can call with any pair" needs
+      caught before, not after, the CLI is wired to it.
+- [x] Write the test first: promote the same content to the same stage
       with two different keys → **both** stamps present afterward
       (co-signing). Today `transitions::promote` clobbers, so this test
       fails before the change and passes after; it is the change's
       definition.
-- [ ] Implement `EinmoSuite::promote` / `flag` / `retract` (§S.10) —
+      (2026-07-31) — `suite::tests::promote_the_same_content_with_two_
+      different_keys_co_signs_both`, at the `EinmoSuite` (batch) level;
+      the single-case mechanism was already proven in Phase B.
+- [x] Implement `EinmoSuite::promote` / `flag` / `retract` (§S.10) —
       selection is the suite's job, per-case application is the case's.
       `PromotionReport` / `FlagReport` / `RetractReport` keep their
       public shapes so `cli.rs`'s formatting needs no change.
-  - [ ] Preserve the "derive the `StageKeypair` ONCE per promotion, not
+      (2026-07-31) — **signature deviates from §S.10's own sketch**: the
+      spec's `promote(&self, from, to, key, filter)` dropped
+      `transitions.rs`'s `files: Option<&[PathBuf]>` parameter entirely,
+      but `cli.rs`'s `--files`/positional-files argument is a real,
+      tested feature (`resolve_files`, `cli_promote_collects_positional_
+      args`). Resolved by taking `ids: Option<&[EinmoId]>` instead of
+      raw paths: `EinmoSuite` stays storage-agnostic (path normalization
+      — stage-relative, absolute, bare — is a filesystem/`TestConfig`
+      concept it has no business knowing about), and `cli.rs` (which
+      DOES have a `TestConfig`) resolves paths to ids itself via a new
+      `files_ref_to_ids` helper built on the kept `normalize_file_path`.
+      `ids`, when given, overrides `filter` entirely — matching
+      `transitions.rs`'s own files-overrides-filter precedent exactly
+      (`EinmoSuite::select`).
+  - [x] Preserve the "derive the `StageKeypair` ONCE per promotion, not
         per case" discipline (`transitions.rs:127-131`) — Argon2id is
         ~1.8s, and per-case derivation made a 161-case promotion take ~5
         minutes. The suite derives once and lends `&StageKeypair` to each
@@ -604,22 +636,95 @@ four-variant `Stage`.
         precisely so this stays possible. **Add a test that pins it**
         (count derivations, or assert elapsed time is not ~N×1.8s) — this
         is the kind of performance invariant a refactor silently loses.
-  - [ ] Preserve `promote`'s `to == Stage::Flagged` delegation to `flag`.
-- [ ] Remove `transitions.rs`'s `promote`/`flag`/`retract` free
+        (2026-07-31) — `suite::tests::promote_derives_the_stage_key_
+        once_per_batch_not_per_case`, mirroring `review.rs`'s own
+        `execute_derives_stage_key_once_per_batch_not_per_case`
+        (5-case batch, asserts elapsed < 5s).
+  - [x] Preserve `promote`'s `to == Stage::Flagged` delegation to `flag`.
+        (2026-07-31) — **N/A, not merely satisfied**: `Stage::Flagged`
+        was removed entirely in Phase A2 (§S.2a); flagging is no longer
+        expressible as a promote destination at the type level, so
+        there is no delegation left to preserve. Noted here rather than
+        silently dropped, since the plan bullet predates that removal.
+- [x] Remove `transitions.rs`'s `promote`/`flag`/`retract` free
       functions; migrate `cli.rs` and `verify.rs:408` to the
       `EinmoSuite` methods. `transitions.rs` keeps
       `is_legal_transition`, the report types, and `flag`'s
       advisory-block concatenation (§S.10).
-- [ ] Audit every existing `transitions::promote` test for the changed
+      (2026-07-31) — **larger than the plan scoped**: `cli.rs` was not
+      the only caller. `review.rs`'s `flag_now`/`retract_now` (the
+      atomic, no-decide/execute-needed convenience calls) and
+      `execute()`'s own Retract/Flag branches ALSO called `transitions::
+      flag`/`retract` directly — a second, independent call path Phase B
+      didn't touch (Phase B only rewired `execute()`'s Promote branch).
+      All four migrated to `EinmoCase::flag`/`retract` directly (not
+      through `EinmoSuite` — these operate on one already-known id, no
+      selection needed). Preserved exact existing error shapes where
+      tests pin them: `retract_now`'s `Output` check had to stay
+      ORDERED before its presence check (`EinmoCase::retract` naturally
+      gives this — Output errors before touching storage — so no
+      separate pre-check was needed there); `flag_now`/`retract_now`'s
+      "nothing to flag/retract" error stays `EinmoError::Io{NotFound}`
+      (asserted by `flag_now_errors_when_stage_has_nothing_for_id`/
+      `retract_now_errors_when_stage_has_nothing_for_id`), which
+      `EinmoCase::flag`/`retract` do NOT produce on their own
+      (`Verification`/silently-empty-Vec respectively) — kept via an
+      explicit presence check (`flag_now`) or an empty-Vec check
+      (`retract_now`, using `retract`'s return value directly rather
+      than a separate presence check, which also naturally preserves
+      the Output-first ordering). `verify.rs`, `review_server.rs`
+      (test-only), and `einmo_suite.rs` (one test) also called the
+      free functions directly and needed migrating.
+- [x] Audit every existing `transitions::promote` test for the changed
       semantics. Where a test asserted clobbering, convert it to assert
       co-signing and leave a comment naming `EIMP-7` §S.4, so a future
       reader auditing stamp history finds the reason.
-- [ ] Update `review.rs`'s execute path to call `EinmoCase::promote`
+      (2026-07-31) — no test asserted clobbering directly (the old
+      `transitions::promote` had no co-sign/no-op distinction to assert
+      against; every call just always overwrote). The full audit instead
+      **deleted** the tests that exercised single-case promote/flag/
+      retract mechanics now fully covered by `case.rs`'s own Phase B
+      suite (`retract_checked_cascades_to_verified`,
+      `promote_output_to_checked_appends_stamp`,
+      `empty_passphrase_verified_is_flagged_non_human`,
+      `illegal_transition_refused`, `flag_moves_file_and_writes_
+      advisory`, `reflag_concatenates_with_the_existing_flagged_note`,
+      `triple_reflag_preserves_every_prior_block_in_order`, and others),
+      **ported** the batch/selection-specific ones to `suite.rs`
+      (`promote_single_file`, `promote_multiple_files`, `flag_single_
+      file`, `promote_files_ignores_filter` → `EinmoSuite`'s own
+      filter/ids tests), **dropped** `promote_files_stage_relative_and_
+      absolute` (tests raw path normalization, now CLI-layer via
+      `files_ref_to_ids`; `normalize_paths` already covers
+      `normalize_file_path` itself directly and is unchanged), and
+      **filled two real gaps** `case.rs` didn't have: a tampered-source
+      promote test and a verified-only-retract test
+      (`case::tests::promote_refuses_tampered_source`,
+      `retract_verified_leaves_checked`). `promote_flag_to_note_*`
+      tests (unaffected by this phase) kept their assertions, with
+      their `flag(...)` SETUP calls switched to a new `flag_output`
+      helper built on `EinmoCase::flag`.
+- [x] Update `review.rs`'s execute path to call `EinmoCase::promote`
       (removing the now-duplicated private path) and confirm
       `execute_promote_matches_cli_promote_byte_for_byte` still passes —
       with both sides now on one implementation, it becomes a much
       stronger assertion than it was.
-- [ ] Phase F tests green; `clippy`/`fmt` clean; commit.
+      (2026-07-31) — **already done in Phase B**; re-confirmed here
+      still passing (63/63 `review::`, single-threaded, unedited from
+      this phase's Retract/Flag-branch changes).
+- [x] Phase F tests green; `clippy`/`fmt` clean; commit.
+      (2026-07-31) — `case::` 22/22 (+3 gap-fill), `suite::` 59/59 (+9
+      new batch tests), `transitions::` 8/8 (pruned from 24; single-case
+      coverage moved to `case.rs`, batch coverage to `suite.rs`),
+      `review::` 63/63 unedited, `review_server::` 47/47, `verify::`
+      8/8, `cli::` 18/18, `einmo_suite::` 43/43. `cargo fmt --check` /
+      `cargo clippy --all-targets -- -D warnings` both clean (one
+      `cloned_ref_to_slice_refs` lint fixed along the way). Full `cargo
+      test --workspace`: **389/389** (351 `einmo` lib + 31
+      `einmo-review-server` bin + 4 `zweimomo` lib + 3 `zweimomo`
+      `tests/suites.rs`; down from 393 as expected — -16 pruned from
+      `transitions::`, +3 `case::` gap-fill, +9 `suite::` new, net -4,
+      exactly accounted for).
 
 ## Phase G — `EinmoSuite` drives `CorpusSigner` (§S.8)
 
