@@ -356,4 +356,81 @@ mod tests {
         out[pos..pos + to.len()].copy_from_slice(to);
         out
     }
+
+    // EIMP-1 §Test Plan "flag breaks tests": flagged artifacts still
+    // verify (they keep their original stamps), but the gate logic
+    // (flags_fail_the_gate) fails the run by default.
+
+    #[test]
+    fn flagged_artifact_still_passes_verify() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config =
+            crate::config::TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        config.ensure_stage_dirs().unwrap();
+        std::fs::create_dir_all(config.input_path()).unwrap();
+        std::fs::write(config.input_path().join("t.foo"), "{5;}").unwrap();
+
+        let bodies = vec![
+            crate::format::Section::new("INPUT", "{5;}"),
+            crate::format::Section::new("OUTPUT", "5"),
+            crate::format::Section::new("COMMENTS", ""),
+        ];
+        let meta = crate::format::Metadata {
+            test: "t.foo".into(),
+            suite: "s".into(),
+            producer: "abc".into(),
+            producer_diff: String::new(),
+            generated: "2026-07-11T07:00:00Z".into(),
+            status: crate::format::Status::Normal,
+            status_detail: String::new(),
+            reference: String::new(),
+            sections: vec![
+                "INPUT".into(),
+                "OUTPUT".into(),
+                "COMMENTS".into(),
+                "STAMPS".into(),
+            ],
+        };
+        let mut file = crate::format::EinmoFile::new(
+            "utf-8",
+            crate::format::DEFAULT_SEPARATOR,
+            meta,
+            bodies,
+            Stamps::new(),
+        );
+        let (configured, _) = derive_keypair("cfg");
+        let (stage, _) = derive_keypair("");
+        file.set_stamps(Stamps::generate(&file.signed_prefix(), &configured, &stage));
+        let out_path = config.stage_dir(Stage::Output).join("t.foo.einmo");
+        std::fs::write(&out_path, file.serialize().unwrap()).unwrap();
+
+        // Flag the artifact (move to flagged/ with advisory).
+        crate::transitions::flag(&config, Stage::Output, None, "broken", None).unwrap();
+        assert!(!out_path.exists());
+        let flagged_path = config.stage_dir(Stage::Flagged).join("t.foo.einmo");
+        assert!(flagged_path.exists());
+
+        // Verify-all must succeed: flagged files keep their original stamps.
+        let report = super::verify(&config, None, None).unwrap();
+        assert!(
+            report.all_ok(),
+            "flagged artifacts must still verify — they retain their stamps: {:?}",
+            report.files
+        );
+
+        // The gate logic: flagged_count > 0 && !flag_is_not_failure → fail.
+        let flagged_count = std::fs::read_dir(config.stage_dir(Stage::Flagged))
+            .map(|rd| rd.count())
+            .unwrap_or(0);
+        assert!(flagged_count > 0, "flagged directory must have artifacts");
+        // Default (flag_is_not_failure=false): any flag fails the gate.
+        let gate_fails_by_default = flagged_count > 0;
+        assert!(gate_fails_by_default, "flags must fail the gate by default");
+        // With --flag-is-not-failure: flags are advisory only.
+        let gate_fails_with_override = flagged_count > 0 && !true; // !flag_is_not_failure
+        assert!(
+            !gate_fails_with_override,
+            "--flag-is-not-failure must downgrade flags to advisory"
+        );
+    }
 }

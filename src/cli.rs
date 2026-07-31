@@ -56,6 +56,11 @@ enum Command {
     SelfCheck(SelfCheckArgs),
     /// Evaluate inputs and write signed output files.
     Evaluate(EvaluateArgs),
+    /// Re-evaluate inputs and deliberately REPLACE any drifted `output/`
+    /// baseline with the freshly evaluated content (EIMP-3). Every other
+    /// case (no-op / co-sign / fresh-if-absent) behaves exactly like
+    /// `evaluate`.
+    RegenerateOutput(EvaluateArgs),
 }
 
 #[derive(Args, Debug)]
@@ -190,6 +195,12 @@ struct VerifyArgs {
     /// Emit machine-readable JSON.
     #[arg(long)]
     json: bool,
+    /// Downgrade a flagged artifact from failing the gate to advisory-only
+    /// (`EIMP-1` §S.3). A flagged artifact still ALWAYS produces stderr
+    /// output announcing its presence — this flag changes the exit code,
+    /// never the visibility.
+    #[arg(long)]
+    flag_is_not_failure: bool,
 }
 
 #[derive(Args, Debug)]
@@ -320,6 +331,7 @@ fn dispatch(command: Command) -> Result<ExitCode> {
         Command::Body(a) => cmd_body(a),
         Command::SelfCheck(a) => cmd_self_check(a),
         Command::Evaluate(a) => cmd_evaluate(a),
+        Command::RegenerateOutput(a) => cmd_regenerate_output(a),
     }
 }
 
@@ -597,6 +609,14 @@ fn cmd_verify(args: VerifyArgs) -> Result<ExitCode> {
     } else {
         crate::SuiteIntegrity::default()
     };
+    // The goal-state flag check (EIMP-1 S.3), same whole-suite-only scope as
+    // integrity: a file-scoped or single-stage verify isn't making a claim
+    // about the suite as a whole.
+    let flagged = if files.is_empty() && stage.is_none() {
+        crate::count_flagged(&config)?
+    } else {
+        Vec::new()
+    };
     if args.json {
         let violations: Vec<String> = integrity
             .problems
@@ -613,10 +633,11 @@ fn cmd_verify(args: VerifyArgs) -> Result<ExitCode> {
             })
             .collect();
         println!(
-            "{{\"files\":{},\"failures\":{},\"integrity_violations\":[{}]}}",
+            "{{\"files\":{},\"failures\":{},\"integrity_violations\":[{}],\"flagged\":{}}}",
             report.files.len(),
             report.failures(),
-            violations.join(",")
+            violations.join(","),
+            flagged.len()
         );
     } else {
         println!(
@@ -636,11 +657,38 @@ fn cmd_verify(args: VerifyArgs) -> Result<ExitCode> {
             eprint!("{}", integrity.report());
         }
     }
-    Ok(if report.all_ok() && integrity.is_clean() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    })
+    // A flag ALWAYS produces stderr output announcing its presence, in
+    // EITHER json or text mode -- `--flag-is-not-failure` only changes the
+    // exit code below, never whether this is printed. No silent config
+    // (EIMP-1 S.3).
+    if !flagged.is_empty() {
+        eprintln!(
+            "einmo: warning: {} flagged artifact(s) present:",
+            flagged.len()
+        );
+        for rel in &flagged {
+            eprintln!("  {}", rel.display());
+        }
+    }
+    Ok(
+        if report.all_ok()
+            && integrity.is_clean()
+            && !flags_fail_the_gate(flagged.len(), args.flag_is_not_failure)
+        {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        },
+    )
+}
+
+/// Whether flagged artifacts should fail `einmo verify`'s gate (`EIMP-1`
+/// §S.3): by default, any flag fails; `--flag-is-not-failure` downgrades
+/// that to advisory-only. Kept as a small pure function, separate from
+/// `cmd_verify`'s `ExitCode`/printing, so the actual decision is directly
+/// unit-testable.
+fn flags_fail_the_gate(flagged_count: usize, flag_is_not_failure: bool) -> bool {
+    flagged_count > 0 && !flag_is_not_failure
 }
 
 fn cmd_confirm(args: ConfirmArgs) -> Result<ExitCode> {
@@ -740,24 +788,10 @@ fn cmd_show(args: ShowArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The signed body of an envelope: every section except STAMPS.
-///
-/// This is what `compare` matches on, so it is what a reviewer should read —
-/// stamps and metadata (timestamps, keys) are deliberately excluded.
-/// Verify-on-inspect applies: a tampered file is refused, never rendered.
-fn body_sections(file: &EinmoFile, only: Option<&str>) -> Vec<(String, String)> {
-    file.sections()
-        .iter()
-        .filter(|s| !s.name().eq_ignore_ascii_case("STAMPS"))
-        .filter(|s| only.is_none_or(|w| s.name().eq_ignore_ascii_case(w)))
-        .map(|s| (s.name().to_string(), s.body().to_string()))
-        .collect()
-}
-
 fn cmd_body(args: BodyArgs) -> Result<ExitCode> {
     // from_file verifies every stamp before returning (verify-on-inspect).
     let file = EinmoFile::from_file(&args.file)?;
-    let sections = body_sections(&file, args.section.as_deref());
+    let sections = crate::einmo_suite::body_sections(&file, args.section.as_deref());
     if sections.is_empty()
         && let Some(want) = &args.section
     {
@@ -775,82 +809,10 @@ fn cmd_body(args: BodyArgs) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Where a test's artifacts exist, and whether their bodies agree.
-struct TestRow {
-    rel: PathBuf,
-    stages: Vec<(Stage, Option<String>)>, // (stage, status if present)
-    differing: bool,
-}
-
-/// Enumerate the suite's tests across output/checked/verified.
-///
-/// The union of the input tree and every stage tree, so a test that exists only
-/// in a stage (input deleted) or only in `output/` (never promoted) is still
-/// listed — the file scan `poor_einmo.sh` needs.
-fn scan_tests(config: &TestConfig, filter: Option<&str>) -> Result<Vec<TestRow>> {
-    use crate::stage::{mirror_input_path, walk_input_tree};
-
-    const STAGES: [Stage; 3] = [Stage::Output, Stage::Checked, Stage::Verified];
-
-    let mut rels: Vec<PathBuf> = walk_input_tree(&config.input_path(), config.walk_depth_limit())
-        .unwrap_or_default()
-        .iter()
-        .map(|p| mirror_input_path(p))
-        .collect();
-    // Union in anything present in a stage but absent from input/.
-    for stage in STAGES {
-        let dir = config.stage_dir(stage);
-        if let Ok(found) = walk_input_tree(&dir, config.walk_depth_limit()) {
-            rels.extend(found);
-        }
-    }
-    rels.sort();
-    rels.dedup();
-
-    let mut rows = Vec::new();
-    for rel in rels {
-        let shown = rel.to_string_lossy().to_string();
-        if filter.is_some_and(|f| !shown.contains(f)) {
-            continue;
-        }
-        let mut stages = Vec::new();
-        let mut bodies: Vec<Option<Vec<(String, String)>>> = Vec::new();
-        for stage in STAGES {
-            let path = config.stage_dir(stage).join(&rel);
-            if path.exists() {
-                match EinmoFile::from_file(&path) {
-                    Ok(f) => {
-                        let status = f.metadata().status.to_string();
-                        stages.push((stage, Some(status)));
-                        bodies.push(Some(body_sections(&f, None)));
-                    }
-                    Err(_) => {
-                        // Tampered/unreadable: report it, never render it.
-                        stages.push((stage, Some("TAMPERED".to_string())));
-                        bodies.push(None);
-                    }
-                }
-            } else {
-                stages.push((stage, None));
-                bodies.push(None);
-            }
-        }
-        // Differing unless every stage is present and their bodies agree.
-        let differing =
-            bodies.iter().any(Option::is_none) || bodies.windows(2).any(|w| w[0] != w[1]);
-        rows.push(TestRow {
-            rel,
-            stages,
-            differing,
-        });
-    }
-    Ok(rows)
-}
-
 fn cmd_list(args: ListArgs) -> Result<ExitCode> {
     let config = TestConfig::new(&args.work_dir, ValidationLevel::Output);
-    let rows = scan_tests(&config, args.filter.as_deref())?;
-    let rows: Vec<&TestRow> = rows
+    let rows = crate::einmo_suite::scan_tests(&config, args.filter.as_deref())?;
+    let rows: Vec<&crate::einmo_suite::TestRow> = rows
         .iter()
         .filter(|r| !args.differing || r.differing)
         .collect();
@@ -959,8 +921,8 @@ fn read_stdin_line() -> Result<String> {
 /// keyboard instead. Used by the stage-key cascade's interactive tier (§B.5).
 fn prompt_tty() -> Result<String> {
     loop {
-        let first =
-            rpassword::prompt_password("einmo passphrase: ").map_err(|e| EinmoError::io("<tty>", e))?;
+        let first = rpassword::prompt_password("einmo passphrase: ")
+            .map_err(|e| EinmoError::io("<tty>", e))?;
         let second = rpassword::prompt_password("einmo passphrase (again): ")
             .map_err(|e| EinmoError::io("<tty>", e))?;
         if first == second {
@@ -986,9 +948,13 @@ impl crate::einmo_suite::Evaluator for CommandEvaluator {
             .spawn()
             .map_err(|e| format!("evaluator command failed: {e}"))?;
         if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(source.as_bytes()).map_err(|e| e.to_string())?;
+            stdin
+                .write_all(source.as_bytes())
+                .map_err(|e| e.to_string())?;
         }
-        let output = child.wait_with_output().map_err(|e| format!("evaluator command failed: {e}"))?;
+        let output = child
+            .wait_with_output()
+            .map_err(|e| format!("evaluator command failed: {e}"))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(format!(
@@ -1003,6 +969,22 @@ impl crate::einmo_suite::Evaluator for CommandEvaluator {
 }
 
 fn cmd_evaluate(args: EvaluateArgs) -> Result<ExitCode> {
+    run_evaluate_like(args, false, "evaluated")
+}
+
+/// `einmo regenerate-output`: like `evaluate`, but a drifted case is
+/// deliberately replaced instead of failing (`EinmoSuite::regenerate_output`,
+/// `EIMP-3.md` §Specification).
+fn cmd_regenerate_output(args: EvaluateArgs) -> Result<ExitCode> {
+    run_evaluate_like(args, true, "regenerated")
+}
+
+/// Shared driver for `cmd_evaluate`/`cmd_regenerate_output`: walk+filter the
+/// input tree, run each input through `evaluator`, and report per-file
+/// success/failure. `force` selects `EinmoSuite::regenerate_output` (drift
+/// replaces) over `EinmoSuite::evaluate` (drift fails); `verb` only affects
+/// the summary line's wording/JSON key.
+fn run_evaluate_like(args: EvaluateArgs, force: bool, verb: &str) -> Result<ExitCode> {
     let mut config = TestConfig::new(&args.work_dir, ValidationLevel::Output);
     if let Some(limit) = args.walk_depth_limit {
         config = config.with_walk_depth_limit(limit);
@@ -1021,14 +1003,19 @@ fn cmd_evaluate(args: EvaluateArgs) -> Result<ExitCode> {
         .filter(|p| {
             args.filter
                 .as_ref()
-                .map_or(true, |f| p.to_string_lossy().contains(f.as_str()))
+                .is_none_or(|f| p.to_string_lossy().contains(f.as_str()))
         })
         .collect();
 
     let mut written = 0usize;
     let mut failed = 0usize;
     for input_rel in &filtered {
-        match suite.evaluate(input_rel, &evaluator) {
+        let outcome = if force {
+            suite.regenerate_output(input_rel, &evaluator)
+        } else {
+            suite.evaluate(input_rel, &evaluator)
+        };
+        match outcome {
             Ok(result) => {
                 if result.written_and_verified {
                     written += 1;
@@ -1055,9 +1042,9 @@ fn cmd_evaluate(args: EvaluateArgs) -> Result<ExitCode> {
         }
     }
     if args.json {
-        println!("{{\"evaluated\":{written},\"failed\":{failed}}}");
+        println!("{{\"{verb}\":{written},\"failed\":{failed}}}");
     } else {
-        println!("evaluated {written} file(s), {failed} failure(s)");
+        println!("{verb} {written} file(s), {failed} failure(s)");
     }
     Ok(if failed == 0 {
         ExitCode::SUCCESS
@@ -1135,6 +1122,33 @@ mod tests {
         assert!(Cli::try_parse_from(["einmo", "compare", "output", "checked", "/tmp/s"]).is_ok());
         assert!(Cli::try_parse_from(["einmo", "promote", "output:checked", "/tmp/s"]).is_ok());
         assert!(Cli::try_parse_from(["einmo", "self-check", "--quiet"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["einmo", "regenerate-output", "/tmp/s", "--command", "cat"])
+                .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["einmo", "verify", "/tmp/s", "--flag-is-not-failure"]).is_ok()
+        );
+    }
+
+    // EIMP-1 S.3: flags break the goal-state gate by default.
+
+    #[test]
+    fn flags_fail_the_gate_by_default() {
+        assert!(flags_fail_the_gate(1, false));
+        assert!(flags_fail_the_gate(3, false));
+    }
+
+    #[test]
+    fn flags_do_not_fail_the_gate_when_downgraded() {
+        assert!(!flags_fail_the_gate(1, true));
+        assert!(!flags_fail_the_gate(3, true));
+    }
+
+    #[test]
+    fn no_flags_never_fails_the_gate_either_way() {
+        assert!(!flags_fail_the_gate(0, false));
+        assert!(!flags_fail_the_gate(0, true));
     }
 
     #[test]
@@ -1156,48 +1170,6 @@ mod tests {
         );
     }
 
-    /// The body view is what a reviewer reads, so it must exclude the stamp
-    /// chain (and therefore the timestamp/key churn that made the legacy insta
-    /// corpus structurally red).
-    #[test]
-    fn body_sections_excludes_stamps() {
-        use crate::format::{DEFAULT_SEPARATOR, EinmoFile, Metadata, Section, Status};
-        use crate::signature::Stamps;
-
-        let meta = Metadata {
-            test: "t.foo".into(),
-            suite: "s".into(),
-            producer: "abc".into(),
-            producer_diff: String::new(),
-            generated: "2026-07-15T00:00:00Z".into(),
-            status: Status::Normal,
-            status_detail: String::new(),
-            reference: String::new(),
-            sections: vec!["INPUT".into(), "OUTPUT".into(), "STAMPS".into()],
-        };
-        let file = EinmoFile::new(
-            "utf-8",
-            DEFAULT_SEPARATOR,
-            meta,
-            vec![
-                Section::new("INPUT", "{3 + 4;}"),
-                Section::new("OUTPUT", "{ 7 }"),
-                Section::new("STAMPS", "{\"key\":\"stage:output\"}"),
-            ],
-            Stamps::new(),
-        );
-
-        let all = body_sections(&file, None);
-        assert_eq!(
-            all.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
-            vec!["INPUT", "OUTPUT"],
-            "STAMPS must never reach a reviewer's pane"
-        );
-
-        let only = body_sections(&file, Some("output"));
-        assert_eq!(only.len(), 1, "--section is case-insensitive");
-        assert_eq!(only[0].1, "{ 7 }");
-    }
     #[test]
     fn cli_promote_collects_positional_args() {
         // Glued + files.

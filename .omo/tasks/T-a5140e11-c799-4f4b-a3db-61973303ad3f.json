@@ -1,0 +1,10 @@
+{
+  "id": "T-a5140e11-c799-4f4b-a3db-61973303ad3f",
+  "subject": "Fix excessive journal logging (6.3GB log files)",
+  "description": "The crash-stash reports 61M lines / 6.3GB of journal logs. Find the root cause (likely an infinite loop or excessive logging in the journal/review code) and fix it. Files: /yolo/tmp/einmo-journal/*.jsonl",
+  "status": "completed",
+  "activeForm": "Investigating excessive journal logging",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_04a1d6ad8ffe9lFXK9db78cgAJ"
+}

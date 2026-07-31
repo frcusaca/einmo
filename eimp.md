@@ -14,7 +14,7 @@
 > scheme, two-file layout, and checkbox lifecycle are unchanged. The
 > worktree/multi-branch mechanics are simplified — einmo is a small,
 > single-maintainer repository without Foolish's `jia`-trunk-plus-worktrees
-> workflow, so EIMP plans execute directly against `main` with regular
+> workflow, so EIMP plans execute directly against `jia` with regular
 > commits (see "Plan execution" below).
 
 ---
@@ -214,7 +214,7 @@ checked off until children are complete. Once a project starts, the
 `begun: [ ]` checkbox is checked in the EIMP's frontmatter, and the EIMP
 file is committed stating that work has commenced on such and such EIMP.
 Because einmo is a small, single-maintainer repository (unlike Foolish's
-`jia`-trunk-plus-worktrees layout), **EIMP work happens directly on `main`**
+`jia`-trunk-plus-worktrees layout), **EIMP work happens directly on `jia`**
 — there is no separate worktree/branch-per-EIMP stage. Good progress should
 be committed regularly, as logical units complete. Upon completion, or at
 request of the user, the EIMP's checkboxes are all checked off and its
@@ -222,7 +222,7 @@ status updated to reflect the completed work.
 
 When asking a human questions, always remind them: "Above message comes
 from EIMP-<NUMBER> working to ...brief description...; changes are on
-`main`. PTAL"
+`jia`. PTAL"
 
 ### Sub-Tasks
 
@@ -264,15 +264,8 @@ approval-test corpus in this repository the way there is in Foolish.
 
 ## Last Updated
 
-**Date**: 2026-07-29
-**Updated By**: Claude Code (Sonnet 5)
-**Changes**: Created `eimp.md`, adapted from the Foolish project's `foop.md`
-(FOOP → EIMP terminology, `docs/foop/` → `docs/eimp/`). Dropped the
-worktree/multi-branch (`jia`-trunk) mechanics — einmo is a small,
-single-maintainer repository, so EIMP plans execute directly against `main`
-with regular commits instead of a per-EIMP worktree/branch lifecycle.
-Dropped the `.foo`-approval-test-specific "Comprehensive FOOP Tests"
-section in favor of a "Comprehensive EIMP Tests" section referencing
-einmo's own `cargo test` infrastructure. EIMP-0 introduced as a pinned,
-non-1-indexed meta-document (the einmo analogue of FOOP-1), excluded from
-`eimp_check.py`'s consecutive-numbering check.
+**Date**: 2026-07-31
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Updated all references from `main` to `jia` (primary branch
+name correction per maintainer). Added post-EIMP follow-up items to
+EIMP-1.plan.md (worktree best practices EIMP, test-suite performance).

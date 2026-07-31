@@ -20,30 +20,54 @@
 //! lives in [`verify`] with no filesystem/tty/Argon2 dependency (WASM-ready).
 
 mod cli;
+mod collation;
 mod compare;
 mod config;
+mod corpus_signer;
 mod einmo_suite;
 mod error;
 mod format;
+mod journal;
+mod review;
+mod review_server;
 mod signature;
 mod stage;
+mod suite_lock;
 mod transitions;
 mod verify;
 
 pub use cli::cli_main;
+pub use collation::Collation;
 pub use compare::{ComparisonResult, DiffEntry, MatchSections, compare};
-pub use config::{KeySource, Perspective, PerspectiveOf, StageDirs, TestConfig, resolve_stage_key};
+pub use config::{
+    KeyCascadeInputs, KeySource, Perspective, PerspectiveOf, StageDirs, TestConfig,
+    resolve_stage_key,
+};
+pub use corpus_signer::{CorpusSigner, SectionDigest, SectionManifest, SectionSig};
 pub use einmo_suite::{
     EinmoSuite, Evaluator, FailurePolicy, FileResult, Problem, SuiteIntegrity, TestResults,
-    ValidationLevel, check_suite_integrity,
+    ValidationLevel, check_suite_integrity, count_flagged,
 };
 pub use error::EinmoError;
 pub use format::{EinmoFile, Metadata, Section, Status};
+pub use journal::{
+    Journal, JournalDecision, JournalEvent, JournalLevel, JournalLine, journal_dir, journal_path,
+};
+pub use review::{
+    ActiveClaim, Decision, DiffHunks, DiffLine, EinmoReview, Executed, ExecutionPlan,
+    ExecutionReport, PlannedAction, ReviewItem, ReviewMode, ReviewOpts, SectionDiff, SignerSet,
+    VerifiedBody,
+};
+pub use review_server::{
+    ApiError, AppState, DiffLineResponse, DiffResponse, SectionDiffResponse, SessionId,
+    private_socket_path, router, router_tcp, serve_tcp, serve_uds,
+};
 pub use signature::{Stamp, StampRole, Stamps};
-pub use stage::Stage;
+pub use stage::{EinmoId, Stage};
+pub use suite_lock::{SuiteLock, suite_lock_path};
 pub use transitions::{
-    FlagReport, PromotionReport, RetractReport, SignatureReport, confirm_signatures, flag, promote,
-    retract,
+    FlagReport, NoteReport, PromotionReport, RetractReport, SignatureReport, confirm_signatures,
+    flag, promote, promote_flag_to_note, retract,
 };
 pub use verify::{
     FileVerification, StampVerification, VerificationReport, verify, verify_all, verify_bytes,

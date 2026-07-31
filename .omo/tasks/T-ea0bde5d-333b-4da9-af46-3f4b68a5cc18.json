@@ -1,0 +1,10 @@
+{
+  "id": "T-ea0bde5d-333b-4da9-af46-3f4b68a5cc18",
+  "subject": "Phase D: Client-side TUI-owned private server",
+  "description": "Implement the client-side driving of the TUI-owned private server in einmo_review_client.sh: launch server on private socket, wait for reachable, hold session, tear down on exit via trap. Replace fail-fast-if-no-server as default; keep opt-in flag for standalone server.",
+  "status": "pending",
+  "activeForm": "Implementing TUI-owned private server client",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_04a1d6ad8ffe9lFXK9db78cgAJ"
+}

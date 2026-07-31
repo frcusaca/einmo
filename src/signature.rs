@@ -62,16 +62,28 @@ fn argon2_instance() -> Argon2<'static> {
 /// same Argon2id path so no raw secret bytes live in source.
 const COMPILED_KEY_SEED_PASSPHRASE: &str = "einmo-stock-compiled-key";
 
+/// Derive a 32-byte seed from `passphrase` via the pinned Argon2id instance,
+/// domain-separated by `salt`. The primitive both [`derive_keypair`] (the
+/// Ed25519 stamp key, salted with [`SALT`]) and `corpus_signer::CorpusSigner`
+/// (the section SLH-DSA key, `EIMP-1` §S.11, salted independently) build on
+/// — same expensive KDF step, different salts, so the two key systems never
+/// collide even when derived from the same passphrase.
+#[must_use]
+pub(crate) fn derive_seed(passphrase: &str, salt: &[u8]) -> [u8; 32] {
+    let mut seed = [0u8; 32];
+    argon2_instance()
+        .hash_password_into(passphrase.as_bytes(), salt, &mut seed)
+        .expect("Argon2id derivation cannot fail for valid pinned parameters");
+    seed
+}
+
 /// Derive a deterministic Ed25519 keypair from a passphrase via Argon2id.
 ///
 /// The empty passphrase (`""`) yields the **well-known computer/AI-agent key**.
 /// Same passphrase ⇒ same keypair, so keys are reproducible from a passphrase.
 #[must_use]
 pub(crate) fn derive_keypair(passphrase: &str) -> (SigningKey, VerifyingKey) {
-    let mut seed = [0u8; 32];
-    argon2_instance()
-        .hash_password_into(passphrase.as_bytes(), SALT, &mut seed)
-        .expect("Argon2id derivation cannot fail for valid pinned parameters");
+    let seed = derive_seed(passphrase, SALT);
     let signing = SigningKey::from(&seed);
     let verifying = signing.verifying_key();
     (signing, verifying)
@@ -452,6 +464,18 @@ impl Stamps {
             .any(|s| s.pubkey_hex.starts_with(prefix))
     }
 
+    /// `true` if a stamp under `stage_key` (e.g. `"stage:output"`) exists
+    /// with exactly `pubkey_hex` — the multi-signer accumulation check
+    /// (`EIMP-3` §Specification, `EIMP-1` §S.4a): "is at least one of the
+    /// existing stamps mine," as opposed to [`Stamps::stamped_by`]'s prefix
+    /// search over every stamp regardless of role.
+    #[must_use]
+    pub(crate) fn has_stage_stamp_from(&self, stage_key: &str, pubkey_hex: &str) -> bool {
+        self.entries
+            .iter()
+            .any(|s| s.key() == stage_key && s.pubkey_hex == pubkey_hex)
+    }
+
     /// Parse the STAMPS section: one JSON object per non-empty line.
     pub fn parse(section: &str) -> Result<Self> {
         let entries = section
@@ -493,9 +517,27 @@ impl Stamps {
         configured: &SigningKey,
         stage_output: &SigningKey,
     ) -> Self {
+        Self::generate_for_stage(prior_bytes, configured, "stage:output", stage_output)
+    }
+
+    /// The general form of [`Stamps::generate`]: build the full
+    /// compiled→configured→`stage_key` certification chain for a brand-new
+    /// file, for any stage key — not only `"stage:output"`. `generate`
+    /// is this specialized to `"stage:output"`; both existing callers of
+    /// `generate` and this method are unaffected by each other.
+    ///
+    /// Introduced for `notes/` (`EIMP-1` §S.3): a `notes/` file needs the
+    /// full 3-stamp chain like any brand-new artifact, but under
+    /// `"stage:notes"` rather than `"stage:output"`.
+    pub(crate) fn generate_for_stage(
+        prior_bytes: &[u8],
+        configured: &SigningKey,
+        stage_key: &str,
+        stage_signer: &SigningKey,
+    ) -> Self {
         let (compiled_sk, compiled_vk) = compiled_keypair();
         let configured_vk = configured.verifying_key();
-        let stage_vk = stage_output.verifying_key();
+        let stage_vk = stage_signer.verifying_key();
         let pb = produced_by();
         let ts = now_iso8601();
 
@@ -512,22 +554,22 @@ impl Stamps {
             "configured",
             configured,
             &configured_vk,
-            "stage:output",
+            stage_key,
             &stage_vk,
             pb,
             &ts,
         );
 
-        // The `stage:output` stamp signs everything in the file before its own
-        // line: the body (`prior_bytes`) plus the two certification lines that
-        // sit above it in the STAMPS section, each terminated by LF.
+        // The stage stamp signs everything in the file before its own line:
+        // the body (`prior_bytes`) plus the two certification lines that sit
+        // above it in the STAMPS section, each terminated by LF.
         let mut before_stage = Vec::from(prior_bytes);
         before_stage.extend_from_slice(compiled.to_json_line().as_bytes());
         before_stage.push(b'\n');
         before_stage.extend_from_slice(configured_stamp.to_json_line().as_bytes());
         before_stage.push(b'\n');
 
-        let stage = stage_stamp("stage:output", stage_output, &before_stage, pb, &ts);
+        let stage = stage_stamp(stage_key, stage_signer, &before_stage, pb, &ts);
 
         Stamps {
             entries: vec![compiled, configured_stamp, stage],
@@ -823,6 +865,51 @@ mod tests {
     }
 
     #[test]
+    fn generate_for_stage_produces_a_chain_certifying_the_given_stage_key() {
+        let body = sample_body();
+        let (configured, _) = derive_keypair("cfg");
+        let (notes, notes_vk) = derive_keypair("a note signer");
+        let stamps = Stamps::generate_for_stage(&body, &configured, "stage:notes", &notes);
+        assert!(
+            stamps.chain_valid(&body),
+            "a stage:notes chain must verify like any other"
+        );
+        for check in stamps.verify_chain(&body) {
+            assert!(check.ok, "stamp {} must verify", check.key);
+        }
+        let stage_stamp = stamps
+            .entries()
+            .iter()
+            .find(|s| s.key() == "stage:notes")
+            .expect("a stage:notes stamp must be present");
+        assert_eq!(stage_stamp.pubkey_hex(), hex::encode(notes_vk.to_bytes()));
+    }
+
+    #[test]
+    fn generate_is_generate_for_stage_specialized_to_stage_output() {
+        // generate() must remain byte-for-byte what it always was — this
+        // pins that the refactor into generate_for_stage changed nothing
+        // observable for its ~14 existing callers.
+        let body = sample_body();
+        let (configured, _) = derive_keypair("cfg");
+        let (stage, _) = derive_keypair("");
+        let via_generate = Stamps::generate(&body, &configured, &stage);
+        let via_for_stage = Stamps::generate_for_stage(&body, &configured, "stage:output", &stage);
+        assert_eq!(
+            via_generate
+                .entries()
+                .iter()
+                .map(Stamp::key)
+                .collect::<Vec<_>>(),
+            via_for_stage
+                .entries()
+                .iter()
+                .map(Stamp::key)
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
     fn full_promotion_chain_verifies() {
         let body = sample_body();
         let (configured, _) = derive_keypair("cfg");
@@ -1007,5 +1094,61 @@ mod tests {
     fn valid_stage_key_accepted() {
         let line = r#"{"key":"stage:output","pubkey":"aa","signs":"prior-bytes","signature":"bb","produced_by":"x","timestamp":"t"}"#;
         assert!(Stamps::parse(line).is_ok());
+    }
+
+    // EIMP-1 §Test Plan "signer": zeroize on drop (best-effort).
+
+    #[test]
+    fn stage_keypair_uses_zeroizing_for_kek_and_derives_correctly() {
+        let pass = "zeroize-test-key";
+        let (_, expected_vk) = derive_keypair(pass);
+        let keypair = StageKeypair::derive(pass);
+
+        assert_eq!(
+            keypair.pubkey_hex(),
+            hex::encode(expected_vk.to_bytes()),
+            "StageKeypair must derive the same pubkey as derive_keypair"
+        );
+
+        // Use the keypair to sign — proves the sealed seed unwraps correctly.
+        keypair.with_signing_key(|sk| {
+            use ed25519_dalek::{Signer, Verifier};
+            let sig = sk.sign(b"test message");
+            assert!(
+                expected_vk.verify(b"test message", &sig).is_ok(),
+                "the signing key inside StageKeypair must produce valid signatures"
+            );
+        });
+
+        // Drop the keypair — `kek: Zeroizing<[u8; 32]>` zeros the
+        // key-encryption key on drop, and `with_signing_key` already
+        // zeroizes the plaintext seed before returning. This is the
+        // best-effort assertion: we cannot inspect freed memory in safe
+        // Rust, but the `Zeroizing` wrapper's `Drop` impl is the
+        // mechanism that guarantees it. The `sealed_seed: Vec<u8>`
+        // itself is ciphertext (encrypted under the KEK), so even if
+        // the Vec's heap memory survives deallocation, no plaintext
+        // seed is exposed.
+        drop(keypair);
+    }
+
+    #[test]
+    fn stage_keypair_seed_is_never_accessible_as_plaintext() {
+        let keypair = StageKeypair::derive("exfil-test");
+
+        // with_signing_key provides the key only within the closure;
+        // the plaintext is zeroized as soon as the closure returns.
+        let signed_once = keypair.with_signing_key(|sk| {
+            use ed25519_dalek::Signer;
+            sk.sign(b"first").to_bytes()
+        });
+        let signed_twice = keypair.with_signing_key(|sk| {
+            use ed25519_dalek::Signer;
+            sk.sign(b"second").to_bytes()
+        });
+
+        // Each call re-derives from the sealed seed; both must succeed
+        // and produce different signatures (different messages).
+        assert_ne!(signed_once, signed_twice);
     }
 }

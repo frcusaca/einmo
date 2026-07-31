@@ -879,6 +879,46 @@ CLI, and a verb without `--json` forces them to parse prose. The `cargo-einmo`
 alias binary beside `einmo` is a one-line wrapper over the same parser, never a
 second implementation. *(c25)*
 
+### HTTP services (axum)
+When a crate exposes an HTTP API (e.g. `einmo-review-server`, `EIMP-2`),
+**axum** is the standard framework — `serde`/`serde_json` for all
+(de)serialization (already einmo dependencies via the `.einmo` STAMPS
+section, `signature.rs`).
+
+- **Domain types in every handler signature, never bare strings.** Use
+  axum's typed extractors — `Path<EinmoId>`, `Json<Decision>` — instead of
+  `Path<String>`/`Json<serde_json::Value>` parsed by hand inside the
+  handler body. A malformed value is rejected by the extractor itself
+  (400), before any handler code runs — the type system enforces
+  "validate before trust" (see "Serialization & parsing" below) rather
+  than relying on every handler remembering to check.
+  ```rust
+  // WRONG — a raw string that might not even be a valid EinmoId reaches
+  // handler logic; validation, if it happens at all, is easy to forget:
+  async fn get_case(Path(id): Path<String>) -> impl IntoResponse { … }
+
+  // RIGHT — an invalid id never reaches this function; it 400s at the
+  // extractor, and the handler body only ever sees a validated EinmoId:
+  async fn get_case(Path(id): Path<EinmoId>) -> Result<Json<Case>, ApiError> { … }
+  ```
+- **Enums over stringly-typed request/response fields.** A field drawn from
+  a known set (a stage name, a decision kind) is an enum with `#[derive(Serialize,
+  Deserialize)]` (tagged, e.g. `#[serde(tag = "kind")]` for a decision
+  variant), never a `String` compared against literals at runtime. An
+  invalid value is then a deserialization error the `Json<_>` extractor
+  catches, not a handler-level `match` fallthrough to figure out.
+- **Every handler returns `Result<impl IntoResponse, ApiError>`.** Define
+  one crate-level `ApiError` (`thiserror`-derived, the same shape as the
+  crate's existing central error enum — see "One central error enum" in
+  the Do's) that implements axum's `IntoResponse`, mapping each error
+  variant to its HTTP status **once**, in one place — not ad hoc
+  `StatusCode::…` calls scattered across handlers. Prefer wrapping/
+  converting from the crate's existing error type (`From<CrateError> for
+  ApiError`) so handler bodies still just propagate with `?`.
+- **No `.unwrap()`/`.expect()`/`panic!` in a handler or extractor.** A
+  malformed request is a `4xx` response, never a crashed connection —
+  same rule as "Panics & assertions" below, applied to the HTTP boundary.
+
 ### Logging & observability
 Log state transitions, promotion/flag events, and signature-verification
 failures. Never log private keys, secret material, raw passphrases, or

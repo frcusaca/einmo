@@ -1,0 +1,127 @@
+# EIMP-3.plan — output-stage drift fails, explicit regenerate, multi-signer output stamps
+
+Read `docs/eimp/EIMP-3.md` before acting on any task below. Tasks run top to
+bottom. Work happens directly on `main` (`EIMP-0` §8).
+
+- [x] STOP — preconditions: `cargo test`, `cargo clippy --workspace --all-targets
+      -- -D warnings`, `cargo fmt --check` all clean. Do not begin while any
+      is broken.
+      (2026-07-30 06:05) — confirmed clean (190 workspace tests, clippy/fmt
+      clean) before drafting EIMP-3.
+- [x] Begin work: check `begun: [x]` in `EIMP-3.md` frontmatter, commit
+      `EIMP-3.md` + `EIMP-3.plan.md` stating that work has commenced
+      (2026-07-30 06:05)
+
+## Phase A — `FileResult.drifted` + the content/key decision table (EIMP-3.md §Specification)
+
+- [x] Write the unit tests FIRST (`EIMP-3.md` §Test Plan "Unit — write_output
+      drift-vs-append-vs-noop-vs-fresh") against the intended behavior:
+      absent→fresh, same-signer-match→untouched, different-signer-match→append,
+      content-differs→drifted+untouched, corrupt-existing→treated-as-absent
+      (2026-07-30 06:20) — 4 tests in `einmo_suite.rs`'s test module:
+      `write_output_unchanged_content_same_signer_is_byte_identical_noop`,
+      `write_output_unchanged_content_different_signer_appends_stamp`,
+      `write_output_differing_content_marks_drifted_and_leaves_existing_untouched`,
+      `write_output_corrupt_existing_is_treated_as_absent_fresh_write`.
+- [x] Add `FileResult.drifted: bool` — **not** a new `Status` variant; see
+      `EIMP-3.md`'s "Corrected during implementation" note (`status` is the
+      envelope's own recorded harness status and a drifted case never writes
+      a new envelope; the existing `written_and_verified`/`ignored` fields
+      already drive suite-run pass/fail, so `drifted` only needed to be a
+      sibling boolean, not a new failure-status wired through parse/render
+      paths)
+      (2026-07-30 06:25)
+- [x] Add an exact-match lookup for `stage:<name>` stamps: `Stamps::
+      has_stage_stamp_from(stage_key, pubkey_hex) -> bool` in
+      `src/signature.rs`, alongside the existing prefix-based `stamped_by`
+      (2026-07-30 06:25)
+- [x] Rewrite `write_output`'s comparison block to implement the decision
+      table: content mismatch → `drifted: true`, `written_and_verified:
+      false`, restore `existing`'s bytes (see crash-crumb note below); my
+      key already present → true no-op restore; my key absent → append via
+      `EinmoFile::append_stage_stamp_with` on a clone of `existing`; absent/
+      corrupt/crash-crumb existing → fresh write (unchanged from before)
+      (2026-07-30 06:30)
+- [x] Append-in-place support: `EinmoFile::append_stage_stamp_with`
+      (`format.rs`, already existed from before this EIMP — used by
+      `transitions::promote`) works unmodified on an already-stamped file
+      cloned from `existing`; no new primitive needed
+      (2026-07-30 06:30)
+- [x] Found and fixed during implementation: `write_crash_crumb` (called at
+      the top of every `evaluate()`) unconditionally clobbers `out_path`
+      with a transient placeholder *before* the real evaluator runs, so (a)
+      the drift branch must actively restore `existing`'s bytes rather than
+      "do nothing" (the crumb already overwrote the file this run), and (b)
+      a *stale* crash crumb from a previous interrupted run must never be
+      compared against as if it were a real baseline (its placeholder OUTPUT
+      is always empty, which would misreport every case as drifted) — fixed
+      by filtering `existing` to `None` whenever its own `status_detail`
+      starts with `"TEST IN PROGRESS"`, before the decision table runs.
+      Caught by `catastrophe_crumb_rerun_overwrites`, a pre-existing
+      regression test.
+      (2026-07-30 06:35) — see `EIMP-3.md`'s "Crash crumbs are not a
+      baseline" note.
+- [x] Phase A tests green; `cargo fmt` / `cargo clippy -D warnings` clean
+      (2026-07-30 06:38) — 192 workspace tests (188 einmo + 4 zweimomo),
+      clippy/fmt clean.
+
+## Phase B — `einmo regenerate-output` verb (EIMP-3.md §Specification)
+
+- [x] Write library-level tests FIRST for the force-replace primitive: a
+      suite with one drifted case; normal `evaluate` reports `drifted` and
+      leaves `output/` untouched; `regenerate_output` replaces it,
+      re-verifies, re-signs; a subsequent normal `evaluate` then reports it
+      clean. Plus a CLI parse smoke test for the new subcommand shape
+      (`cli_parses_subcommands`, matching this file's existing
+      one-assert-per-subcommand convention — CLI tests elsewhere in this
+      file don't exercise `cmd_evaluate`'s shell-out behavior end-to-end
+      either, so `regenerate-output` follows the same precedent rather than
+      introducing a new test shape)
+      (2026-07-30 06:50) — `regenerate_output_replaces_drifted_content_and_a_subsequent_run_is_clean`
+      in `einmo_suite.rs`; parse assertion added to `cli_parses_subcommands`
+      in `cli.rs`.
+- [x] Implement `EinmoSuite::regenerate_output` (library primitive):
+      `evaluate`/`regenerate_output` now share one `evaluate_impl(..., force:
+      bool)`, which threads `force` into `write_output`'s (now 6-arg)
+      signature — `force` only changes the outcome of the `!sections_same`
+      branch (replace instead of drift-fail-and-restore); every other branch
+      (no-op / co-sign / fresh-if-absent) is unchanged and shared by both
+      callers
+      (2026-07-30 06:50)
+- [x] Implement the `einmo regenerate-output <work-dir> --command <cmd>
+      [--filter <substr>]` CLI subcommand (`cli.rs`): reuses `EvaluateArgs`
+      verbatim (same shape as `evaluate`) and a shared `run_evaluate_like`
+      driver parameterized by `force` and the summary verb word, rather than
+      duplicating `cmd_evaluate`'s ~50-line walk/filter/report loop
+      (2026-07-30 06:50)
+- [x] Phase B tests green; `cargo fmt` / `cargo clippy -D warnings` clean
+      (2026-07-30 06:55) — 189 einmo tests (was 188) + 4 zweimomo, clippy/fmt
+      clean.
+
+## Comprehensive test + completion
+
+- [x] Comprehensive test, per `EIMP-3.md` §Test Plan: `zweimomo/tests/suites.rs`'s
+      new `eimp3_output_drift_comprehensive`, over a scratch copy of
+      `day.1`'s real, already-signed fixture with the real `BoaEvaluator`
+      (not the synthetic `Echo` evaluator the `einmo_suite.rs` unit tests
+      use). One pass: (1) a no-op rerun of `integer_arithmetic.js` — byte-
+      identical, untouched; (2) a second signer (`einmo.toml` `[signing]
+      output = "zweimomo second signer"`) re-running the same unchanged
+      input — stamp accumulates (2 `stage:output` stamps), content
+      untouched; (3) `name_binding.js`'s input edited to evaluate
+      differently — normal `evaluate` reports `drifted`, `output/` left
+      byte-for-byte untouched; (4) `regenerate_output` on the same case —
+      replaces content, new stamp chain; (5) a subsequent normal `evaluate`
+      of the regenerated case — clean, untouched.
+      (2026-07-30 07:10) — new `copy_dir_recursive` test helper gives each
+      run its own scratch copy; the real `suites/javascript/day.1/` fixture
+      is never mutated.
+- [x] All tests pass: `cargo test` (workspace), `cargo clippy --workspace
+      --all-targets -- -D warnings`, `cargo fmt --check`
+      (2026-07-30 07:12) — 189 einmo + 4 zweimomo unit + 3 zweimomo
+      integration (was 2) tests, all green; clippy/fmt clean.
+- [x] Update `EIMP-3.md` frontmatter to `status: complete`
+      (2026-07-30 07:12)
+- [x] Update `docs/eimp/INDEX.md` to add EIMP-3 and reflect its completed
+      status
+      (2026-07-30 07:12)

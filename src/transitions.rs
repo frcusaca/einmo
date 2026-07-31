@@ -8,9 +8,10 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::{KeySource, TestConfig};
+use crate::einmo_suite::{git_commit_sha, git_diff_sha};
 use crate::error::{EinmoError, Result};
-use crate::format::EinmoFile;
-use crate::signature::{StageKeypair, is_computer_key, now_iso8601};
+use crate::format::{EinmoFile, Metadata, Section, Status};
+use crate::signature::{StageKeypair, Stamps, derive_keypair, is_computer_key, now_iso8601};
 use crate::stage::{Stage, ensure_parent_dir, mirror_input_path, walk_input_tree};
 
 /// One promoted file's outcome.
@@ -149,8 +150,10 @@ pub fn promote(
 }
 
 /// Move every matching file from `stage` into `flagged/`, appending an unsigned
-/// advisory line. Re-flagging the same test REPLACES its flagged file (flags
-/// are plaintext, transient dev-process markers — FOOP-25 §S.3).
+/// advisory block. Re-flagging the same test CONCATENATES a new dated block
+/// on top of whatever is already flagged there, rather than replacing it
+/// (flags are plaintext, transient dev-process markers, but they accumulate
+/// a history — `EIMP-1` §S.3).
 ///
 /// # Errors
 ///
@@ -172,19 +175,133 @@ pub fn flag(
         let src = from_dir.join(&rel);
         // Verify-on-inspect before moving.
         let mut file = EinmoFile::from_file(&src)?;
-        let advisory = format!("# flagged: {reason} {timestamp}");
+        let new_block = format!("# flagged: {reason} {timestamp}");
+
+        // Flags are plaintext, transient dev-process markers (EIMP-1 §S.3),
+        // but re-flagging the same test CONCATENATES: the new dated block
+        // goes on top, any already-flagged content (itself possibly already
+        // concatenated) stays below. Flags accumulate a history — they
+        // never silently replace one another. The existing flagged file, if
+        // any, is still a fully signed `.einmo` envelope (its stamps came
+        // from whichever stage it was originally flagged from); only its
+        // unsigned trailing advisory line is read here, so this never
+        // touches signed content.
+        let dst = flagged_dir.join(&rel);
+        let advisory = match EinmoFile::from_file(&dst)
+            .ok()
+            .and_then(|existing| existing.advisory().map(str::to_string))
+        {
+            Some(existing) => format!("{new_block}\n{existing}"),
+            None => new_block,
+        };
         file.set_advisory(advisory);
 
-        // Flags are plaintext, transient dev-process markers (FOOP-25 §S.3):
-        // re-flagging the same test REPLACES the existing flagged file rather
-        // than accumulating suffixed copies. Plain overwrite at the mirror path.
-        let dst = flagged_dir.join(&rel);
         ensure_parent_dir(&dst)?;
         let bytes = file.serialize()?;
         std::fs::write(&dst, &bytes).map_err(|e| EinmoError::io(&dst, e))?;
         // Move semantics: remove from origin.
         std::fs::remove_file(&src).map_err(|e| EinmoError::io(&src, e))?;
         report.flagged.push(rel);
+    }
+    Ok(report)
+}
+
+/// The result of promoting flagged content into `notes/`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NoteReport {
+    /// The mirror-relative paths written into `notes/`.
+    pub noted: Vec<PathBuf>,
+}
+
+/// Promote a flagged artifact's concatenated advisory into `notes/` as a
+/// signed note (`EIMP-1` §S.3): "the same concatenated annotated content
+/// that a flag holds as plaintext can be promoted into `notes/` as the
+/// signed body of a note" — a throwaway flag graduating into a durable,
+/// attributed record.
+///
+/// Unlike `flagged/`, a note **is signed** and participates in signature
+/// checks (verify-on-inspect via the ordinary `EinmoFile::from_file` path —
+/// nothing about verification is note-specific). Unlike promoting a stage,
+/// this does **not** consume the flag: `flagged/<rel>` is left in place, so
+/// resolving/retracting the flag itself stays a separate, deliberate
+/// action.
+///
+/// **`notes/` is deliberately not a [`Stage`]** — it does not join
+/// `is_legal_transition`'s pairs, `compare`'s stage-to-stage matching, the
+/// CLI's `--stage` selection, or suite-integrity walks. Extending the
+/// `Stage` enum would ripple through every exhaustive match over it across
+/// the crate for a stage that isn't part of the promotion pipeline at all
+/// (no `retract`, no `compare`, nothing to walk as part of "does this suite
+/// have the right shape"); `notes/` sits outside that machinery the same
+/// way `flagged/` already mostly does. Broader integration (`einmo verify`
+/// scanning `notes/`, a `--stage notes` CLI selector) is left for when a
+/// concrete need appears — this function's job is the note format and the
+/// one promotion operation `EIMP-1` §S.3 actually asks for.
+///
+/// # Errors
+///
+/// Returns [`EinmoError::Verification`] if a flagged source fails
+/// verify-on-inspect, [`EinmoError::Config`] if a matched flagged file
+/// carries no advisory (defensive — `flag` always sets one), or
+/// [`EinmoError::Io`] on a filesystem failure.
+pub fn promote_flag_to_note(
+    config: &TestConfig,
+    key: &KeySource,
+    filter: Option<&str>,
+    files: Option<&[PathBuf]>,
+) -> Result<NoteReport> {
+    let notes_dir = config.stage_dir_for_notes();
+    let mut report = NoteReport::default();
+
+    // Derive both keys ONCE for the whole batch, matching `promote`'s own
+    // discipline (Argon2id is ~1.8s by design). The configured key follows
+    // the same plaintext-for-the-call's-duration precedent
+    // `write_output`/`write_crash_crumb` already use for it.
+    let (configured, _) = derive_keypair(config.configured_passphrase());
+    let (notes_signer, _) = derive_keypair(key.passphrase());
+
+    for rel in matching_mirror_paths(config, Stage::Flagged, filter, files)? {
+        let src = config.stage_dir(Stage::Flagged).join(&rel);
+        let flagged = EinmoFile::from_file(&src)?; // verify-on-inspect
+        let Some(advisory) = flagged.advisory() else {
+            return Err(EinmoError::Config(format!(
+                "{}: nothing flagged to promote into a note",
+                rel.display()
+            )));
+        };
+
+        let metadata = Metadata {
+            test: rel.to_string_lossy().into_owned(),
+            suite: config.suite_name().to_string(),
+            producer: git_commit_sha(),
+            producer_diff: git_diff_sha(),
+            generated: now_iso8601(),
+            status: Status::Normal,
+            status_detail: String::new(),
+            reference: String::new(),
+            sections: vec!["NOTE".to_string(), "STAMPS".to_string()],
+        };
+        let sections = vec![Section::new("NOTE", advisory.to_string())];
+        let mut file = EinmoFile::new(
+            config.encoding(),
+            config.separator(),
+            metadata,
+            sections,
+            Stamps::new(),
+        );
+        let stamps = Stamps::generate_for_stage(
+            &file.signed_prefix(),
+            &configured,
+            "stage:notes",
+            &notes_signer,
+        );
+        file.set_stamps(stamps);
+
+        let dst = notes_dir.join(&rel);
+        ensure_parent_dir(&dst)?;
+        let bytes = file.serialize()?;
+        std::fs::write(&dst, &bytes).map_err(|e| EinmoError::io(&dst, e))?;
+        report.noted.push(rel);
     }
     Ok(report)
 }
@@ -648,10 +765,11 @@ mod tests {
     }
 
     #[test]
-    fn reflag_replaces_the_existing_flagged_file() {
-        // Flags are plaintext, transient dev-process markers (FOOP-25 §S.3):
-        // re-flagging the same test REPLACES the flagged file, it does not
-        // accumulate suffixed files.
+    fn reflag_concatenates_with_the_existing_flagged_note() {
+        // Flags are plaintext, transient dev-process markers (EIMP-1 §S.3),
+        // but they accumulate a HISTORY: re-flagging the same test
+        // CONCATENATES a new dated block on top of whatever is already
+        // flagged there — it never silently discards an earlier note.
         let (_tmp, config) = suite();
         write_output(&config, "a.foo", "5");
         flag(&config, Stage::Output, None, "first", None).unwrap();
@@ -659,16 +777,108 @@ mod tests {
         write_output(&config, "a.foo", "5");
         flag(&config, Stage::Output, None, "second", None).unwrap();
         let flagged_dir = config.stage_dir(Stage::Flagged);
-        // Exactly one flagged file — the re-flag overwrote, not suffixed.
+        // Exactly one flagged file — re-flagging still lands at the one
+        // mirror path, it does not suffix a second file.
         let count = fs::read_dir(&flagged_dir).unwrap().count();
-        assert_eq!(count, 1, "re-flag must replace, not add a suffixed file");
-        // And it carries the newest note.
+        assert_eq!(
+            count, 1,
+            "re-flag must land at one mirror path, not a suffixed file"
+        );
         let flagged = flagged_dir.join("a.foo.einmo");
         let file = EinmoFile::from_file(&flagged).unwrap();
+        let advisory = file.advisory().unwrap();
         assert!(
-            file.advisory().unwrap().starts_with("# flagged: second"),
-            "the replacing flag's advisory must win"
+            advisory.starts_with("# flagged: second"),
+            "the newest flag's block goes on top: {advisory:?}"
         );
+        assert!(
+            advisory.contains("# flagged: first"),
+            "the earlier flag's note must survive, not be discarded: {advisory:?}"
+        );
+    }
+
+    #[test]
+    fn triple_reflag_preserves_every_prior_block_in_order() {
+        let (_tmp, config) = suite();
+        for reason in ["first", "second", "third"] {
+            write_output(&config, "a.foo", "5");
+            flag(&config, Stage::Output, None, reason, None).unwrap();
+        }
+        let flagged = config.stage_dir(Stage::Flagged).join("a.foo.einmo");
+        let file = EinmoFile::from_file(&flagged).unwrap();
+        let advisory = file.advisory().unwrap();
+        let first = advisory.find("# flagged: first").unwrap();
+        let second = advisory.find("# flagged: second").unwrap();
+        let third = advisory.find("# flagged: third").unwrap();
+        assert!(
+            third < second && second < first,
+            "blocks must appear newest-first, all three surviving: {advisory:?}"
+        );
+    }
+
+    // EIMP-1 S.3: the signed notes/ stage.
+
+    #[test]
+    fn promote_flag_to_note_writes_a_signed_note_from_the_advisory() {
+        let (_tmp, config) = suite();
+        write_output(&config, "a.foo", "5");
+        flag(&config, Stage::Output, None, "needs a second look", None).unwrap();
+
+        let key = KeySource::from_passphrase("a note signer");
+        let report = promote_flag_to_note(&config, &key, None, None).unwrap();
+        assert_eq!(report.noted, vec![PathBuf::from("a.foo.einmo")]);
+
+        let note_path = config.stage_dir_for_notes().join("a.foo.einmo");
+        let note = EinmoFile::from_file(&note_path).unwrap();
+        assert!(note.chain_valid(), "a note must be a genuinely signed file");
+        assert!(
+            note.section("NOTE")
+                .unwrap()
+                .body()
+                .contains("needs a second look"),
+            "the note's body must carry the flag's advisory text"
+        );
+        let (_, notes_vk) = derive_keypair("a note signer");
+        let stage_stamp = note
+            .stamps()
+            .entries()
+            .iter()
+            .find(|s| s.key() == "stage:notes")
+            .expect("a stage:notes stamp must be present");
+        assert_eq!(stage_stamp.pubkey_hex(), hex::encode(notes_vk.to_bytes()));
+    }
+
+    #[test]
+    fn promote_flag_to_note_does_not_consume_the_flag() {
+        let (_tmp, config) = suite();
+        write_output(&config, "a.foo", "5");
+        flag(&config, Stage::Output, None, "needs a second look", None).unwrap();
+
+        promote_flag_to_note(&config, &KeySource::from_passphrase(""), None, None).unwrap();
+
+        assert!(
+            config
+                .stage_dir(Stage::Flagged)
+                .join("a.foo.einmo")
+                .exists(),
+            "promoting to a note must not remove the flag -- resolving the flag is a separate action"
+        );
+    }
+
+    #[test]
+    fn promote_flag_to_note_carries_the_concatenated_history() {
+        let (_tmp, config) = suite();
+        write_output(&config, "a.foo", "5");
+        flag(&config, Stage::Output, None, "first", None).unwrap();
+        write_output(&config, "a.foo", "5");
+        flag(&config, Stage::Output, None, "second", None).unwrap();
+
+        promote_flag_to_note(&config, &KeySource::from_passphrase(""), None, None).unwrap();
+
+        let note = EinmoFile::from_file(&config.stage_dir_for_notes().join("a.foo.einmo")).unwrap();
+        let body = note.section("NOTE").unwrap().body();
+        assert!(body.contains("# flagged: first"));
+        assert!(body.contains("# flagged: second"));
     }
 
     #[test]
@@ -884,5 +1094,56 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.promoted.len(), 1, "files must override --filter");
+    }
+
+    // EIMP-1 S.3: notes/ round-trip — a promoted note passes
+    // verify-on-inspect, and its stage:notes stamp verifies against the
+    // passphrase-derived key. Also confirms notes/ is signed while
+    // flagged/ carries only the original stamps (no stage:notes stamp).
+
+    #[test]
+    fn promote_flag_to_note_round_trip_verify_on_inspect_and_key_match() {
+        let (_tmp, config) = suite();
+        write_output(&config, "a.foo", "5");
+        flag(&config, Stage::Output, None, "needs attention", None).unwrap();
+
+        let note_key = KeySource::from_passphrase("a-note-signer");
+        let report = promote_flag_to_note(&config, &note_key, None, None).unwrap();
+        assert_eq!(report.noted, vec![PathBuf::from("a.foo.einmo")]);
+
+        // The note must pass verify-on-inspect (the real from_file path).
+        let note_path = config.stage_dir_for_notes().join("a.foo.einmo");
+        let note =
+            EinmoFile::from_file(&note_path).expect("a promoted note must pass verify-on-inspect");
+        assert!(note.chain_valid(), "stamp chain must be fully valid");
+
+        // The stage:notes stamp's pubkey must match the passphrase-derived key.
+        let (_, expected_vk) = derive_keypair("a-note-signer");
+        let stage_stamp = note
+            .stamps()
+            .entries()
+            .iter()
+            .find(|s| s.key() == "stage:notes")
+            .expect("stage:notes stamp must be present");
+        assert_eq!(
+            stage_stamp.pubkey_hex(),
+            hex::encode(expected_vk.to_bytes()),
+            "the note's stamp must verify against the passphrase-derived key"
+        );
+
+        // The flagged file still verifies (it kept its original stamps) but
+        // has NO stage:notes stamp — notes/ participates in signature checks
+        // while flagged/ does not add a new attestation.
+        let flagged_path = config.stage_dir(Stage::Flagged).join("a.foo.einmo");
+        let flagged =
+            EinmoFile::from_file(&flagged_path).expect("flagged file must still verify-on-inspect");
+        assert!(
+            flagged
+                .stamps()
+                .entries()
+                .iter()
+                .all(|s| s.key() != "stage:notes"),
+            "flagged/ must not carry a stage:notes stamp"
+        );
     }
 }

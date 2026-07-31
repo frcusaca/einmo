@@ -1,0 +1,10 @@
+{
+  "id": "T-b385c283-4206-40f3-9f57-da539888354e",
+  "subject": "Remove crash-stash block from EIMP-1.plan.md",
+  "description": "Remove the fenced ```system_reboot_stash block from lines 2-24 of EIMP-1.plan.md after incorporating its instructions.",
+  "status": "completed",
+  "activeForm": "Removing crash-stash messages",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_04a1d6ad8ffe9lFXK9db78cgAJ"
+}

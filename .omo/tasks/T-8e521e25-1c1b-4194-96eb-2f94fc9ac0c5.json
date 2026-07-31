@@ -1,0 +1,10 @@
+{
+  "id": "T-8e521e25-1c1b-4194-96eb-2f94fc9ac0c5",
+  "subject": "Phase D: Add missing tests from EIMP-1 Test Plan",
+  "description": "Write missing tests: notes/ stage signed .einmo, zeroize on drop for signer, passphrase unreachable after construction, journal replay reconstructs DecisionBook, comprehensive multi-verifier end-to-end. Check Test Plan in EIMP-1.md §Test Plan.",
+  "status": "pending",
+  "activeForm": "Writing missing tests",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_04a1d6ad8ffe9lFXK9db78cgAJ"
+}

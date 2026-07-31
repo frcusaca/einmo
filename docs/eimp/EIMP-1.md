@@ -2,11 +2,11 @@
 eimp: 1
 title: EinmoReview — a thread-safe review-session object; thin bash, server, and dhtml frontends
 author: Atlas <hc.busy@gmail.com> (ported by Claude Code (Sonnet 5) <noreply@anthropic.com>)
-status: Draft
+status: Implementing
 type: Standards
 created: 2026-07-19
 supersedes: []
-begun: [ ]
+begun: [x]
 ---
 
 # EIMP-1: EinmoReview — a thread-safe review-session object; thin bash, server, and dhtml frontends
@@ -30,11 +30,15 @@ with the following adaptations from the original:
   since they explain the design's provenance, but they are not actionable
   EIMPs here — if this repository ever needs their content, it should be
   ported the same way this document was.
-- The status is left as `Draft`/`begun: [ ]`, matching the original: this
-  design has **not been implemented**. No `einmo::review` module exists in
-  `src/` today.
+- The status was left as `Draft`/`begun: [ ]` when first ported (2026-07-29):
+  the design had not been implemented and no `einmo::review` module existed
+  in `src/`. As of 2026-07-30, the Open Questions below are resolved and
+  work has begun (`status: Implementing`, `begun: [x]`) — see
+  `EIMP-1.plan.md` for progress.
 
-Everything else below is the original specification, unchanged in substance.
+Everything else below is the original specification (adjusted only where
+the Open Questions section below records a resolution), unchanged in
+substance otherwise.
 
 ## Abstract
 
@@ -144,13 +148,32 @@ three are the same refactor.
 ### S.1 The three layers
 
 ```
-einmo core (exists)   format · signature · verify · stage · transitions · compare · EinmoSuite
-einmo::review (NEW)   EinmoReview — session state, decisions, cache, plan/execute, journal
-frontends (thin)      CLI verbs · `einmo review serve` · experimental_reviewer.sh (thin) · dhtml
+einmo core (exists)   format · signature · verify · stage · transitions · compare · EinmoSuite · CorpusSigner
+review session (NEW)  EinmoReview — session state, decisions, cache, plan/execute, journal
+frontends (thin)      review CLI verbs · `einmo review serve` · einmo_review_client.sh · dhtml
 ```
 
 All frontends call the same `EinmoReview`; no frontend writes `.einmo` bytes
 or touches key material.
+
+**Crate boundary (resolved 2026-07-30, specified by `EIMP-4` §S.1).** These
+three layers do not all ship in one crate. `EIMP-4` splits the repository
+into published `einmo` (core: the top line above, `CorpusSigner` included)
+and published `einmo-review-server` (the bottom two lines: `EinmoReview`
+itself, the HTTP server, the TUI client script, and the dhtml frontend).
+Two consequences bind this EIMP's remaining work:
+
+- **Core must stay dependency-lean.** No `axum`/`tokio`/`hyper`/`tower` may
+  land in core — which is why §S.11's `CorpusSigner` ships single-threaded
+  here and its parallel machinery is deferred to `EIMP-5`.
+- **Phase B's `einmo review …` verbs belong to `einmo-review-server`.**
+  They operate on `EinmoReview`, which lives in that crate; they are that
+  crate's binary's subcommands, not core `einmo`'s `cli.rs`.
+
+The split itself is `EIMP-4`'s work, executed *after* this EIMP completes.
+This EIMP need only avoid building anything that would make the split
+harder — chiefly, keeping core free of the HTTP stack and of an async
+runtime.
 
 ### S.2 The `EinmoReview` object
 
@@ -168,7 +191,7 @@ pub struct EinmoReview {
 }
 
 impl EinmoReview {
-    pub fn open(suite: &Path, opts: ReviewOpts) -> Result<Self>;   // opts: differing_only, filter
+    pub fn open(suite: &Path, opts: ReviewOpts) -> Result<Self>;   // opts: mode, filter
     pub fn items(&self) -> Vec<ReviewItem>;                        // worklist rows + current decisions
     pub fn body(&self, m: &MirrorPath, s: Stage) -> Result<Arc<VerifiedBody>>;
     pub fn diff(&self, m: &MirrorPath, l: Stage, r: Stage) -> Result<DiffHunks>;
@@ -181,6 +204,26 @@ impl EinmoReview {
     pub fn refresh(&self) -> Vec<MirrorPath>;                      // rescan; stale decisions flagged
 }
 ```
+
+**`ReviewOpts.mode` (resolved — was "does `differing_only` default on?").**
+Not a boolean: a runtime-selectable `ReviewMode`.
+
+```rust
+pub enum ReviewMode {
+    Full,               // every item in the worklist
+    Random,             // worklist in randomized order (sampling a large suite)
+    NewOrBroken,        // only items with no baseline yet, or a content mismatch
+}
+```
+
+`NewOrBroken` is what the old `differing_only` boolean was reaching for,
+generalized: an item qualifies when its candidate stage's content doesn't
+match the next stage up (the same content-section comparison `compare.rs`
+already performs — INPUT/OUTPUT[*]/PERSPECTIVE/DIFF sections, never STAMPS),
+OR when the next stage has no artifact at all yet. `Full` is the default
+(matches `EIMP-2`'s existing unfiltered list behavior — no surprise
+narrowing for a script that's always shown everything); `NewOrBroken` and
+`Random` are opt-in via `ReviewOpts`.
 
 **Single-flight verification**: `VerifiedCache` maps
 `Fingerprint → Arc<OnceLock<VerifiedBody>>`. The map lock is held only to
@@ -311,14 +354,53 @@ the durable home of "promote several stages in one go, one passphrase."
 Ordered-apply-under-one-key lives in the library so every frontend (bash,
 server, MCP) inherits it.
 
+### S.4a Content-then-key decision for `execute`'s promote (multi-signer accumulation)
+
+**Resolved — replaces `transitions::promote`'s always-fresh-copy behavior
+for the `EinmoReview::execute` path.** Today's `transitions::promote`
+(`src/transitions.rs`) always copies the source stage's file to the
+destination and appends exactly one stamp — it never inspects whatever
+might already be sitting at the destination. `EinmoReview::execute`
+promoting into `checked`/`verified` instead applies the same
+content-then-key decision table this EIMP's sibling, `EIMP-3`, gives the
+core test-run path for `output` (`EIMP-3.md` §Specification "Content/key
+decision table") — restated here for `checked`/`verified`:
+
+| Existing destination file | Content sections match the promotion candidate? | Promoting signer's key already among existing `stage:<dest>` stamps? | Outcome |
+|---|---|---|---|
+| absent (or corrupt) | n/a | n/a | write fresh, sign, done (today's behavior, unchanged) |
+| present | no | n/a | this is a genuine new baseline: write fresh content, fresh stamp chain from scratch (old stamps do not carry over onto different content) |
+| present | yes | yes | no-op: destination file stays byte-for-byte untouched, no rewrite, no timestamp change |
+| present | yes | no | **append** the promoting signer's `stage:<dest>` stamp to the *existing* destination file in place; every prior stamp (including other signers') is preserved |
+
+"Was it signed by me" (today's implicit single-signer assumption) becomes
+"is at least one of the existing stamps mine — others may also be present
+and are left alone." This is the semantics `S.5` below already describes in
+prose ("Multiple `verified` stamps are accumulated attestation"); this
+subsection makes it a concrete, implementable decision table and extends it
+to `checked` as well as `verified` (previously only `verified` was
+described as accumulating). Content comparison and the exact-pubkey stamp
+lookup are the same primitives `EIMP-3` introduces (`Stamps`'s exact-pubkey
+lookup, alongside the existing prefix-based `stamped_by`) — implementers
+should share that helper between the two EIMPs where it falls out naturally
+rather than duplicating it, per `EIMP-3.md`'s own scope-boundary note.
+
 ### S.5 Concurrency semantics for multiple verifiers
 
 - Per-reviewer decisions coexist; replace-not-stack holds *within* a
   reviewer. Executing appends that reviewer's stamps; a second verifier
-  executing later appends theirs. Multiple `verified` stamps are accumulated
-  attestation, surfaced via `Stamps::stamped_by`.
+  executing later appends theirs (§S.4a's decision table). Multiple
+  `checked`/`verified` stamps are accumulated attestation, surfaced via
+  `Stamps::stamped_by`.
 - Soft claims (`claim(m, ttl)`) advertise "I'm on this one" in listings;
-  advisory only, cannot wedge.
+  advisory only, cannot wedge. **Default TTL: 5 minutes (resolved)** —
+  short enough to suit an interactive review pass; an expired claim is
+  reclaimed automatically (silently released back to the pool, no action
+  needed from the original claimant) rather than requiring an explicit
+  release call. **Active claims ARE surfaced in `plan()`'s output
+  (resolved)** — a reviewer sees what another reviewer currently holds (and
+  its remaining TTL) before deciding, so two reviewers don't collide on the
+  same item.
 - The `exec` mutex serializes disk mutation; each write re-checks the file
   fingerprint first — anything drifted since planning is skipped-and-
   reported, never clobbered.
@@ -327,12 +409,59 @@ server, MCP) inherits it.
 
 ### S.6 The journal
 
-Append-only JSONL per session (dot-named inside the suite or under a scratch
-dir — decided at implementation; einmo's walkers skip dot entries): session
-id, reviewer, timestamp, produced_by, every decide/undecide/claim/execute
-with outcomes. Reopen = replay. This is the audit and crash-recovery
-substrate, and what a later quorum policy ("verified needs 2 distinct human
-stamps") reads.
+Append-only JSONL per session, under a **scratch/state directory** (resolved
+— not a suite dot-file: the journal is ephemeral session/process state, not
+part of the reviewed corpus, and should not travel with it or show up in
+`git status` for the suite's own repository). Path follows the same
+scratch-dir hardening `EIMP-2`'s client script already established
+(`einmo_review_client.sh`'s `umask 077`/`harden_dir` pattern) — one journal
+file per session id. Contents: session id, reviewer, timestamp,
+produced_by, every decide/undecide/claim/execute with outcomes. Reopen =
+replay. This is the audit and crash-recovery substrate.
+
+**Keyed by `EinmoId` end to end (resolved 2026-07-30).** Every entry that
+concerns a case carries its `EinmoId` (§0) as the identifying field — not a
+path, not an index, not a display name. One identifier from the client's
+keystroke through the server's handler to the journal line means a journal
+can be joined against `items()`, against a plan, and against the corpus
+itself without any translation layer that could disagree.
+
+**Verbosity levels.** The journal writes at a configurable level, so a
+routine session stays readable while a debugging session records
+everything:
+
+| Level | Records |
+|---|---|
+| terse | session open/close, `execute` batches and their outcomes |
+| normal (default) | the above, plus every decide/undecide/claim |
+| fine | the above, plus **each case as it is read in and verified** — one entry per `EinmoId` per verification, which is what makes the journal able to answer "which case was in flight when this crashed?" |
+
+**Enough to serve the crash crumb's purpose — but not (yet) its
+replacement.** At `fine`, a case that begins verification and never records
+its completion leaves an unmatched entry, which identifies the in-flight
+case after a crash *strictly more precisely* than today's crash crumb does
+— and without the crumb's side effect of writing a placeholder `.einmo`
+into `output/`. (That side effect is not hypothetical: it is exactly what
+forced the `"TEST IN PROGRESS"` special-case into `EIMP-3`'s content/key
+decision table in `write_output`.) **This EIMP only makes the journal
+*capable* of that role; it does not retire the crash crumb.** Retirement
+touches `einmo_suite.rs`'s test-run path — a different layer from the
+review session — and would invalidate existing tests
+(`crash_crumb_survives_stack_overflow` in `zweimomo`, einmo's
+`catastrophe_crumb_*` tests). It is carried as a follow-up logging EIMP in
+`EIMP-6` (`docs/eimp/EIMP-6.md`), alongside the broader logging design.
+Per `EIMP-6` §S.3, crash-crumb work is frozen as of 2026-07-30: the
+mechanism keeps working untouched, but gains no new features or consumers
+while it is scheduled for removal.
+
+**Quorum policies are explicitly OUT of scope for this EIMP (resolved).**
+"Quorum" is not yet a defined concept in einmo — this EIMP only facilitates
+*multiple parties independently signing* the same stage (§S.4a's
+accumulation), with no N-of-M policy engine deciding when that's "enough."
+Whether some future gate should require e.g. 2 distinct human stamps before
+treating `verified` as complete is left for a follow-up EIMP if and when
+it's needed; nothing here blocks building it later, since the journal
+already records every stamping event a quorum policy would need to read.
 
 ### S.7 The server — one running review
 
@@ -341,6 +470,91 @@ stamps") reads.
 discipline `scripts/experimental_reviewer.sh` already established), TCP on
 127.0.0.1 with a bearer token only when a browser needs it. Handlers are
 thin translations onto `Arc<EinmoReview>`.
+
+#### S.7a TUI-owned private server (resolved 2026-07-30)
+
+**The TUI starts its own server and kills it on exit.** Rather than the TUI
+attaching to a pre-existing, externally-managed daemon (`EIMP-2`'s shape,
+where the script fails fast if no server is found), the review script
+launches a server configured to listen on a **private socket of its own**,
+drives it for the session, and terminates it when the pass ends. Nothing
+else on the machine knows the socket path, so no other process can
+accidentally interfere with the TUI's session — the socket *is* the access
+control, and its lifetime is exactly the TUI's lifetime.
+
+Client side stays plain `curl` over that socket:
+
+```bash
+# GET
+curl --unix-socket /tmp/server.sock http://localhost/users
+
+# PUT
+curl --unix-socket /tmp/server.sock -X PUT \
+     -H "Content-Type: application/json" \
+     -d '{"name":"alice"}' http://localhost/users/1
+```
+
+Server side is the straightforward axum/`UnixListener` binding:
+
+```rust
+use axum::{routing::get, routing::put, Router};
+use std::fs;
+use std::path::Path;
+use tokio::net::UnixListener;
+
+#[tokio::main]
+async fn main() {
+    let socket_path = "/tmp/server.sock";
+
+    // 1. Remove old socket file if it exists
+    if Path::new(socket_path).exists() {
+        fs::remove_file(socket_path).unwrap();
+    }
+
+    // 2. Build your API routes
+    let app = Router::new()
+        .route("/users", get(|| async { "Get users output" }))
+        .route("/users", put(|| async { "Put users output" }));
+
+    // 3. Bind to the Unix Domain Socket
+    let listener = UnixListener::bind(socket_path).unwrap();
+    println!("Listening securely on Unix socket: {}", socket_path);
+
+    // 4. Run the server
+    axum::serve(listener, app).await.unwrap();
+}
+```
+
+**Implementation notes on adopting this shape:**
+
+- **It requires axum 0.8.** `axum::serve(listener, app)` accepting a
+  `tokio::net::UnixListener` is an 0.8 capability; this repo pins **0.7.9**,
+  where `serve()` is TCP-only — which is exactly why `EIMP-2` Phase D had to
+  hand-roll the accept loop out of `hyper`'s HTTP/1.1 builder, `hyper-util`'s
+  `TokioIo`/`TowerToHyperService`, and a manual `UnixListener` loop. Upgrading
+  to axum 0.8 (0.8.9 current as of 2026-07-30) lets that whole glue layer be
+  **deleted** in favor of the four-line binding above. Treat the upgrade as
+  part of this work, and verify the `Listener` impl is available in the
+  feature set actually enabled rather than assuming it.
+- **Socket path must not be `/tmp/server.sock`.** The snippet's fixed path is
+  illustrative; a private per-session socket needs an unpredictable path in a
+  mode-700 directory (the scratch-dir hardening
+  `einmo_review_client.sh` already performs). A fixed world-known path in
+  `/tmp` is the opposite of the isolation this design is for.
+- **`remove_file`-if-exists is not sufficient on its own.** Blindly unlinking
+  whatever sits at the path would let this server stomp a *live* server's
+  socket. `EIMP-2` Phase D already solved this: probe with `UnixStream::connect`
+  first — connect succeeds → a live server owns it, refuse to start; connect
+  fails → the file is stale, remove and rebind. Keep that logic.
+- **Termination must be reliable.** The script kills the server on exit; that
+  has to hold for `Ctrl-C` and for an abnormal exit too, or sockets and
+  orphaned servers accumulate. The client's existing `trap`-based cleanup is
+  the hook, paired with the server's own `ctrl_c` shutdown and socket removal.
+- **This does not remove the standalone-server mode.** A long-lived server
+  that several clients address remains meaningful (it is what makes
+  server-side session state observable across two script runs, which `EIMP-2`
+  Phase I used to prove decisions really live server-side). The TUI-owned
+  private server is an additional, *default* launch mode, not a replacement.
 
 | Method | Path | Meaning |
 |--------|------|---------|
@@ -454,9 +668,8 @@ work. Verification (CLI `einmo verify`, the server, the review script) calls
 deterministically:
 
 1. A **manifest** header: the stage name, the parameter set id, and the
-   ordered list of included mirror-paths. Order is einmo's existing sorted
-   walk (`walk_input_tree` sorts; deterministic), so the manifest is
-   reproducible.
+   ordered list of included mirror-paths, ordered by the collation
+   specified in §S.11a below.
 2. Then, in manifest order, each file's **bytes byte-joined** onto the
    running message (the signed envelope bytes as they sit on disk — the
    whole artifact, not just its body).
@@ -464,78 +677,137 @@ deterministically:
    section signature + its manifest live in one file per stage (e.g.
    `checked/.section.sig` — dot-named, so einmo's walkers skip it).
 
-**Reading the section — parallel, one allocation (bandwidth-maximizing).**
-The byte-join is a "load many files into one contiguous buffer" workload; a
-naïve sequential `read` per file, growing a `Vec`, wastes both disk queue
-depth and memory bandwidth. Use the two-pass structure that makes the read
-both fast AND deterministic:
+#### S.11a The manifest collation — configurable, with a sensible default (resolved 2026-07-30)
 
-1. **Metadata pass** — `fs::metadata(len)` over the manifest-ordered paths
-   to compute each file's size and its **offset** in the final buffer; sum
-   to the total. One `vec![0u8; total]` allocation, no reallocation or
-   per-file heap churn.
-2. **Parallel read pass** — because every file's destination is a
-   **disjoint** `&mut` sub-slice (`buffer[offset..offset+len]`), N worker
-   threads can `read_exact` into their slices with **no locking and no data
-   races** (Rust's borrow checker witnesses the disjointness via
-   `split_at_mut`/chunked slicing). This saturates disk queue depth on many
-   small files and memory bandwidth on large ones. A sketch of the
-   sequential core (the parallel version splits the `(path, slice)` pairs
-   across a small thread pool / `rayon`):
+The digest is a concatenation in manifest order, so **the order is part of
+the signature**: two machines that order the same corpus differently compute
+different digests for identical content. Earlier drafts leaned on "einmo's
+existing sorted walk (`walk_input_tree` sorts; deterministic)". That is not
+enough — a walk's sort is an implementation detail of directory traversal,
+free to change under a refactor, a different walk crate, or a
+locale-sensitive comparator, and any such change would silently invalidate
+every previously computed digest.
 
-   ```rust
-   // sizes/offsets from the metadata pass; `buffer` is one allocation.
-   let mut cur = 0;
-   for (path, &size) in paths.iter().zip(&sizes) {
-       File::open(path)?.read_exact(&mut buffer[cur..cur + size])?;
-       cur += size;
-   }
-   ```
+The collation is therefore an **explicit, configurable parameter of the
+signature**, with one default that suites get without asking:
 
-**Determinism is preserved regardless of read order.** Offsets are fixed by
-the *manifest* order in the metadata pass, so which thread finishes first is
-irrelevant — the buffer's byte layout, and thus the hash, is identical every
-run. The parallelism is purely an I/O-throughput optimization over a layout
-the manifest already pinned.
+```rust
+/// How a section's files are ordered before digesting. Part of the signed
+/// parameters -- see "recorded in the signature" below.
+#[non_exhaustive]
+pub enum Collation {
+    /// DEFAULT. Component-wise, byte-wise within a component. No locale,
+    /// no normalization, no case folding. Reproducible on every machine.
+    PathBytes,
+    // Future variants are additive; each gets its own stable identifier.
+}
+```
 
-**Concurrency caveat (why the metadata pass alone is not the integrity
-check).** Sizes read in pass 1 could disagree with bytes in pass 2 if the
-section changed underneath (a concurrent promotion). Guard it: a
-`read_exact` short read (file shrank) or leftover bytes (file grew) is a
-hard error that aborts the signature; and the section sign runs under
-`execute`'s write lock (S.2/S.4), which already excludes concurrent
-mutation. Verification re-reads the same way and re-checks — a mid-flight
-change simply fails verify, which is the correct outcome.
+**`Collation::PathBytes` (the default), normatively:**
 
-**Bounded, not unbounded, parallelism.** Cap the worker pool (e.g. a small
-multiple of CPU count, or a config knob) so a giant section does not spawn
-thousands of threads; huge individual files can be split into ranged reads
-across workers.
+1. **Path form**: each file's mirror-relative path (what `EinmoId` denotes,
+   `EIMP-2` §0), as a sequence of path components. Never an absolute path,
+   never `readdir` order.
+2. **Component-wise comparison**: compare paths by comparing components
+   pairwise in order; the first differing component decides. If one path's
+   components are a prefix of the other's, the shorter sorts first. This
+   orders by structure, so a directory boundary can never be confused with
+   a character inside a name (`a/b` vs `a-b/c` sort by their real
+   relationship, not by the byte value of `/` vs `-`).
+3. **Byte-wise within a component**: compare components as raw UTF-8 byte
+   sequences (`[u8]` lexicographic). Never locale collation — that varies
+   by machine, by environment variable, and by libc version.
+4. **No Unicode normalization, no case folding.** Paths compare exactly as
+   their bytes appear on disk. Normalizing would make two *distinct* files
+   on a case-sensitive filesystem compare equal, which an ordering must
+   never do.
+5. **Ties are a hard error** in every collation, not just this one. Two
+   distinct files whose paths compare equal is impossible on a sane
+   filesystem; if observed, abort the signature rather than applying a
+   tiebreak. A silent tiebreak is a way for two different corpora to
+   produce one digest — so a collation that *can* produce ties (a
+   case-folding one, say) is only admissible if it errors on them.
 
-**Two read strategies — DEFAULT is fast parallel-buffer; a streaming
-alternative is also implemented and tested.** `CorpusSigner` provides two
-`ReadStrategy` implementations behind one seam, so the same manifest yields
-the same digest either way:
+**Conformance testing for future collations is `EIMP-5`'s job.** The
+default `PathBytes` cannot tie among distinct paths — it compares raw bytes
+with no folding, so distinct byte sequences compare distinct — which is why
+this EIMP ships it without a tie-detection harness. The moment a *lossy*
+collation becomes possible (case-folding, normalizing), item 5's rule needs
+a test that can actually catch a violation. `EIMP-5` §S.1a specifies that
+harness (stable-sort an alphabet, stable-sort its reverse, assert they
+agree) and makes passing it normative for every `Collation` variant.
 
-- **`ReadStrategy::ParallelBuffer` (default).** The two-pass, massively-
-  parallel read above: one allocation, disjoint-slice parallel
-  `read_exact`, then **hand the whole buffer to the signer at once**.
-  Maximizes disk/memory bandwidth; the signer (or hasher) sees one
-  contiguous message. This is what `sign`/`verify`/`digest` use unless told
-  otherwise.
-- **`ReadStrategy::Stream` (alternative).** Reads files sequentially in
-  manifest order and feeds the hasher **incrementally** (`update(chunk)` per
-  read block), never materializing the whole section in memory. Bounded
-  memory for pathologically large sections, and a cross-check oracle. It is
-  slower but must produce a **byte-identical digest** to `ParallelBuffer`.
+**Configurability's real consequence: the collation must be recorded in the
+signature.** Because the ordering determines the digest, a verifier that
+does not know which collation was used cannot distinguish "signed under a
+different ordering" from "the corpus was tampered with" — it would just see
+a mismatch. So the collation's stable identifier is written into
+`.section.sig` alongside the parameter-set id and is part of the signed
+manifest header. A verifier encountering an unknown identifier fails with
+*that*, never with a generic signature mismatch. **A wrong-configuration
+error and a tampered-corpus error must never look alike.**
 
-Both are implemented and unit-tested; a test asserts the two strategies
-agree bit-for-bit on the same fixtures (this also pins that a
-single-threaded path equals the parallel one). The default is
-`ParallelBuffer`; `Stream` is selectable (config/flag) for constrained
-environments or as the verification oracle. Semantically they are
-interchangeable — the manifest fixes the byte order, the strategy only
-chooses how the bytes reach the signer.
+Configuration follows einmo's existing precedence for suite settings
+(`einmo.toml`, as `[signing] collation = "path-bytes"`), defaulting to
+`PathBytes` when unset. Changing a suite's collation re-orders its manifest
+and therefore invalidates existing section signatures — the same class of
+event as changing the parameter set, and treated the same way.
+
+**Filesystem enumeration is a source, never an authority**: the walk decides
+*which* files exist, the collation alone decides their order. Any code path
+consuming walk order directly is a bug. Collations are testable without
+reading a single file byte, and `EIMP-5`'s Merkle restructuring inherits
+this mechanism unchanged — the ordering outlives the digest construction
+built on it.
+
+**Reading the section — SINGLE-THREADED for this EIMP (resolved
+2026-07-30).** Earlier drafts of this section specified a two-pass
+metadata→offsets→disjoint-slice parallel read as the default, with the
+worker pool resolved to `tokio`. **That is no longer this EIMP's scope.**
+`EIMP-4` splits the repository into a lean core `einmo` and a separate
+`einmo-review-server`, moving `tokio` and the whole HTTP stack out of core
+— and `CorpusSigner` belongs in core. Implementing the parallel read with
+`tokio` would therefore drag an async runtime straight back into the crate
+the split exists to keep lean, for a workload with no async character.
+
+So `CorpusSigner` ships here as the streaming, sequential implementation:
+read the files in manifest order and feed the hasher incrementally
+(`update(chunk)` per read block), never materializing the whole section in
+memory. Correct, deterministic, bounded-memory, and zero new dependencies.
+A sketch:
+
+```rust
+// manifest order fixes the byte order; the hasher sees the same stream a
+// byte-join would have produced, without the intermediate buffer.
+for path in manifest.paths() {
+    let mut f = File::open(path)?;
+    loop {
+        let n = f.read(&mut chunk)?;
+        if n == 0 { break }
+        hasher.update(&chunk[..n]);
+    }
+}
+```
+
+This serial byte-join digest is the **correctness reference and the
+performance baseline**. `EIMP-5` (`docs/eimp/EIMP-5.md`) restructures the
+digest around a Merkle tree *and* parallelizes it — one EIMP, because
+making hashing faster and cheaper to update is the whole point of the
+restructuring — and measures its benefit against what ships here. Note
+that `EIMP-5` therefore *changes* this digest rather than reproducing it;
+what carries forward unchanged is §S.11a's collation, not the
+construction.
+
+**Concurrency caveat (carried forward).** A file changing underneath the
+signer must be a hard error that aborts the signature, never a silently
+truncated digest. The section sign runs under `execute`'s write lock
+(S.2/S.4), which already excludes concurrent mutation from within einmo;
+an external mutation mid-read simply fails verification later, which is the
+correct outcome.
+
+**Determinism is structural.** The manifest's sorted walk fixes the byte
+order before any read begins, so the digest does not depend on read timing,
+buffering, or (later) worker count.
 
 **When it runs.** Whenever the section updates —
 `EinmoReview::execute`/`execute_one`, promoting into a stage, calls
@@ -584,16 +856,29 @@ Tests are written first, per project rules.
   passphrase ⇒ same section pubkey across runs); empty-section manifest is
   well-formed. NO real-corpus writes in this EIMP — pure module tests over
   fixtures.
-- **Unit — CorpusSigner read strategies (S.11)**: `ParallelBuffer` (default)
-  and `Stream` produce a **byte-identical digest** over the same fixture
-  set, independent of worker count and read completion order; the parallel
-  two-pass buffer has exactly `sum(len)` bytes with each file at its
-  manifest offset; a file that shrinks between the metadata and read pass
-  (short read) or grows (leftover bytes) is a hard error, not a silent
-  mis-hash; `Stream` holds bounded memory (never materializes the whole
-  section). Stress with a mix of many tiny files and a few large ones.
-  `CorpusSigner` is exercised as a standalone object (no `EinmoReview`),
-  proving the encapsulation.
+- **Unit — CorpusSigner (S.11, single-threaded byte-join — superseded the
+  original `ParallelBuffer`/`Stream` comparison, withdrawn 2026-07-30 when
+  the parallel read moved to `EIMP-5`)**: `manifest()` is deterministic —
+  same file set, any discovery order, produces the same ordered path list
+  (§S.11a's `Collation`, `PathBytes` by default); `digest()` changes on
+  file add/remove/reorder/content-alteration and is stable across repeated
+  calls with no on-disk change; `sign()`→`verify()` round-trips; a tampered
+  section (one file's bytes altered after signing) fails `verify()`;
+  same-passphrase dual derivation (Ed25519 stamp key + SLH-DSA section key)
+  is deterministic — same passphrase, same two keys, every time; an empty
+  section (stage dir exists, no files) has a well-defined digest and
+  signs/verifies like any other. `CorpusSigner` is exercised as a
+  standalone object (no `EinmoReview`), proving the encapsulation. A file
+  that changes size or disappears mid-read is a hard error, never a
+  silent mis-hash.
+- **Unit — Collation (S.11a)**: the ordering is a genuine total order —
+  paths differing only by case, by Unicode normalization (NFC vs NFD of
+  one grapheme), or where a separator vs an in-name character could flip a
+  naive string sort (`a/b` vs `a-b`) all sort deterministically and
+  identically regardless of discovery order; the collation identifier
+  round-trips through `.section.sig`; an unrecognized identifier fails
+  verification as *that* (an unknown-collation error), never as a generic
+  signature mismatch indistinguishable from tampering.
 - **Unit — execute**: plan/execute equivalence with CLI `einmo promote`
   byte-for-byte; skip-and-report on mid-plan drift; retract cascade;
   exclusive exec under concurrent decide traffic (no lost updates).
@@ -664,23 +949,53 @@ every future frontend would re-implement review semantics.
 
 ## Open Questions
 
-- HTTP stack for `serve`: `tiny_http`-class minimal (fits UDS-first,
-  dependency-light) vs a fuller framework like axum. Decide at begun-time.
-- Journal location: dot-file inside the suite (travels with the corpus,
-  git-visible) vs scratch/state dir (ephemeral). Leaning suite-dot-file for
-  auditability; confirm with human.
-- Claim lease TTL default and whether claims appear in `plan()` output.
-- Quorum policies (N-of-M human stamps for `verified`) — in scope here or a
-  follow-up EIMP?
-- Whether `ReviewOpts.differing_only` defaults on.
-- Parallel section-read (§S.11): `rayon` (ergonomic, another dep) vs a small
-  hand-rolled std thread-pool (keeps the crate leaner). Either way the
-  single-threaded fallback must be byte-identical. Also: worker-count
-  default / config knob, and whether to range-split individual very large
-  files.
+All resolved at begun-time (2026-07-30) — design is frozen:
+
+- **HTTP stack**: `axum` (0.7.9) + `hyper`/`hyper-util`/`tower`, matching
+  `EIMP-2`'s already-proven stack over a unix-domain socket. No switch to a
+  more minimal framework — reuse what's already working.
+- **Journal location**: a scratch/state directory (not a suite dot-file).
+  See §S.6.
+- **Claim lease TTL**: 5 minutes, auto-reclaimed on expiry; active claims
+  ARE surfaced in `plan()`. See §S.5.
+- **Quorum policies**: out of scope for this EIMP entirely (not deferred as
+  "maybe later in this EIMP" — genuinely not a defined concept yet). This
+  EIMP only facilitates multi-party signature accumulation (§S.4a); a
+  quorum policy engine, if ever needed, is a distinct follow-up EIMP. See
+  §S.6.
+- **`ReviewOpts` mode default**: not a boolean — a runtime-selectable
+  `ReviewMode` (`Full` default, plus `Random` and `NewOrBroken`). See §S.2.
+- **Parallel section-read (§S.11)**: superseded. `CorpusSigner` ships the
+  **existing byte-join construction, single-threaded**, here. Both the
+  Merkle restructuring and the parallel machinery move to `EIMP-5` (merged
+  into one EIMP, since making hashing faster *and* cheaper to update is the
+  point of restructuring). The earlier "use `tokio`" resolution is
+  withdrawn — `EIMP-4`'s crate split removes `tokio` from core `einmo`,
+  which is where `CorpusSigner` lives. See §S.11.
+- **Manifest collation (§S.11a)**: a configurable `Collation`, defaulting
+  to `PathBytes` — component-wise, byte-wise within a component, no locale,
+  no Unicode normalization, no case folding, ties a hard error. Because
+  ordering determines the digest, the chosen collation's identifier is
+  recorded in `.section.sig`; a verifier must never mistake a configuration
+  difference for tampering.
+- **Phase A2 (`CorpusSigner`) scope**: confirmed in-scope for this EIMP
+  (crypto core + tests only, per §S.11's existing "not wired into the live
+  promotion flow yet" boundary — that boundary is unchanged), now
+  explicitly byte-join and single-threaded.
+- **Crate boundary**: `EinmoReview` and every frontend ship in
+  `einmo-review-server`; core `einmo` keeps the test runner, signing, and
+  `CorpusSigner`. See §S.1 and `EIMP-4` §S.1.
+- **Journal**: keyed by `EinmoId` throughout, with verbosity levels
+  (finest level records each case as read in and verified), logging enough
+  to serve the crash crumb's purpose without retiring the crumb in this
+  EIMP. See §S.6.
 
 ## References
 
+- **EIMP-3** — the core-test-run (`output`-stage) analogue of this EIMP's
+  §S.4a multi-signer content-then-key decision table; the two EIMPs share
+  the same decision shape over separate code paths (`transitions::promote`
+  here, `write_output` there).
 - **FOOP-25** (`foolish-rust`) — the original specification this EIMP is
   ported from.
 - **FOOP-15** (`foolish-rust`) — secured interactive einmo review: the

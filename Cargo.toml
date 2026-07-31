@@ -1,3 +1,10 @@
+[workspace]
+members = [".", "zweimomo"]
+resolver = "2"
+
+# Only `einmo` (this root package) is published to crates.io. `zweimomo` is
+# a demo/debugging tool exercising einmo against real fixtures — never
+# published (EIMP-2 §8).
 [package]
 name = "einmo"
 version = "0.0.5"
@@ -28,9 +35,35 @@ sha2 = "0.10"
 chacha20poly1305 = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+# Section-level post-quantum attestation (EIMP-1 S.11): SLH-DSA at the
+# conservative (large-signature, slow-signing) parameter set. Pure Rust, no
+# default features -- only the one parameter set this EIMP uses.
+fips205 = { version = "0.4", default-features = false, features = ["slh_dsa_sha2_256s"] }
+# einmo-review-server (EIMP-2, EIMP-1 §S.7a): a minimal HTTP prototype over
+# a unix-domain socket. Typed extractors throughout -- see EIMP-2.md §3a.
+# axum 0.8's `serve()` accepts anything implementing `axum::serve::Listener`,
+# including `tokio::net::UnixListener` directly -- this is why EIMP-1 §S.7a
+# names 0.8 as a precondition: it deletes the hand-rolled hyper/hyper-util
+# UDS accept loop 0.7.9 (TCP-only serve()) required.
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net"] }
+# SSE (`GET /einmo/<session>/events`, EIMP-1 §S.7): both are already
+# unconditional transitive dependencies of axum's own `response::sse` module
+# (its doc example uses exactly this pair) -- promoted to direct
+# dependencies here because we build a stream (`BroadcastStream`) rather
+# than only consuming axum's re-exported types.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 [dev-dependencies]
 tempfile = "3"
+# Test-only UDS HTTP client (serve_uds's own end-to-end tests connect over a
+# real socket) -- not needed by production code once axum 0.8 owns the
+# accept loop itself (EIMP-1 §S.7a).
+hyper = { version = "1", features = ["http1", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1"] }
+hyperlocal = "0.9"
+tower = "0.5"
 
 # The single CLI app. `cargo install einmo` yields two binary targets sharing
 # the same clap parser: `einmo` (canonical) and `cargo-einmo` (the
@@ -42,6 +75,15 @@ path = "src/main.rs"
 [[bin]]
 name = "cargo-einmo"
 path = "src/bin/cargo_einmo.rs"
+
+# The einmo-review-server prototype (EIMP-2) and its cargo-subcommand alias.
+[[bin]]
+name = "einmo-review-server"
+path = "src/bin/einmo_review_server.rs"
+
+[[bin]]
+name = "cargo-einmo-review-server"
+path = "src/bin/cargo_einmo_review_server.rs"
 
 [profile.release]
 opt-level = 3

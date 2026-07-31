@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::collation::Collation;
 use crate::error::{EinmoError, Result};
 use crate::format::{DEFAULT_SEPARATOR, FOOLISH_SEPARATOR};
 use crate::stage::{Stage, validate_stage_name};
@@ -118,6 +119,12 @@ pub struct TestConfig {
     suite_name: String,
     stage_passphrases: StagePassphrases,
     configured_passphrase: String,
+    /// The manifest collation identifier for section-level attestation
+    /// (`EIMP-1` §S.11a), as configured (`[signing] collation` in
+    /// `einmo.toml`). `None` resolves to [`Collation::DEFAULT`] at the
+    /// [`TestConfig::collation`] accessor, matching every other unset-signing
+    /// field's precedence pattern.
+    collation: Option<String>,
     /// The escalating level this suite produces and validates (FOOP-64).
     /// Required at construction: the library has no default level.
     validation_level: crate::einmo_suite::ValidationLevel,
@@ -198,6 +205,7 @@ impl TestConfig {
                 verified: toml.signing.verified.clone(),
             },
             configured_passphrase: String::new(),
+            collation: toml.signing.collation.clone(),
             validation_level: level,
             reviewer_key_prefix: toml.signing.reviewer_key_prefix.clone(),
             walk_depth_limit: toml
@@ -372,6 +380,15 @@ impl TestConfig {
         self.work_dir.join(self.stages.name(stage))
     }
 
+    /// The `notes/` directory (`EIMP-1` §S.3). Not a [`Stage`]: `notes/` is
+    /// a narrow, self-contained sibling to `flagged/`, not a peer of
+    /// `output`/`checked`/`verified` in the promote/retract/compare
+    /// machinery, so it has no `StageDirs` entry and no configurable name.
+    #[must_use]
+    pub fn stage_dir_for_notes(&self) -> PathBuf {
+        self.work_dir.join("notes")
+    }
+
     /// The configured section separator.
     #[must_use]
     pub fn separator(&self) -> &str {
@@ -459,6 +476,21 @@ impl TestConfig {
         self.stage_passphrases.get(stage)
     }
 
+    /// The manifest collation for section-level attestation (`EIMP-1`
+    /// §S.11a): `[signing] collation` in `einmo.toml`, defaulting to
+    /// [`Collation::DEFAULT`] (`PathBytes`) when unset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EinmoError::CorpusSignature`] if configured to an
+    /// unrecognized identifier.
+    pub(crate) fn collation(&self) -> Result<Collation> {
+        match &self.collation {
+            Some(id) => Collation::parse(id),
+            None => Ok(Collation::DEFAULT),
+        }
+    }
+
     /// The recursion depth limit for the input-tree walk (Feature A).
     ///
     /// Precedence: `EINMO_WALK_DEPTH_LIMIT` env > builder/toml > default.
@@ -537,9 +569,19 @@ impl TestConfig {
 ///
 /// This is a thin newtype so key material is never confused with arbitrary
 /// strings and the cascade's decision is explicit at call sites.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct KeySource {
     passphrase: String,
+}
+
+impl std::fmt::Debug for KeySource {
+    /// Never renders the raw passphrase — same discipline as
+    /// `signature::StageKeypair`'s hand-written `Debug`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeySource")
+            .field("passphrase", &"<redacted>")
+            .finish()
+    }
 }
 
 impl KeySource {
@@ -624,6 +666,10 @@ pub struct SigningConfig {
     pub verified: Option<String>,
     /// Hex prefix of the human reviewer's key (Verified level, V6).
     pub reviewer_key_prefix: Option<String>,
+    /// The manifest collation for section-level attestation (`EIMP-1`
+    /// §S.11a), by its stable identifier (e.g. `"path-bytes"`). Unset
+    /// resolves to [`Collation::DEFAULT`].
+    pub collation: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -677,6 +723,11 @@ fn merge_toml(crate_wide: EinmoTomlConfig, per_suite: EinmoTomlConfig) -> EinmoT
                 .reviewer_key_prefix
                 .clone()
                 .or(crate_wide.signing.reviewer_key_prefix),
+            collation: per_suite
+                .signing
+                .collation
+                .clone()
+                .or(crate_wide.signing.collation),
             ..per_suite.signing
         },
         suite: SuiteConfig {
@@ -723,6 +774,9 @@ fn parse_toml_content(content: &str) -> Result<EinmoTomlConfig> {
         }
         if let Some(v) = signing.get("verified").and_then(|v| v.as_str()) {
             config.signing.verified = Some(v.to_string());
+        }
+        if let Some(v) = signing.get("collation").and_then(|v| v.as_str()) {
+            config.signing.collation = Some(v.to_string());
         }
     }
 
@@ -860,5 +914,73 @@ mod tests {
             "",
             "explicit empty string is the computer key"
         );
+    }
+
+    // ---- collation (EIMP-1 §S.11a) ----
+
+    #[test]
+    fn collation_defaults_to_path_bytes_when_unset() {
+        let c = cfg();
+        assert_eq!(c.collation().unwrap(), Collation::PathBytes);
+    }
+
+    #[test]
+    fn collation_reads_from_einmo_toml_signing_section() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("einmo.toml"),
+            "[signing]\ncollation = \"path-bytes\"\n",
+        )
+        .unwrap();
+        let c = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        assert_eq!(c.collation().unwrap(), Collation::PathBytes);
+    }
+
+    #[test]
+    fn collation_unknown_identifier_in_toml_is_a_corpus_signature_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("einmo.toml"),
+            "[signing]\ncollation = \"bogus\"\n",
+        )
+        .unwrap();
+        let c = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        let err = c.collation().unwrap_err();
+        assert!(matches!(err, EinmoError::CorpusSignature(_)));
+    }
+
+    // EIMP-1 §Test Plan "signer": passphrase unreachable after construction.
+
+    #[test]
+    fn key_source_consumes_the_passphrase_string() {
+        let secret = String::from("my-secret-passphrase");
+        let key = KeySource::from_passphrase(secret);
+        // `secret` is moved into `KeySource` — the original binding is consumed.
+        // (This test compiles only because `from_passphrase` takes `impl Into<String>`,
+        // which moves the `String`.)
+        assert_eq!(key.passphrase(), "my-secret-passphrase");
+    }
+
+    #[test]
+    fn key_source_debug_never_renders_the_raw_passphrase() {
+        let key = KeySource::from_passphrase("very-secret-value");
+        let rendered = format!("{key:?}");
+        assert!(
+            !rendered.contains("very-secret-value"),
+            "Debug output must never contain the raw passphrase: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"));
+    }
+
+    #[test]
+    fn key_source_from_str_literal_works() {
+        let key = KeySource::from_passphrase("literal");
+        assert_eq!(key.passphrase(), "literal");
+    }
+
+    #[test]
+    fn key_source_from_empty_string_is_the_computer_key() {
+        let key = KeySource::from_passphrase("");
+        assert_eq!(key.passphrase(), "");
     }
 }

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use crate::config::{PerspectiveOf, TestConfig};
 use crate::error::{EinmoError, Result};
 use crate::format::{EinmoFile, Metadata, Section, Status};
-use crate::signature::{Stamps, derive_keypair};
+use crate::signature::{StageKeypair, Stamps, derive_keypair};
 use crate::stage::{Stage, ensure_parent_dir, mirror_input_path};
 
 /// A language-agnostic evaluator: source text in, formatted output chunks out.
@@ -45,7 +45,15 @@ pub struct FileResult {
     /// `true` if this test was skipped because its catastrophe crumb was
     /// acknowledged by `ignore_catastrophe_crumbs`.
     pub ignored: bool,
-    /// A detail line when something went wrong (write/verify/diff-limit).
+    /// `true` if this case was left untouched because its freshly evaluated
+    /// content differs from the existing signed `output/` baseline (EIMP-3).
+    /// Sibling to `ignored`: a second, independent reason a case can be
+    /// `written_and_verified: false` without being a harness crash. `status`
+    /// in this case is the *existing* file's own recorded status, since
+    /// nothing new was written.
+    pub drifted: bool,
+    /// A detail line when something went wrong (write/verify/diff-limit) or
+    /// when `drifted` is set.
     pub detail: Option<String>,
 }
 
@@ -483,6 +491,28 @@ pub fn check_suite_integrity(config: &TestConfig, policy: FailurePolicy) -> Resu
     EinmoSuite::new(config.clone()).check_integrity(&inputs, extraneous, level, policy)
 }
 
+/// The mirror-relative paths of every artifact currently sitting in
+/// `flagged/` (`EIMP-1` §S.3).
+///
+/// A suite's goal state is "no flags" — any flagged artifact means
+/// unresolved review work, and by default that fails `einmo verify`'s gate
+/// (`--flag-is-not-failure` downgrades it to advisory, but never silent —
+/// see `cli.rs`'s `cmd_verify`). This is deliberately a separate concept
+/// from [`SuiteIntegrity`] (suite *shape*: orphans/extraneous files) —
+/// `flagged_orphan_is_not_a_violation` still holds: a flagged artifact with
+/// no matching input is not a shape violation, but it IS counted here.
+///
+/// # Errors
+///
+/// Returns [`EinmoError::Io`] if `flagged/` cannot be walked.
+pub fn count_flagged(config: &TestConfig) -> Result<Vec<PathBuf>> {
+    let dir = config.stage_dir(Stage::Flagged);
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    crate::stage::walk_input_tree(&dir, config.walk_depth_limit())
+}
+
 /// A test suite bound to one work directory and configuration.
 #[derive(Debug)]
 pub struct EinmoSuite {
@@ -726,6 +756,7 @@ impl EinmoSuite {
                 status: Status::OutputError,
                 written_and_verified: false,
                 ignored: true,
+                drifted: false,
                 detail: Some("catastrophe crumb ignored by configuration".into()),
             });
         }
@@ -735,6 +766,7 @@ impl EinmoSuite {
                 status: Status::OutputError,
                 written_and_verified: false,
                 ignored: false,
+                drifted: false,
                 detail: Some(format!(
                     "catastrophe crumb detected from previous run; use --ignore-catastrophe-crumbs {} or --rerun-catastrophes to override",
                     mirror_input_path(rel).display()
@@ -751,6 +783,33 @@ impl EinmoSuite {
     /// Returns [`EinmoError::Io`] on read/write failure, or
     /// [`EinmoError::SeparatorCollision`] if a body contains the separator.
     pub fn evaluate(&self, input_rel: &Path, evaluator: &dyn Evaluator) -> Result<FileResult> {
+        self.evaluate_impl(input_rel, evaluator, false)
+    }
+
+    /// Like [`EinmoSuite::evaluate`], but a content mismatch against the
+    /// existing `output/` baseline is deliberately **replaced** instead of
+    /// failing as drift (`EIMP-3` §Specification "New CLI verb: explicit
+    /// regenerate") — the `einmo regenerate-output` verb's library
+    /// primitive. Every other outcome (no-op, co-sign, fresh-if-absent)
+    /// behaves identically to a normal `evaluate` call.
+    ///
+    /// # Errors
+    ///
+    /// As [`EinmoSuite::evaluate`].
+    pub fn regenerate_output(
+        &self,
+        input_rel: &Path,
+        evaluator: &dyn Evaluator,
+    ) -> Result<FileResult> {
+        self.evaluate_impl(input_rel, evaluator, true)
+    }
+
+    fn evaluate_impl(
+        &self,
+        input_rel: &Path,
+        evaluator: &dyn Evaluator,
+        force: bool,
+    ) -> Result<FileResult> {
         let source = self.read_input(input_rel)?;
         let out_path = self
             .config
@@ -759,13 +818,10 @@ impl EinmoSuite {
         if let Some(gated) = self.check_catastrophe_crumb(input_rel, &out_path) {
             return Ok(gated);
         }
-        let existing = match EinmoFile::from_file(&out_path) {
-            Ok(f) => Some(f),
-            Err(_) => None,
-        };
+        let existing = EinmoFile::from_file(&out_path).ok();
         let _ = self.write_crash_crumb(input_rel, &source, &out_path);
         let outcome = evaluate_capturing(evaluator, &source);
-        self.write_output(input_rel, &source, outcome, None, existing.as_ref())
+        self.write_output(input_rel, &source, outcome, None, existing.as_ref(), force)
     }
 
     /// Evaluate an inlined input (a string in code, not a file on disk).
@@ -792,7 +848,7 @@ impl EinmoSuite {
         }
         let _ = self.write_crash_crumb(input_rel, input, &out_path);
         let outcome = evaluate_capturing(evaluator, input);
-        self.write_output(input_rel, input, outcome, None, None)
+        self.write_output(input_rel, input, outcome, None, None, false)
     }
 
     /// Discover all inputs, evaluate them (parallel or serial per config),
@@ -824,7 +880,7 @@ impl EinmoSuite {
         let (raw, suite_skipped, crumb_gated) = if let Some(threads) = self.config.parallel() {
             self.evaluate_raw_parallel(&ordered, evaluator, threads, suite_start)
         } else {
-            let mut raw: Vec<(PathBuf, String, EvalOutcome, Option<EinmoFile>)> = Vec::new();
+            let mut raw: Vec<RawEvalRow> = Vec::new();
             let mut skipped = 0usize;
             let mut crumb_gated: Vec<FileResult> = Vec::new();
             for rel in &ordered {
@@ -837,7 +893,12 @@ impl EinmoSuite {
                 let source = match self.read_input(rel) {
                     Ok(s) => s,
                     Err(e) => {
-                        raw.push((rel.clone(), String::new(), EvalOutcome::read_error(&e), None));
+                        raw.push((
+                            rel.clone(),
+                            String::new(),
+                            EvalOutcome::read_error(&e),
+                            None,
+                        ));
                         continue;
                     }
                 };
@@ -881,13 +942,21 @@ impl EinmoSuite {
         }
         for (rel, source, outcome, existing) in &raw {
             let dependent = self.dependent_context(rel, &raw);
-            match self.write_output(rel, source, outcome.clone(), dependent, existing.as_ref()) {
+            match self.write_output(
+                rel,
+                source,
+                outcome.clone(),
+                dependent,
+                existing.as_ref(),
+                false,
+            ) {
                 Ok(result) => results.files.push(result),
                 Err(e) => results.files.push(FileResult {
                     rel_path: mirror_input_path(rel),
                     status: Status::OutputError,
                     written_and_verified: false,
                     ignored: false,
+                    drifted: false,
                     detail: Some(format!("write/serialize error: {e}")),
                 }),
             }
@@ -956,9 +1025,14 @@ impl EinmoSuite {
         let mut results = TestResults::default();
         for (name, input) in pairs {
             let outcome = evaluate_capturing(evaluator, input);
-            results
-                .files
-                .push(self.write_output(Path::new(name), input, outcome, None, None)?);
+            results.files.push(self.write_output(
+                Path::new(name),
+                input,
+                outcome,
+                None,
+                None,
+                false,
+            )?);
         }
         Ok(results)
     }
@@ -1024,13 +1098,13 @@ impl EinmoSuite {
         evaluator: &dyn Evaluator,
         threads: usize,
         suite_start: std::time::Instant,
-    ) -> (Vec<(PathBuf, String, EvalOutcome, Option<EinmoFile>)>, usize, Vec<FileResult>) {
+    ) -> (Vec<RawEvalRow>, usize, Vec<FileResult>) {
         use std::sync::Mutex;
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
         let next = AtomicUsize::new(0);
         let suite_timed_out = AtomicBool::new(false);
-        let results: Mutex<Vec<(PathBuf, String, EvalOutcome, Option<EinmoFile>)>> = Mutex::new(Vec::new());
+        let results: Mutex<Vec<RawEvalRow>> = Mutex::new(Vec::new());
         let crumb_gated: Mutex<Vec<FileResult>> = Mutex::new(Vec::new());
         let threads = threads.max(1);
 
@@ -1135,6 +1209,7 @@ impl EinmoSuite {
         outcome: EvalOutcome,
         dependent: Option<DependentContext>,
         existing: Option<&EinmoFile>,
+        force: bool,
     ) -> Result<FileResult> {
         self.config.ensure_stage_dirs()?;
         let rel = mirror_input_path(input_rel);
@@ -1214,46 +1289,101 @@ impl EinmoSuite {
             Stamps::new(),
         );
 
-        // Compare against existing output before signing — skip the
-        // expensive Argon2id + Ed25519 work if content and keys match.
+        // EIMP-3's content/key decision table: `existing` is already
+        // verify-on-inspected (a corrupt/tampered file never reaches here —
+        // `evaluate`/`evaluate_all` pass `None` for it, `einmo_suite.rs`'s
+        // `EinmoFile::from_file(..).ok()`), so its own stamp chain is already
+        // known-valid; we only need to compare content and look for our key.
+        // A crash crumb (§`write_crash_crumb`) is transient scaffolding this
+        // very run wrote moments ago, not a prior accepted baseline -- treat
+        // it the same as "absent" (fresh write, never drift).
+        let existing =
+            existing.filter(|e| !e.metadata().status_detail.starts_with("TEST IN PROGRESS"));
         if let Some(existing) = existing {
-            let (_, compiled_vk) = crate::signature::compiled_keypair();
-            let expected_keys = vec![
-                ("compiled".to_string(), hex::encode(compiled_vk.to_bytes())),
-                ("configured".to_string(), {
-                    let (_, vk) = derive_keypair(self.config.configured_passphrase());
-                    hex::encode(vk.to_bytes())
-                }),
-                ("stage:output".to_string(), {
-                    let pass = self.config.stage_passphrase(Stage::Output).unwrap_or("");
-                    let (_, vk) = derive_keypair(pass);
-                    hex::encode(vk.to_bytes())
-                }),
-            ];
-            let existing_keys: Vec<_> = existing.stamps().entries().iter()
-                .map(|s| (s.key().to_string(), s.pubkey_hex().to_string()))
-                .collect();
-            let keys_same = existing_keys == expected_keys;
             let sections_same = existing.sections().len() == file.sections().len()
-                && existing.sections().iter().zip(file.sections().iter()).all(|(e, f)| {
-                    e.name() == f.name() && e.body() == f.body()
-                });
-            if sections_same && keys_same {
-                // Restore the original file (crash crumb overwrote it).
+                && existing
+                    .sections()
+                    .iter()
+                    .zip(file.sections().iter())
+                    .all(|(e, f)| e.name() == f.name() && e.body() == f.body());
+
+            if !sections_same && !force {
+                // Genuine drift: restore the existing baseline (the crash
+                // crumb written at the top of `evaluate()` already clobbered
+                // `out_path` — "leave output/ untouched" means undo that, not
+                // leave the crumb in place) and fail this case.
+                // `einmo regenerate-output` (force = true) is the deliberate
+                // opt-in to replace it instead (EIMP-3.md §Specification).
                 let bytes = existing.serialize()?;
                 ensure_parent_dir(&out_path)?;
                 std::fs::write(&out_path, &bytes).map_err(|e| EinmoError::io(&out_path, e))?;
                 return Ok(FileResult {
                     rel_path: rel,
                     status: existing.metadata().status,
-                    written_and_verified: true,
+                    written_and_verified: false,
                     ignored: false,
-                    detail: None,
+                    drifted: true,
+                    detail: Some(
+                        "output/ content drifted from the existing signed baseline; \
+                         run `einmo regenerate-output` to accept the new content"
+                            .into(),
+                    ),
                 });
             }
+
+            if sections_same {
+                let output_pass = self.config.stage_passphrase(Stage::Output).unwrap_or("");
+                let keypair = StageKeypair::derive(output_pass);
+                let already_signed_by_me = existing
+                    .stamps()
+                    .has_stage_stamp_from(Stage::Output.stamp_key(), &keypair.pubkey_hex());
+
+                if already_signed_by_me {
+                    // True no-op: restore the original bytes untouched (also
+                    // covers "a crash crumb overwrote the file mid-run").
+                    let bytes = existing.serialize()?;
+                    ensure_parent_dir(&out_path)?;
+                    std::fs::write(&out_path, &bytes).map_err(|e| EinmoError::io(&out_path, e))?;
+                    return Ok(FileResult {
+                        rel_path: rel,
+                        status: existing.metadata().status,
+                        written_and_verified: true,
+                        ignored: false,
+                        drifted: false,
+                        detail: None,
+                    });
+                }
+
+                // Content matches but this is a new signer: append their
+                // stage:output stamp to the EXISTING file in place — every
+                // prior stamp (including other signers') survives untouched
+                // (EIMP-3.md §Specification, multi-signer accumulation).
+                let mut appended = existing.clone();
+                let pubkey = appended.append_stage_stamp_with(Stage::Output.stamp_key(), &keypair);
+                ensure_parent_dir(&out_path)?;
+                let bytes = appended.serialize()?;
+                std::fs::write(&out_path, &bytes).map_err(|e| EinmoError::io(&out_path, e))?;
+                let written_and_verified = EinmoFile::from_file(&out_path).is_ok();
+                return Ok(FileResult {
+                    rel_path: rel,
+                    status: appended.metadata().status,
+                    written_and_verified,
+                    ignored: false,
+                    drifted: false,
+                    detail: if written_and_verified {
+                        Some(format!("co-signed by a new signer ({})", &pubkey[..16]))
+                    } else {
+                        Some("re-verification after co-signing failed".into())
+                    },
+                });
+            }
+            // else: !sections_same && force — fall through to the fresh
+            // write below, exactly as `einmo regenerate-output` intends
+            // (EIMP-3.md §Specification "New CLI verb: explicit regenerate").
         }
 
-        // Content or keys changed — sign and write.
+        // No existing (or corrupt/crumb-treated-as-absent, or forced-replace
+        // of drifted content) baseline — fresh write.
         let (configured, _) = derive_keypair(self.config.configured_passphrase());
         let output_pass = self.config.stage_passphrase(Stage::Output).unwrap_or("");
         let (stage_output, _) = derive_keypair(output_pass);
@@ -1272,6 +1402,7 @@ impl EinmoSuite {
             status: final_status,
             written_and_verified,
             ignored: false,
+            drifted: false,
             detail: if written_and_verified {
                 outcome.detail
             } else {
@@ -1302,6 +1433,11 @@ impl EinmoSuite {
         })
     }
 }
+
+/// One raw evaluation row before it becomes a signed `.einmo` file: the
+/// input-relative path, its source text, the captured outcome, and the
+/// existing output artifact (if any, for skip-write comparison).
+type RawEvalRow = (PathBuf, String, EvalOutcome, Option<EinmoFile>);
 
 /// A captured evaluation outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1487,12 +1623,12 @@ fn separator_depth(path: &Path, sep: &str) -> usize {
 }
 
 /// The current git commit SHA (short), or `"unknown"` if unavailable.
-fn git_commit_sha() -> String {
+pub(crate) fn git_commit_sha() -> String {
     run_git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".to_string())
 }
 
 /// The SHA-256 of the current `git diff`, or empty when the tree is clean.
-fn git_diff_sha() -> String {
+pub(crate) fn git_diff_sha() -> String {
     match run_git(&["diff"]) {
         Some(diff) if !diff.is_empty() => {
             use sha2::{Digest, Sha256};
@@ -1513,10 +1649,139 @@ fn run_git(args: &[&str]) -> Option<String> {
     }
 }
 
+/// The signed body of an envelope: every section except STAMPS.
+///
+/// This is what `compare` matches on, so it is what a reviewer should read —
+/// stamps and metadata (timestamps, keys) are deliberately excluded.
+/// Verify-on-inspect applies: a tampered file is refused, never rendered.
+pub(crate) fn body_sections(file: &EinmoFile, only: Option<&str>) -> Vec<(String, String)> {
+    file.sections()
+        .iter()
+        .filter(|s| !s.name().eq_ignore_ascii_case("STAMPS"))
+        .filter(|s| only.is_none_or(|w| s.name().eq_ignore_ascii_case(w)))
+        .map(|s| (s.name().to_string(), s.body().to_string()))
+        .collect()
+}
+
+/// Where a test's artifacts exist, and whether their bodies agree.
+pub(crate) struct TestRow {
+    pub(crate) rel: PathBuf,
+    pub(crate) stages: Vec<(Stage, Option<String>)>, // (stage, status if present)
+    pub(crate) differing: bool,
+}
+
+/// Enumerate the suite's tests across output/checked/verified.
+///
+/// The union of the input tree and every stage tree, so a test that exists only
+/// in a stage (input deleted) or only in `output/` (never promoted) is still
+/// listed — the file scan the review layer and `einmo list` both need.
+pub(crate) fn scan_tests(config: &TestConfig, filter: Option<&str>) -> Result<Vec<TestRow>> {
+    use crate::stage::walk_input_tree;
+
+    const STAGES: [Stage; 3] = [Stage::Output, Stage::Checked, Stage::Verified];
+
+    let mut rels: Vec<PathBuf> = walk_input_tree(&config.input_path(), config.walk_depth_limit())
+        .unwrap_or_default()
+        .iter()
+        .map(|p| mirror_input_path(p))
+        .collect();
+    // Union in anything present in a stage but absent from input/.
+    for stage in STAGES {
+        let dir = config.stage_dir(stage);
+        if let Ok(found) = walk_input_tree(&dir, config.walk_depth_limit()) {
+            rels.extend(found);
+        }
+    }
+    rels.sort();
+    rels.dedup();
+
+    let mut rows = Vec::new();
+    for rel in rels {
+        let shown = rel.to_string_lossy().to_string();
+        if filter.is_some_and(|f| !shown.contains(f)) {
+            continue;
+        }
+        let mut stages = Vec::new();
+        let mut bodies: Vec<Option<Vec<(String, String)>>> = Vec::new();
+        for stage in STAGES {
+            let path = config.stage_dir(stage).join(&rel);
+            if path.exists() {
+                match EinmoFile::from_file(&path) {
+                    Ok(f) => {
+                        let status = f.metadata().status.to_string();
+                        stages.push((stage, Some(status)));
+                        bodies.push(Some(body_sections(&f, None)));
+                    }
+                    Err(_) => {
+                        // Tampered/unreadable: report it, never render it.
+                        stages.push((stage, Some("TAMPERED".to_string())));
+                        bodies.push(None);
+                    }
+                }
+            } else {
+                stages.push((stage, None));
+                bodies.push(None);
+            }
+        }
+        // Differing unless every stage is present and their bodies agree.
+        let differing =
+            bodies.iter().any(Option::is_none) || bodies.windows(2).any(|w| w[0] != w[1]);
+        rows.push(TestRow {
+            rel,
+            stages,
+            differing,
+        });
+    }
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::{Perspective, PerspectiveOf};
+
+    /// The body view is what a reviewer reads, so it must exclude the stamp
+    /// chain (and therefore the timestamp/key churn that made the legacy insta
+    /// corpus structurally red).
+    #[test]
+    fn body_sections_excludes_stamps() {
+        use crate::format::DEFAULT_SEPARATOR;
+        use crate::signature::Stamps;
+
+        let meta = Metadata {
+            test: "t.foo".into(),
+            suite: "s".into(),
+            producer: "abc".into(),
+            producer_diff: String::new(),
+            generated: "2026-07-15T00:00:00Z".into(),
+            status: Status::Normal,
+            status_detail: String::new(),
+            reference: String::new(),
+            sections: vec!["INPUT".into(), "OUTPUT".into(), "STAMPS".into()],
+        };
+        let file = EinmoFile::new(
+            "utf-8",
+            DEFAULT_SEPARATOR,
+            meta,
+            vec![
+                Section::new("INPUT", "{3 + 4;}"),
+                Section::new("OUTPUT", "{ 7 }"),
+                Section::new("STAMPS", "{\"key\":\"stage:output\"}"),
+            ],
+            Stamps::new(),
+        );
+
+        let all = body_sections(&file, None);
+        assert_eq!(
+            all.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            vec!["INPUT", "OUTPUT"],
+            "STAMPS must never reach a reviewer's pane"
+        );
+
+        let only = body_sections(&file, Some("output"));
+        assert_eq!(only.len(), 1, "--section is case-insensitive");
+        assert_eq!(only[0].1, "{ 7 }");
+    }
 
     // A trivial evaluator: echoes the trimmed input as one output chunk; a
     // source of "BOOM" panics; a source starting with "!" errors.
@@ -1551,6 +1816,169 @@ mod tests {
         let out = suite.config().stage_dir(Stage::Output).join("a.foo.einmo");
         let file = EinmoFile::from_file(&out).unwrap();
         assert_eq!(file.section("INPUT").unwrap().body(), "{5;}");
+        assert_eq!(file.section("OUTPUT").unwrap().body(), "{5;}");
+    }
+
+    // EIMP-3: rerunning with unchanged content and the same signer must be a
+    // true no-op -- byte-for-byte identical file, not just "same sections".
+    #[test]
+    fn write_output_unchanged_content_same_signer_is_byte_identical_noop() {
+        let (_tmp, suite) = suite();
+        std::fs::write(suite.config().input_path().join("a.foo"), "{5;}").unwrap();
+        let out = suite.config().stage_dir(Stage::Output).join("a.foo.einmo");
+
+        let first = suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
+        assert!(first.written_and_verified);
+        assert!(!first.drifted);
+        let bytes_after_first = std::fs::read(&out).unwrap();
+
+        let second = suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
+        assert!(second.written_and_verified);
+        assert!(!second.drifted);
+        let bytes_after_second = std::fs::read(&out).unwrap();
+        assert_eq!(
+            bytes_after_first, bytes_after_second,
+            "rerunning unchanged content under the same signer must not touch the file at all"
+        );
+    }
+
+    // EIMP-3 S.4a-style accumulation, scoped to `output`: a second signer
+    // whose freshly evaluated content matches what's already there gets their
+    // stamp appended in place; the first signer's stamp (and content) survive.
+    #[test]
+    fn write_output_unchanged_content_different_signer_appends_stamp() {
+        let (tmp, suite) = suite();
+        std::fs::write(suite.config().input_path().join("a.foo"), "{5;}").unwrap();
+        let out = suite.config().stage_dir(Stage::Output).join("a.foo.einmo");
+
+        let first = suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
+        assert!(first.written_and_verified);
+        let first_pubkey = {
+            let file = EinmoFile::from_file(&out).unwrap();
+            file.stamps()
+                .entries()
+                .iter()
+                .find(|s| s.key() == Stage::Output.stamp_key())
+                .unwrap()
+                .pubkey_hex()
+                .to_string()
+        };
+
+        // A second signer: same suite directory, different `output` passphrase.
+        std::fs::write(
+            tmp.path().join("einmo.toml"),
+            "[signing]\noutput = \"second-signer\"\n",
+        )
+        .unwrap();
+        let second_config = TestConfig::new(tmp.path(), ValidationLevel::Output);
+        let second_suite = EinmoSuite::new(second_config);
+        let second = second_suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
+        assert!(second.written_and_verified);
+        assert!(!second.drifted, "identical content is not drift");
+
+        let file = EinmoFile::from_file(&out).unwrap();
+        assert_eq!(
+            file.section("OUTPUT").unwrap().body(),
+            "{5;}",
+            "content is untouched by the co-sign"
+        );
+        let stage_output_pubkeys: Vec<&str> = file
+            .stamps()
+            .entries()
+            .iter()
+            .filter(|s| s.key() == Stage::Output.stamp_key())
+            .map(|s| s.pubkey_hex())
+            .collect();
+        assert_eq!(
+            stage_output_pubkeys.len(),
+            2,
+            "both signers' stage:output stamps must be present: {stage_output_pubkeys:?}"
+        );
+        assert!(stage_output_pubkeys.contains(&first_pubkey.as_str()));
+    }
+
+    // EIMP-3's central behavior change: content drift at `output` fails the
+    // case instead of silently overwriting the prior baseline.
+    #[test]
+    fn write_output_differing_content_marks_drifted_and_leaves_existing_untouched() {
+        let (_tmp, suite) = suite();
+        std::fs::write(suite.config().input_path().join("a.foo"), "{5;}").unwrap();
+        let out = suite.config().stage_dir(Stage::Output).join("a.foo.einmo");
+
+        suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
+        let bytes_before = std::fs::read(&out).unwrap();
+
+        // Same input path, different content -- simulates a nondeterministic
+        // or changed evaluator producing a different result on rerun.
+        std::fs::write(suite.config().input_path().join("a.foo"), "{6;}").unwrap();
+        let drifted = suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
+        assert!(
+            drifted.drifted,
+            "differing content must be reported as drift"
+        );
+        assert!(
+            !drifted.written_and_verified,
+            "a drifted case must not count as written -- this is the failure signal"
+        );
+
+        let bytes_after = std::fs::read(&out).unwrap();
+        assert_eq!(
+            bytes_before, bytes_after,
+            "output/ must be left byte-for-byte untouched when content drifts"
+        );
+    }
+
+    // EIMP-3's explicit opt-in: `regenerate_output` deliberately replaces a
+    // drifted case instead of failing it; every other case behaves like a
+    // normal `evaluate` (a plain rerun, unrelated to drift, must still no-op).
+    #[test]
+    fn regenerate_output_replaces_drifted_content_and_a_subsequent_run_is_clean() {
+        let (_tmp, suite) = suite();
+        std::fs::write(suite.config().input_path().join("a.foo"), "{5;}").unwrap();
+        let out = suite.config().stage_dir(Stage::Output).join("a.foo.einmo");
+
+        suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
+        std::fs::write(suite.config().input_path().join("a.foo"), "{6;}").unwrap();
+        let drifted = suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
+        assert!(drifted.drifted, "precondition: this run must have drifted");
+
+        let regenerated = suite.regenerate_output(Path::new("a.foo"), &Echo).unwrap();
+        assert!(
+            !regenerated.drifted,
+            "regenerate_output must not itself report drift"
+        );
+        assert!(regenerated.written_and_verified);
+        let file = EinmoFile::from_file(&out).unwrap();
+        assert_eq!(
+            file.section("OUTPUT").unwrap().body(),
+            "{6;}",
+            "the drifted content must now be the accepted baseline"
+        );
+
+        // A normal run afterward sees the regenerated content as a normal,
+        // matching baseline -- no drift, no rewrite.
+        let bytes_before_rerun = std::fs::read(&out).unwrap();
+        let clean = suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
+        assert!(!clean.drifted);
+        assert!(clean.written_and_verified);
+        assert_eq!(std::fs::read(&out).unwrap(), bytes_before_rerun);
+    }
+
+    // A corrupt/tampered existing file must be treated as absent -- fresh
+    // write, not a drift failure (there is nothing trustworthy to compare
+    // against or preserve).
+    #[test]
+    fn write_output_corrupt_existing_is_treated_as_absent_fresh_write() {
+        let (_tmp, suite) = suite();
+        std::fs::write(suite.config().input_path().join("a.foo"), "{5;}").unwrap();
+        let out = suite.config().stage_dir(Stage::Output).join("a.foo.einmo");
+        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        std::fs::write(&out, "not a real einmo file").unwrap();
+
+        let result = suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
+        assert!(!result.drifted);
+        assert!(result.written_and_verified);
+        let file = EinmoFile::from_file(&out).unwrap();
         assert_eq!(file.section("OUTPUT").unwrap().body(), "{5;}");
     }
 
@@ -2041,6 +2469,34 @@ mod tests {
 
         assert!(results.integrity.is_clean());
         assert!(results.integrity.report().is_empty());
+    }
+
+    // EIMP-1 S.3: the goal-state flag count. Deliberately separate from
+    // SuiteIntegrity (shape: orphans/extraneous) -- flagged_orphan_is_not_a_
+    // violation below still holds unmodified; a flagged artifact is a
+    // reason `einmo verify`'s gate fails, not a reason the suite's SHAPE is
+    // unsound.
+
+    #[test]
+    fn count_flagged_is_zero_for_a_suite_with_no_flags() {
+        let (_tmp, suite0) = suite();
+        assert_eq!(
+            count_flagged(suite0.config()).unwrap(),
+            Vec::<PathBuf>::new()
+        );
+    }
+
+    #[test]
+    fn count_flagged_lists_every_flagged_artifact() {
+        let (_tmp, suite0) = suite();
+        let config = suite0.config().clone();
+        for name in ["a.foo.einmo", "b.foo.einmo"] {
+            let path = config.stage_dir(Stage::Flagged).join(name);
+            ensure_parent_dir(&path).unwrap();
+            std::fs::write(&path, "irrelevant, count_flagged does not verify").unwrap();
+        }
+        let flagged = count_flagged(&config).unwrap();
+        assert_eq!(flagged.len(), 2);
     }
 
     #[test]

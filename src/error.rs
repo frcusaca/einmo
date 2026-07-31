@@ -43,6 +43,11 @@ pub enum EinmoError {
     #[error("invalid stage name {0:?}: must match [A-Za-z0-9_-]+")]
     InvalidStageName(String),
 
+    /// A case identifier ([`crate::stage::EinmoId`]) failed validation or
+    /// could not be derived from the given path.
+    #[error("invalid einmo id {0:?}")]
+    InvalidId(String),
+
     /// A requested transition is not one of the legal stage transitions.
     #[error("illegal transition: {from} to {to}")]
     IllegalTransition {
@@ -59,6 +64,15 @@ pub enum EinmoError {
     /// No key material could be resolved for a signing operation.
     #[error("no signing key available: {0}")]
     NoKey(String),
+
+    /// Section-level post-quantum attestation (`CorpusSigner`, EIMP-1 §S.11)
+    /// failed: an unrecognized collation, a manifest/digest inconsistency, or
+    /// an SLH-DSA signature that did not verify. Deliberately distinct from
+    /// [`EinmoError::Verification`] (the per-file Ed25519 stamp-chain
+    /// checker) — a wrong-configuration error (e.g. an unknown collation
+    /// identifier) must never look like a tampered-corpus mismatch.
+    #[error("corpus signature error: {0}")]
+    CorpusSignature(String),
 }
 
 impl EinmoError {
