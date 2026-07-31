@@ -32,6 +32,7 @@ mod review;
 mod review_server;
 mod signature;
 mod stage;
+mod storage;
 mod suite_lock;
 mod transitions;
 mod verify;
@@ -64,6 +65,7 @@ pub use review_server::{
 };
 pub use signature::{Stamp, StampRole, Stamps};
 pub use stage::{EinmoId, Stage};
+pub use storage::{ArtifactLocation, EinmoDirectory, EinmoStorage};
 pub use suite_lock::{SuiteLock, suite_lock_path};
 pub use transitions::{
     FlagReport, NoteReport, PromotionReport, RetractReport, SignatureReport, confirm_signatures,

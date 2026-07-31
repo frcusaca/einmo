@@ -96,20 +96,40 @@ here rather than repeated per checkbox):
 
 ## Phase A — `EinmoStorage` + `EinmoDirectory` (§S.1, §S.2)
 
-- [ ] Read §S.1 and §S.2 of `EIMP-7.md`. Note especially §S.2's constraint:
-      **the `input/`/`output/`/`checked/`/`flagged/`/`verified/` split is
-      deliberately preserved** — hand-authored suites are browsed and
-      edited in place, so `EinmoDirectory` resolves every `(EinmoId,
+- [x] Read §S.1 and §S.2 of `EIMP-7.md`. Note especially §S.2's constraint:
+      **the `input/`+per-stage directory split is deliberately
+      preserved** — hand-authored suites are browsed and edited in
+      place, so `EinmoDirectory` resolves every `(EinmoId,
       ArtifactLocation)` to exactly the path it resolves to today.
-- [ ] Write tests first: round-trip `read`/`write`/`remove`; `read` of an
+      **Sequencing note**: §S.1's `ArtifactLocation` is shown in its
+      FINAL, post-§S.2a shape (`Input | Stage(Stage) | Flagged(Stage)`,
+      3-variant `Stage`). This phase builds it in its PRE-migration
+      shape instead — `Input | Stage(Stage)` only, 2 variants, matching
+      `Stage` as it still stands here (4 variants, `Flagged` included;
+      `ArtifactLocation::Stage(Stage::Flagged)` covers today's top-level
+      `flagged/` exactly as it exists on disk right now). Phase A2 is
+      what evolves both `Stage` and `ArtifactLocation` to their final
+      shape — building the final shape here would leave a `Flagged(Stage)`
+      variant with nothing constructing it for one whole phase, which is
+      the kind of unreachable-code gap a compile-and-test gate should
+      never have to paper over.
+      (2026-07-31)
+- [x] Write tests first: round-trip `read`/`write`/`remove`; `read` of an
       absent artifact is `Ok(None)`, never an error; `remove` of an absent
       artifact is a no-op, not an error; `list_ids` for `Input` and for
-      each `Stage`.
-- [ ] Add `ArtifactLocation` (`Input` | `Stage(Stage)`), deriving
+      each `Stage` (including `Stage::Flagged` — still a real stage here).
+      (2026-07-31) — `src/storage.rs`'s `assert_round_trip` helper, run
+      against both `EinmoDirectory` and `InMemoryStorage`; separate
+      `list_ids` tests confirming per-location independence (Output vs
+      Checked don't leak into each other) and empty-when-nothing-there.
+- [x] Add `ArtifactLocation` (`Input` | `Stage(Stage)`, 2 variants — see
+      sequencing note above), deriving
       `Debug, Clone, Copy, PartialEq, Eq, Hash`.
-- [ ] Define the `EinmoStorage` trait exactly as §S.1 specifies
+      (2026-07-31)
+- [x] Define the `EinmoStorage` trait exactly as §S.1 specifies
       (`read`/`write`/`remove`/`list_ids`).
-- [ ] Implement `EinmoDirectory`. **Reuse, do not reimplement**, the
+      (2026-07-31)
+- [x] Implement `EinmoDirectory`. **Reuse, do not reimplement**, the
       existing path primitives: `EinmoId::to_stage_path`,
       `mirror_input_path`, `ensure_parent_dir` (`src/stage.rs`),
       `TestConfig::stage_dir`/`input_path`/`walk_depth_limit`
@@ -117,13 +137,30 @@ here rather than repeated per checkbox):
       `EinmoId::from_input_rel`; `list_ids(Stage(s))` wraps
       `walk_input_tree(stage_dir(s))` + `EinmoId::from_stage_artifact_path`.
       No new path-construction logic is written in this phase.
-- [ ] Add the in-memory `EinmoStorage` test fake (`HashMap<(EinmoId,
+      (2026-07-31) — confirmed no new path logic: `artifact_path`'s two
+      match arms are direct calls to `config.input_path()`/
+      `id.to_stage_path`, nothing else.
+- [x] Add the in-memory `EinmoStorage` test fake (`HashMap<(EinmoId,
       ArtifactLocation), Vec<u8>>`), `#[cfg(test)]` but `pub(crate)` so
       Phases B and C can use it without a tempdir.
-- [ ] Parity test: a fixture suite on disk, read through `EinmoDirectory`,
+      (2026-07-31) — `InMemoryStorage`. Simpler than the plan's own
+      sketch: `ArtifactLocation` already derives `Hash`/`Eq`, so it's the
+      map key directly — no separate key-wrapper type needed. (Wrote one
+      first, then removed it on review; recorded here as a note for
+      later phases: check whether a "helper type for map-key purposes"
+      is actually necessary before adding it.)
+- [x] Parity test: a fixture suite on disk, read through `EinmoDirectory`,
       yields the same ids and bytes as the same fixture loaded into the
       in-memory fake.
-- [ ] Phase A tests green; `clippy`/`fmt` clean; commit.
+      (2026-07-31) — `einmo_directory_and_in_memory_storage_agree_on_the_
+      contract`: both backends driven through the identical `EinmoStorage`
+      sequence (absent → write → read-back) and asserted equal at each
+      step, via `&dyn EinmoStorage` so the same assertions run against
+      both without duplicating them.
+- [x] Phase A tests green; `clippy`/`fmt` clean; commit.
+      (2026-07-31) — 7 new tests, all passing. Full
+      `cargo test --workspace`: 363/363 (356 + 7), `cargo fmt --check` /
+      `cargo clippy --all-targets -- -D warnings` both clean.
 
 ## Phase A2 — `flagged/` moves inside each stage (§S.2a)
 
