@@ -313,6 +313,19 @@ at the corpus-authoring layer, not inside a signature's ordering rule.
 
 ## Open Questions
 
+- **Tree shape: flat sorted-leaf binary fold (as §S.2 currently specifies)
+  vs. hashing at every directory level, mirroring `EinmoId`'s real nested
+  structure** (`foop/23/sub_feature/test1`). Raised during `EIMP-7`'s
+  drafting (2026-07-31): `EIMP-7` gives `EinmoSuite` a
+  `directory_tree()` view for exactly this purpose (grouping cases by
+  `EinmoId` path component, on demand, not persisted) so this EIMP's
+  signer can fold bottom-up per directory node without a competing walk.
+  Directory-mirrored hashing would make "localized tamper reporting"
+  (this EIMP's own headline benefit) report a *section path*, not just a
+  file — arguably a better fit for a corpus organized by section/
+  subsection than an arbitrary sorted-pair binary tree. Not decided here;
+  revisit at this EIMP's begun-time, once `EIMP-7` has landed
+  `EinmoSuite`/`EinmoStorage` to build on.
 - **Odd-node rule**: promote the unpaired node, or duplicate it? Different
   roots; duplication has known second-preimage subtleties. Decide at
   begun-time and pin with a fixture.

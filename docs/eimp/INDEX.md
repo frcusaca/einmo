@@ -22,6 +22,7 @@ ls docs/eimp | rev | sort -V | rev
 | [EIMP-4](EIMP-4.md) | Split einmo into core + einmo-review-server, publish both to crates.io at 0.0.6 | Draft | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-5](EIMP-5.md) | Merkle-tree corpus signing — faster to compute, cheaper to update | Draft | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-6](EIMP-6.md) | Structured JSONL logging, and retiring the crash crumb | Draft | 2026-07-30 | Claude Code (Opus 5) |
+| [EIMP-7](EIMP-7.md) | EinmoCase / EinmoSuite / EinmoDirectory — unify case access behind an EinmoStorage trait | Final | 2026-07-31 | Claude Code (Sonnet 5) |
 
 ---
 
@@ -39,8 +40,16 @@ The sprint's EIMPs, in execution order:
    frontend, and `CorpusSigner` using the **existing** byte-join
    construction (§S.11) with the new configurable collation (§S.11a).
 2. **maintainer performance-verifies the review loop** — an explicit STOP
-   in `EIMP-1.plan.md`, and `EIMP-4`'s first gate.
-3. **`EIMP-4`** (Draft) — split into `einmo` + `einmo-review-server`,
+   in `EIMP-1.plan.md`, and `EIMP-4`'s first gate. **Done 2026-07-31**;
+   it found thirteen defects (P0–P12), twelve of them fixed and merged to
+   `jia`. The thirteenth, **P1**, was architectural and became `EIMP-7`.
+3. **`EIMP-7`** (Final, ready to implement) — the layered core: `EinmoCase`/`EinmoSuite`/
+   `EinmoDirectory` behind an `EinmoStorage` trait, so `einmo test` and
+   `einmo review` stop maintaining parallel scanning, comparison, and
+   promotion implementations. Carries `EIMP-1`'s P1 fix plus a second
+   inconsistency found while drafting it (`einmo test` and `einmo review`
+   answering differently about the same case).
+4. **`EIMP-4`** (Draft) — split into `einmo` + `einmo-review-server`,
    publish both at `0.0.6`, repoint `foolish-ubca` and `/yolo/src/zweimomo`
    at the published crate, delete the vendored copy.
 
@@ -62,6 +71,27 @@ nothing is dropped — both land after `EIMP-1`:
 ---
 
 ## Last Updated
+
+**Date**: 2026-07-31 (2)
+**Updated By**: Claude Code (Sonnet 5)
+**Changes**: Added `EIMP-7` — the layered core (`EinmoCase`/`EinmoSuite`/
+`EinmoDirectory` behind an `EinmoStorage` trait), spun out of `EIMP-1`'s
+**P1** maintainer finding per that finding's own recommendation, given a
+blast radius across `einmo_suite.rs`, `review.rs`, `transitions.rs`,
+`compare.rs`, `corpus_signer.rs`, and `cli.rs`. Drafting it surfaced a
+second, previously unrecorded defect of the same family: `compare.rs`
+holds a **third** stage-comparison implementation — section-aware and
+`MatchSections`-policy-driven — that `einmo test` uses while `einmo
+list`/`einmo review` use `scan_tests`'s single all-sections bool, so a
+case differing only in `COMMENTS` reads clean to one and differing to the
+other. `EIMP-7` makes `compare.rs`'s richer comparison the shared core
+(raising review's fidelity to test's, not the reverse) and keeps the
+`input/`/`output/`/`checked/`/`flagged/`/`verified/` directory split
+explicitly unchanged — hand-authored suites are browsed and edited in
+place, which `EinmoDirectory` is specified to preserve. Also inserted
+`EIMP-7` into the jia-sprint sequence ahead of `EIMP-4`, and recorded in
+`EIMP-5` §Open Questions that `EinmoSuite::directory_tree()` makes
+directory-level Merkle hashing a supported option rather than a redesign.
 
 **Date**: 2026-07-30 (5)
 **Updated By**: Claude Code (Opus 5)
