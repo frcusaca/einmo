@@ -1,4 +1,46 @@
 # EIMP-1.plan — einmo-review-session
+```system_reboot_stash
+This is a planned reboot (not a crash) -- you may remove this fenced block
+once you've read and understood it. Written 2026-07-31 ~17:05, right before
+the reboot, by the session that just finished the maintainer-verification
+pass below.
+
+STATUS: P0 and P2 through P12 are all fixed, tested, and COMMITTED as
+83b92d5 "EIMP-1 maintainer review: fix P0 test deadlock and 11 more
+defects (P2-P12)" on branch `agent/1-0`. Every one of those checkboxes in
+the "Maintainer-found defects" section below is `[x]` with a timestamp and
+enough detail to stand alone -- read that section for the full story of
+what each bug was and how it was fixed/verified, no need to re-derive any
+of it. 356 workspace tests pass, `cargo fmt --check` / `cargo clippy
+--all-targets -- -D warnings` both clean, all confirmed AFTER the commit
+(not just before it).
+
+NOT DONE YET -- pick up here:
+
+1. **`git push -u origin agent/1-0` was in flight when the reboot was
+   requested and its outcome is UNKNOWN.** The first attempt hung for the
+   full 2-minute tool timeout and was killed (the underlying `ssh` process
+   was left `<defunct>`); a direct `ssh -T git@github.com` check
+   afterward DID authenticate successfully ("Hi frcusaca!"), so credentials
+   are fine -- the hang's cause wasn't diagnosed before the reboot (could
+   be genuinely large data to push since `origin` has no `agent/1-0`
+   branch yet and this is 47+ commits of history, or could be something
+   else). **First thing to check**: `git log origin/agent/1-0 -1` (does
+   the remote branch exist and match `83b92d5`?) -- if not, retry the push,
+   ideally backgrounded/monitored rather than run inline, since it may
+   just need more than 2 minutes.
+2. **P1 is intentionally still open** -- see its checkbox below. It's a
+   maintainer-approved architectural direction (`EinmoCase`/`EinmoSuite`/
+   `EinmoSuiteDirectory` layering), explicitly meant to be *thought
+   through*, not implemented, and only after P0 (which is now done). The
+   maintainer floated spinning it into its own EIMP given the blast
+   radius -- worth asking again once you're back, don't just start coding
+   it.
+3. **This work has not been merged to `jia`** -- it's all on `agent/1-0`,
+   which is 48 commits ahead of the stale `jia`/`origin/jia`. The plan's
+   own "Verify all work is committed on `jia`" checkbox near the bottom
+   says as much and remains unchecked for exactly that reason.
+```
 Read `docs/eimp/EIMP-1.md` before acting on any task below. Tasks run top to
 bottom; each phase lands value on its own. This plan is adapted from the
 original `FOOP-25.plan.md` (in `foolish-rust`), with worktree/branch
