@@ -374,21 +374,49 @@ four-variant `Stage`.
 
 ## Phase C — `EinmoSuite` (§S.5)
 
-- [ ] Read §S.5 of `EIMP-7.md`.
-- [ ] Write tests first: `scan` against both the in-memory fake and a
+- [x] Read §S.5 of `EIMP-7.md`.
+      (2026-07-31)
+- [x] Write tests first: `scan` against both the in-memory fake and a
       real `EinmoDirectory` fixture (parity); the id union covers cases
       present only in `input/`, only in a stage, and in both; `filter`
       behaves as `scan_tests`'s existing filter does; `cases()` ordering
       matches today's `rels.sort()`.
-- [ ] Implement `EinmoSuite::scan` / `cases` / `case`.
-- [ ] Write tests first for `directory_tree()` against a multi-level
+      (2026-07-31) — `src/suite.rs`'s test module, 7 tests.
+      **Correction**: `scan_tests`'s filter matches against the
+      **`.einmo`-suffixed mirror path** (`shown.contains(f)` where `shown`
+      is the mirror-relative string); `EinmoSuite::scan`'s filter matches
+      against the bare `EinmoId` (no `.einmo` suffix) instead — the same
+      form `transitions.rs`'s own filter (`matching_mirror_paths`,
+      matched against `input_rel`) already uses. A pattern that happened
+      to include literal `.einmo` would behave differently between old
+      and new. Documented in `scan`'s doc comment rather than silently
+      matched; Phase E (the actual `cli.rs`/`einmo list` migration off
+      `scan_tests`) must re-verify this against real CLI filter usage
+      before treating it as behavior-preserving.
+      Also added a test not originally listed: `scan_excludes_flagged_
+      sinks` — confirms a stage's nested flagged sink never leaks into
+      the ordinary suite listing (flagging is retirement, `EIMP-1` §S.3).
+- [x] Implement `EinmoSuite::scan` / `cases` / `case`.
+      (2026-07-31)
+- [x] Write tests first for `directory_tree()` against a multi-level
       fixture using real-shaped ids (`foop/23/sub_feature/test1`): every
       case appears in exactly one node at the right depth; a case at the
       root (`test1.foo`, no directory components) is handled; no node
       exists for a component with neither cases nor children.
-- [ ] Implement `directory_tree()` + `DirectoryNode`. Pure and on-demand
+      (2026-07-31) — `directory_tree_groups_by_path_components_at_every_
+      depth` (exact fixture from the plan) and
+      `directory_tree_never_has_an_empty_node` (a recursive invariant
+      check over an arbitrary fixture, not just eyeballing the one
+      example).
+- [x] Implement `directory_tree()` + `DirectoryNode`. Pure and on-demand
       — no persisted tree state (§Rejected Alternative D).
-- [ ] Phase C tests green; `clippy`/`fmt` clean; commit.
+      (2026-07-31)
+- [x] Phase C tests green; `clippy`/`fmt` clean; commit.
+      (2026-07-31) — 7/7 new `suite::` tests. `cargo fmt --check` /
+      `cargo clippy --all-targets -- -D warnings` both clean. Full
+      `cargo test --workspace`: **392/392** (354 `einmo` lib + 31
+      `einmo-review-server` bin + 4 `zweimomo` lib + 3 `zweimomo`
+      `tests/suites.rs`; up from 385 — +7 `suite::` tests).
 
 ## Phase D — one pairwise-comparison implementation (§S.7)
 
