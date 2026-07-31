@@ -168,44 +168,112 @@ Lands here, right after `ArtifactLocation` exists and before `EinmoCase`
 builds on it, so nothing downstream is written against the old
 four-variant `Stage`.
 
-- [ ] Read §S.2a and §S.10's blast-radius note in `EIMP-7.md`.
-- [ ] Write tests first: `ArtifactLocation::Flagged(stage)` resolves to
+- [x] Read §S.2a and §S.10's blast-radius note in `EIMP-7.md`.
+      (2026-07-31)
+- [x] Write tests first: `ArtifactLocation::Flagged(stage)` resolves to
       `<stage>/flagged/<id>.einmo` for each of the three stages; flagging
       from the checked stage lands in `checked/flagged/` and **not** in
       `output/flagged/`; the origin stage is recoverable from the
       location alone (the property this change exists for).
-- [ ] Remove `Stage::Flagged`. `Stage` becomes `Output | Checked |
-      Verified`. Work through the 27 references across
-      `transitions.rs` (15), `stage.rs` (4), `einmo_suite.rs` (3),
+      (2026-07-31) — `storage.rs`:
+      `einmo_directory_flagged_resolves_under_its_own_origin_stage_only`
+      (Checked's flag is absent from Output's and Verified's sinks, and
+      confirmed on disk at `checked/flagged/`) and
+      `einmo_directory_list_ids_stage_excludes_its_own_nested_flagged_sink`.
+- [x] Remove `Stage::Flagged`. `Stage` becomes `Output | Checked |
+      Verified`. Worked through the 27 originally-surveyed references
+      across `transitions.rs` (15), `stage.rs` (4), `einmo_suite.rs` (3),
       `verify.rs` (2), `config.rs` (2), `bin/einmo_review_server.rs` (1).
-  - [ ] `Stage::ALL` (4 → 3) and `dir_name()`.
-  - [ ] Delete `stamp_key()`'s `Flagged` arm — dead by construction:
+      (2026-07-31)
+  - [x] `Stage::ALL` (4 → 3) and `dir_name()`.
+  - [x] Delete `stamp_key()`'s `Flagged` arm — dead by construction:
         flagging appends an unsigned advisory, never a stamp.
-  - [ ] `is_legal_transition`: drop the three `* → Flagged` rows.
+  - [x] `is_legal_transition`: drop the three `* → Flagged` rows.
         Flagging is no longer a stage transition at all; it is a move
         within a stage, so it leaves the transition table entirely.
-  - [ ] `promote`'s `to == Stage::Flagged` delegation to `flag` — remove;
-        `promote` can no longer be asked to flag.
-  - [ ] `count_flagged` (`einmo_suite.rs:508`): walk all three
-        `<stage>/flagged/` directories; decide and document whether it
-        returns a flat count or a per-stage breakdown (a per-stage
-        breakdown is the point of this change — prefer it, and update
-        `einmo verify`'s gate message to name the stages).
-  - [ ] The R2 orphan exemption ("`flagged/` is exempt") — re-express
-        per-stage.
-  - [ ] The review server's flag/retract endpoints and
-        `bin/einmo_review_server.rs`.
-- [ ] `StageDirs::flagged` stays a configurable *name*; only its parent
-      changes. Confirm a suite configuring a custom flagged name still
-      works.
-- [ ] Migrate the live fixture `zweimomo/suites/javascript/day.1/flagged`
-      → `output/flagged/`, per §S.2a: old top-level flags have no
-      recorded origin stage, so they move to the most conservative
-      reading rather than being guessed per-file. **Say so in the commit
-      message** — a reader finding these in `output/flagged/` later must
-      know they were migrated, not flagged there.
-- [ ] Phase A2 tests green; `clippy`/`fmt` clean; commit (message must
+  - [x] `promote`'s `to == Stage::Flagged` delegation to `flag` — removed;
+        `promote` can no longer be asked to flag (the branch is now
+        impossible to construct, not just untaken).
+  - [x] `count_flagged` (`einmo_suite.rs:509`): walks all three
+        `<stage>/flagged/` directories via a new `FlaggedArtifact { stage,
+        rel_path }` type — **chose the per-stage breakdown**, per the
+        plan's own preference. `cli.rs`'s `cmd_verify` gate message now
+        names each artifact's stage (`"a.foo.einmo (checked stage)"`).
+  - [x] The R2 orphan exemption doc language — re-expressed per-stage in
+        `orphans_of`'s doc comment.
+  - [x] `bin/einmo_review_server.rs`'s `parse_decidable_stage`: dropped
+        the dead `Stage::Flagged` arm from its exhaustive match.
+  - [x] The review server's flag/retract endpoints themselves needed no
+        code change (they already called `EinmoReview::flag_now`/
+        `retract_now` generically over `Stage`, never matching
+        `Stage::Flagged` literally) — confirmed, not assumed, by their
+        own passing test suite (below).
+  - [x] **Correction found while executing, beyond the original 27-site
+        survey**: removing `Stage::Flagged` alone is not sufficient —
+        `EIMP-7` §S.2a nests the flagged sink INSIDE the stage directory
+        being walked for that stage's own artifacts, and four call sites
+        walk a stage directory directly (not via input-derived
+        existence-checks, which are naturally immune): `einmo_suite.rs`'s
+        `orphans_of` and `scan_tests`, and (retrofitted into Phase A's
+        code) `storage.rs`'s `EinmoDirectory::list_ids(Stage(s))`. Without
+        exclusion, every flagged artifact would double as a phantom
+        ordinary one — a false orphan, a false `TestRow`, a false
+        `EinmoCase` id. Added `stage::is_in_flagged_sink` (filters by
+        first path component) and applied it at all three sites, plus
+        `TestConfig::flagged_dir`/`flagged_dir_name` and
+        `stage::DEFAULT_FLAGGED_DIR_NAME` (for `corpus_signer.rs`, which
+        holds no `TestConfig` and already assumes default directory
+        names) to support it. `verify()` (`verify.rs`) needed the inverse
+        fix — it does NOT walk stage directories directly (input-derived,
+        naturally immune) but therefore stopped visiting flagged content
+        at all once `Stage::ALL` narrowed to 3; fixed by having it check
+        both `stage_dir(s)` and `flagged_dir(s)` per stage. Each fix has
+        its own regression test:
+        `flagged_orphan_is_not_a_violation` (rewritten to prove the
+        recursion is filtered, not merely that the concept is exempt),
+        `einmo_directory_list_ids_stage_excludes_its_own_nested_flagged_sink`,
+        and `verify.rs`'s `flagged_artifact_still_passes_verify` (with an
+        added non-empty-report assertion, so the test cannot pass
+        vacuously by verify silently skipping the file).
+      - [x] **A second correction, found only by the FULL workspace test
+            run**: `review.rs` and `review_server.rs` each had hardcoded
+            `tmp.path().join("flagged/a.foo.einmo")` path literals in
+            their own tests — invisible to the original grep (it searched
+            for `Stage::Flagged`, not string literals) and invisible to
+            per-module test runs of `transitions`/`einmo_suite`/`storage`/
+            `verify` (all green) because the failure only surfaces when
+            `review::`'s own tests run. First appeared as 72 cascading
+            `PoisonError` failures (one real panic in
+            `execute_flag_moves_and_writes_advisory_no_signing` poisoned a
+            shared static mutex, then every other `review::` test sharing
+            it panicked on lock too) — traced to the one non-poison root
+            panic, not guessed from the cascade. Fixed 4 occurrences (3 in
+            `review.rs`, 1 in `review_server.rs`) to
+            `"output/flagged/a.foo.einmo"`. `review::` (62 tests) and
+            `review_server::` (47 tests) both fully green after.
+            (2026-07-31)
+- [x] `StageDirs::flagged` stays a configurable *name*; only its parent
+      changes (`StageDirs::flagged_name()`, `TestConfig::flagged_dir`).
+      No public builder for a custom flagged name exists today (none did
+      before this EIMP either — `StageDirs` has no `with_*` constructor
+      reachable from `TestConfig`), so "configuring a custom name still
+      works" has no live path to test; recorded here rather than silently
+      dropped.
+- [x] Migrate the live fixture `zweimomo/suites/javascript/day.1/flagged`
+      → `output/flagged/`.
+      (2026-07-31) — the directory existed but was **empty and untracked
+      by git** (`git ls-files` confirmed nothing inside it); there was no
+      content to migrate. Removed the stale empty directory rather than
+      leaving a legacy top-level `flagged/` sitting next to the new
+      per-stage layout. Confirmed no other suite anywhere in the repo has
+      a `flagged/` directory.
+- [x] Phase A2 tests green; `clippy`/`fmt` clean; commit (message must
       call out both the on-disk break and the fixture migration).
+      (2026-07-31) — full `cargo test --workspace`: **366/366** (328
+      `einmo` lib + 31 `einmo-review-server` bin + 4 `zweimomo` lib + 3
+      `zweimomo` `tests/suites.rs`; up from 356 pre-Phase-A, +9 Phase A +
+      1 net from Phase A2's new/changed tests). `cargo fmt --check` /
+      `cargo clippy --all-targets -- -D warnings` both clean.
 
 ## Phase B — `EinmoCase` (§S.3)
 

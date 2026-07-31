@@ -663,15 +663,16 @@ fn parse_decision(tokens: &[String]) -> Result<Decision> {
 }
 
 /// The two stages a reviewer ever decides about — matches
-/// `review_server::DecidableStage` (`output`/`flagged` are not legal
-/// decision targets: output is the source everything starts from, and
-/// flagging goes through its own `Decision::Flag { stage, .. }` shape whose
-/// `stage` names where the flag is read FROM, still only `checked`/`verified`
-/// in practice since those are the only stages worth flagging out of).
+/// `review_server::DecidableStage` (`output` is not a legal decision
+/// target: it is the source everything starts from. Flagging is no longer
+/// a `Stage` at all, `EIMP-7` §S.2a — it goes through its own
+/// `Decision::Flag { stage, .. }` shape whose `stage` names where the flag
+/// is read FROM, still only `checked`/`verified` in practice since those
+/// are the only stages worth flagging out of).
 fn parse_decidable_stage(s: &str) -> Result<Stage> {
     match Stage::parse(s)? {
         stage @ (Stage::Checked | Stage::Verified) => Ok(stage),
-        Stage::Output | Stage::Flagged => Err(EinmoError::Config(format!(
+        Stage::Output => Err(EinmoError::Config(format!(
             "decision stage must be checked or verified, not {s:?}"
         ))),
     }

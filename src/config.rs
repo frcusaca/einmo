@@ -7,18 +7,22 @@ use std::time::Duration;
 use crate::collation::Collation;
 use crate::error::{EinmoError, Result};
 use crate::format::{DEFAULT_SEPARATOR, FOOLISH_SEPARATOR};
-use crate::stage::{Stage, validate_stage_name};
+use crate::stage::{DEFAULT_FLAGGED_DIR_NAME, Stage, validate_stage_name};
 
-/// The names of the four stage directories under a work directory.
+/// The names of the three stage directories under a work directory, plus
+/// the name each stage's nested flagged sink uses (`<stage>/flagged/`,
+/// `EIMP-7` §S.2a — flagged content is no longer a stage of its own; its
+/// directory NAME is still configurable, but its PARENT is now always
+/// whichever stage it was flagged from).
 ///
-/// Defaults mirror the [`Stage`] variants (`output`/`checked`/`flagged`/
-/// `verified`); a suite may override them (validated `[A-Za-z0-9_-]+`).
+/// Defaults mirror the [`Stage`] variants (`output`/`checked`/`verified`)
+/// plus `flagged`; a suite may override them (validated `[A-Za-z0-9_-]+`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StageDirs {
     output: String,
     checked: String,
-    flagged: String,
     verified: String,
+    flagged: String,
 }
 
 impl Default for StageDirs {
@@ -26,8 +30,8 @@ impl Default for StageDirs {
         StageDirs {
             output: "output".into(),
             checked: "checked".into(),
-            flagged: "flagged".into(),
             verified: "verified".into(),
+            flagged: DEFAULT_FLAGGED_DIR_NAME.into(),
         }
     }
 }
@@ -39,12 +43,21 @@ impl StageDirs {
         match stage {
             Stage::Output => &self.output,
             Stage::Checked => &self.checked,
-            Stage::Flagged => &self.flagged,
             Stage::Verified => &self.verified,
         }
     }
 
-    /// Validate all four directory names.
+    /// The directory name configured for each stage's nested flagged sink
+    /// (`<stage>/<flagged_name>/`). Not keyed by [`Stage`] — it is the
+    /// same name under every stage, since it names the SINK, not a stage
+    /// itself.
+    #[must_use]
+    pub fn flagged_name(&self) -> &str {
+        &self.flagged
+    }
+
+    /// Validate every directory name — the three stages, plus the
+    /// flagged-sink name.
     ///
     /// # Errors
     ///
@@ -54,6 +67,7 @@ impl StageDirs {
         for stage in Stage::ALL {
             validate_stage_name(self.name(stage))?;
         }
+        validate_stage_name(&self.flagged)?;
         Ok(())
     }
 }
@@ -162,7 +176,6 @@ impl StagePassphrases {
             Stage::Output => self.output.as_deref(),
             Stage::Checked => self.checked.as_deref(),
             Stage::Verified => self.verified.as_deref(),
-            Stage::Flagged => None, // flagging never signs
         }
     }
 }
@@ -374,16 +387,36 @@ impl TestConfig {
         self
     }
 
-    /// The absolute path to a stage's directory.
+    /// The absolute path to a stage's own directory.
     #[must_use]
     pub fn stage_dir(&self, stage: Stage) -> PathBuf {
         self.work_dir.join(self.stages.name(stage))
     }
 
+    /// The absolute path to `stage`'s nested flagged sink
+    /// (`<stage>/flagged/`, `EIMP-7` §S.2a) — where an artifact lands when
+    /// flagged FROM `stage`. Not a [`Stage`] itself; the sink's directory
+    /// name is still configurable ([`StageDirs::flagged_name`]), only its
+    /// parent changed.
+    #[must_use]
+    pub fn flagged_dir(&self, stage: Stage) -> PathBuf {
+        self.stage_dir(stage).join(self.stages.flagged_name())
+    }
+
+    /// The configured name of a stage's nested flagged sink (default
+    /// `"flagged"`) — the same name under every stage.
+    #[must_use]
+    pub fn flagged_dir_name(&self) -> &str {
+        self.stages.flagged_name()
+    }
+
     /// The `notes/` directory (`EIMP-1` §S.3). Not a [`Stage`]: `notes/` is
-    /// a narrow, self-contained sibling to `flagged/`, not a peer of
-    /// `output`/`checked`/`verified` in the promote/retract/compare
-    /// machinery, so it has no `StageDirs` entry and no configurable name.
+    /// a single top-level directory, not a peer of `output`/`checked`/
+    /// `verified` in the promote/retract/compare machinery and not nested
+    /// per-stage the way flagged sinks are (`EIMP-7` §S.2a) — a note is
+    /// promoted from whichever stage's flagged advisory prompted it, but
+    /// lives in one shared place. No `StageDirs` entry, no configurable
+    /// name.
     #[must_use]
     pub fn stage_dir_for_notes(&self) -> PathBuf {
         self.work_dir.join("notes")
@@ -550,7 +583,10 @@ impl TestConfig {
             .unwrap_or_else(|| self.ignore_catastrophe_crumbs.clone())
     }
 
-    /// Ensure the four stage directories exist.
+    /// Ensure the three stage directories exist. Each stage's nested
+    /// flagged sink (`EIMP-7` §S.2a) is created lazily, on first flag
+    /// (via `ensure_parent_dir` at write time) — same as any other
+    /// mirrored subdirectory, not eagerly here.
     ///
     /// # Errors
     ///

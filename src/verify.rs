@@ -189,49 +189,55 @@ pub fn verify(
     };
     let mut files_vec = Vec::new();
     for s in &stages {
-        let stage_dir = config.stage_dir(*s);
-        let rels: Vec<PathBuf> = if let Some(provided) = files {
-            let mut v: Vec<PathBuf> = provided
-                .iter()
-                .map(|p| normalize_file_path(p, config))
-                .filter(|p| stage_dir.join(p).exists())
-                .collect();
-            v.sort();
-            v.dedup();
-            v
-        } else {
-            let inputs = walk_input_tree(&config.input_path(), config.walk_depth_limit())?;
-            inputs
-                .into_iter()
-                .map(|p| crate::stage::mirror_input_path(&p))
-                .collect()
-        };
-        for rel in rels {
-            let path = stage_dir.join(&rel);
-            // Absence is not a verification failure. A stage that has not been
-            // promoted to yet simply has no artifact — reporting "FAILED: no
-            // such file" for every unpopulated `verified/` entry drowns real
-            // tampering in noise and makes `verify --all` red by default.
-            // Whether an artifact *ought* to exist is a correspondence question
-            // (`compare`); whether a file that exists is sound is this
-            // function's question. Missing inputs for existing artifacts are
-            // caught by `check_suite_integrity`.
-            if !path.exists() {
-                continue;
-            }
-            let verdict = match EinmoFile::from_file(&path) {
-                Ok(_) => FileVerification {
-                    rel_path: rel,
-                    ok: true,
-                    detail: None,
-                },
-                Err(e) => FileVerification {
-                    rel_path: rel,
-                    ok: false,
-                    detail: Some(e.to_string()),
-                },
+        // Verifying a stage verifies its nested flagged sink too (`EIMP-7`
+        // §S.2a): a flagged artifact still carries its original stamps and
+        // must still pass verify-on-inspect, and flagging is no longer
+        // independently selectable now that it isn't a `Stage` of its own.
+        for dir in [config.stage_dir(*s), config.flagged_dir(*s)] {
+            let rels: Vec<PathBuf> = if let Some(provided) = files {
+                let mut v: Vec<PathBuf> = provided
+                    .iter()
+                    .map(|p| normalize_file_path(p, config))
+                    .filter(|p| dir.join(p).exists())
+                    .collect();
+                v.sort();
+                v.dedup();
+                v
+            } else {
+                let inputs = walk_input_tree(&config.input_path(), config.walk_depth_limit())?;
+                inputs
+                    .into_iter()
+                    .map(|p| crate::stage::mirror_input_path(&p))
+                    .collect()
             };
-            files_vec.push(verdict);
+            for rel in rels {
+                let path = dir.join(&rel);
+                // Absence is not a verification failure. A stage that has not
+                // been promoted to yet simply has no artifact — reporting
+                // "FAILED: no such file" for every unpopulated `verified/`
+                // entry drowns real tampering in noise and makes `verify
+                // --all` red by default. Whether an artifact *ought* to exist
+                // is a correspondence question (`compare`); whether a file
+                // that exists is sound is this function's question. Missing
+                // inputs for existing artifacts are caught by
+                // `check_suite_integrity`.
+                if !path.exists() {
+                    continue;
+                }
+                let verdict = match EinmoFile::from_file(&path) {
+                    Ok(_) => FileVerification {
+                        rel_path: rel,
+                        ok: true,
+                        detail: None,
+                    },
+                    Err(e) => FileVerification {
+                        rel_path: rel,
+                        ok: false,
+                        detail: Some(e.to_string()),
+                    },
+                };
+                files_vec.push(verdict);
+            }
         }
     }
     Ok(VerificationReport { files: files_vec })
@@ -404,14 +410,24 @@ mod tests {
         let out_path = config.stage_dir(Stage::Output).join("t.foo.einmo");
         std::fs::write(&out_path, file.serialize().unwrap()).unwrap();
 
-        // Flag the artifact (move to flagged/ with advisory).
+        // Flag the artifact (move to output/flagged/ with advisory --
+        // EIMP-7 §S.2a nests the sink inside its origin stage).
         crate::transitions::flag(&config, Stage::Output, None, "broken", None).unwrap();
         assert!(!out_path.exists());
-        let flagged_path = config.stage_dir(Stage::Flagged).join("t.foo.einmo");
+        let flagged_path = config.flagged_dir(Stage::Output).join("t.foo.einmo");
         assert!(flagged_path.exists());
 
         // Verify-all must succeed: flagged files keep their original stamps.
+        // This exercises verify()'s own EIMP-7 fix directly -- without it,
+        // a flagged artifact nested inside output/flagged/ would simply
+        // never be looked at, and this assertion would pass VACUOUSLY
+        // (report.files empty) rather than because verification actually
+        // ran and passed. Assert files is non-empty to rule that out.
         let report = super::verify(&config, None, None).unwrap();
+        assert!(
+            !report.files.is_empty(),
+            "verify must actually visit the flagged artifact, not silently skip it"
+        );
         assert!(
             report.all_ok(),
             "flagged artifacts must still verify — they retain their stamps: {:?}",
@@ -419,7 +435,7 @@ mod tests {
         );
 
         // The gate logic: flagged_count > 0 && !flag_is_not_failure → fail.
-        let flagged_count = std::fs::read_dir(config.stage_dir(Stage::Flagged))
+        let flagged_count = std::fs::read_dir(config.flagged_dir(Stage::Output))
             .map(|rd| rd.count())
             .unwrap_or(0);
         assert!(flagged_count > 0, "flagged directory must have artifacts");

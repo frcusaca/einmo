@@ -1362,7 +1362,8 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
 
         assert!(!tmp.path().join("output/a.foo.einmo").exists());
-        let flagged = std::fs::read_to_string(tmp.path().join("flagged/a.foo.einmo")).unwrap();
+        let flagged =
+            std::fs::read_to_string(tmp.path().join("output/flagged/a.foo.einmo")).unwrap();
         assert!(flagged.contains("# flagged: looks wrong"));
 
         // The case still appears in the worklist (now living under

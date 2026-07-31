@@ -7,30 +7,33 @@
 //! (`EinmoId::to_stage_path`, `stage.rs`'s walk helpers) already resolve —
 //! the `input/`+per-stage directory split a human reads is unchanged.
 //!
-//! `ArtifactLocation` is built here in its PRE-`EIMP-7` §S.2a shape
-//! (`Input | Stage(Stage)`, matching today's 4-variant `Stage` — `Flagged`
-//! included, still a top-level stage directory). §S.2a's `flagged/`-inside-
-//! each-stage move and the resulting `Flagged(Stage)` variant land in a
-//! later phase, once `Stage` itself has been narrowed to three variants —
-//! building the final shape here would leave a variant nothing constructs
-//! for a whole phase.
+//! `ArtifactLocation` carries `Stage`'s post-`EIMP-7` §S.2a shape: a
+//! stage's own artifacts (`Stage(Stage)`) and its nested flagged sink
+//! (`Flagged(Stage)`) are two DIFFERENT locations sharing the same origin
+//! stage, never conflated — `Stage(s)`'s listing excludes `Flagged(s)`'s
+//! contents even though the sink sits physically inside the stage
+//! directory being walked.
 
 use std::path::{Path, PathBuf};
 
 use crate::config::TestConfig;
 use crate::error::{EinmoError, Result};
-use crate::stage::{EinmoId, Stage, ensure_parent_dir, walk_input_tree};
+use crate::stage::{EinmoId, Stage, ensure_parent_dir, is_in_flagged_sink, walk_input_tree};
 
-/// One place an artifact can live: the `input/` tree, or one of the four
-/// stage directories. See the module doc for why this is a separate enum
-/// from [`Stage`] and why it has two (not yet three) variants.
+/// One place an artifact can live: the `input/` tree, a stage's own
+/// directory, or a stage's nested flagged sink (`EIMP-7` §S.2a).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ArtifactLocation {
     /// The `input/` tree — the source a case is generated from.
     Input,
-    /// A stage's own directory: `output/`, `checked/`, `flagged/`,
-    /// `verified/`.
+    /// A stage's own directory: `output/`, `checked/`, `verified/`.
+    /// Excludes that stage's nested flagged sink even though it sits
+    /// inside the same directory on disk — see [`ArtifactLocation::Flagged`].
     Stage(Stage),
+    /// The flagged sink nested inside a stage: `output/flagged/`,
+    /// `checked/flagged/`, `verified/flagged/`. Carrying the stage means
+    /// a flag's origin is recoverable from its location alone.
+    Flagged(Stage),
 }
 
 /// Where one case's stage artifacts and its input actually live. The
@@ -94,6 +97,10 @@ impl EinmoDirectory {
         match at {
             ArtifactLocation::Input => self.config.input_path().join(Path::new(id.as_str())),
             ArtifactLocation::Stage(stage) => id.to_stage_path(self.config.work_dir(), stage),
+            ArtifactLocation::Flagged(stage) => self
+                .config
+                .flagged_dir(stage)
+                .join(crate::stage::mirror_input_path(Path::new(id.as_str()))),
         }
     }
 }
@@ -134,6 +141,20 @@ impl EinmoStorage for EinmoDirectory {
             }
             ArtifactLocation::Stage(stage) => {
                 let dir = self.config.stage_dir(stage);
+                let flagged_name = self.config.flagged_dir_name();
+                walk_input_tree(&dir, self.config.walk_depth_limit())?
+                    .into_iter()
+                    // The nested flagged sink lives inside this same
+                    // directory (EIMP-7 §S.2a) but is a DIFFERENT
+                    // location (`Flagged(stage)`) — exclude it here or
+                    // every flagged artifact would double as a phantom
+                    // ordinary one.
+                    .filter(|rel| !is_in_flagged_sink(rel, flagged_name))
+                    .map(|rel| EinmoId::from_stage_artifact_path(&dir, &dir.join(&rel)))
+                    .collect()
+            }
+            ArtifactLocation::Flagged(stage) => {
+                let dir = self.config.flagged_dir(stage);
                 walk_input_tree(&dir, self.config.walk_depth_limit())?
                     .into_iter()
                     .map(|rel| EinmoId::from_stage_artifact_path(&dir, &dir.join(&rel)))
@@ -241,6 +262,7 @@ mod tests {
         assert_round_trip(&dir, ArtifactLocation::Input);
         for stage in Stage::ALL {
             assert_round_trip(&dir, ArtifactLocation::Stage(stage));
+            assert_round_trip(&dir, ArtifactLocation::Flagged(stage));
         }
     }
 
@@ -250,7 +272,78 @@ mod tests {
         assert_round_trip(&storage, ArtifactLocation::Input);
         for stage in Stage::ALL {
             assert_round_trip(&storage, ArtifactLocation::Stage(stage));
+            assert_round_trip(&storage, ArtifactLocation::Flagged(stage));
         }
+    }
+
+    /// `EIMP-7` §S.2a: a case flagged from `Checked` resolves under
+    /// `checked/flagged/`, not `output/flagged/` — the property the whole
+    /// per-stage-sink move exists for (origin recoverable from location
+    /// alone).
+    #[test]
+    fn einmo_directory_flagged_resolves_under_its_own_origin_stage_only() {
+        let (_tmp, dir) = directory_fixture();
+        let id = EinmoId::from_input_rel(Path::new("a.foo")).unwrap();
+        dir.write(
+            &id,
+            ArtifactLocation::Flagged(Stage::Checked),
+            b"from checked",
+        )
+        .unwrap();
+
+        assert_eq!(
+            dir.read(&id, ArtifactLocation::Flagged(Stage::Checked))
+                .unwrap(),
+            Some(b"from checked".to_vec()),
+        );
+        // Not visible under any other stage's flagged sink.
+        assert_eq!(
+            dir.read(&id, ArtifactLocation::Flagged(Stage::Output))
+                .unwrap(),
+            None,
+        );
+        assert_eq!(
+            dir.read(&id, ArtifactLocation::Flagged(Stage::Verified))
+                .unwrap(),
+            None,
+        );
+        // Confirm it actually landed on disk at checked/flagged/, not
+        // merely that the trait's own read/write agree with each other.
+        assert!(
+            dir.config()
+                .work_dir()
+                .join("checked")
+                .join("flagged")
+                .join("a.foo.einmo")
+                .exists()
+        );
+    }
+
+    /// The nested-recursion hazard `EIMP-7` §S.2a introduces: a stage's
+    /// flagged sink lives physically INSIDE the stage directory being
+    /// walked for `Stage(stage)`, so listing that location must exclude
+    /// it — otherwise every flagged artifact doubles as a phantom
+    /// ordinary one.
+    #[test]
+    fn einmo_directory_list_ids_stage_excludes_its_own_nested_flagged_sink() {
+        let (_tmp, dir) = directory_fixture();
+        let ordinary = EinmoId::from_input_rel(Path::new("a.foo")).unwrap();
+        let flagged = EinmoId::from_input_rel(Path::new("b.foo")).unwrap();
+
+        dir.write(&ordinary, ArtifactLocation::Stage(Stage::Output), b"ok")
+            .unwrap();
+        dir.write(&flagged, ArtifactLocation::Flagged(Stage::Output), b"bad")
+            .unwrap();
+
+        let stage_ids = dir
+            .list_ids(ArtifactLocation::Stage(Stage::Output))
+            .unwrap();
+        assert_eq!(stage_ids, vec![ordinary]);
+
+        let flagged_ids = dir
+            .list_ids(ArtifactLocation::Flagged(Stage::Output))
+            .unwrap();
+        assert_eq!(flagged_ids, vec![flagged]);
     }
 
     #[test]

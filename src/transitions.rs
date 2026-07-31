@@ -64,16 +64,16 @@ impl SignatureReport {
     }
 }
 
-/// The legal stage transitions (FOOP-92 §3).
+/// The legal stage transitions (FOOP-92 §3). Flagging is no longer among
+/// these (`EIMP-7` §S.2a): it is not a `Stage`-to-`Stage` transition at
+/// all, but a move within a stage into that stage's own nested flagged
+/// sink — see [`flag`].
 fn is_legal_transition(from: Stage, to: Stage) -> bool {
     matches!(
         (from, to),
         (Stage::Output, Stage::Checked)
             | (Stage::Output, Stage::Verified)
             | (Stage::Checked, Stage::Verified)
-            | (Stage::Output, Stage::Flagged)
-            | (Stage::Checked, Stage::Flagged)
-            | (Stage::Verified, Stage::Flagged)
             // console-review demotion (re-promotion appends another stamp)
             | (Stage::Verified, Stage::Checked)
     )
@@ -81,9 +81,6 @@ fn is_legal_transition(from: Stage, to: Stage) -> bool {
 
 /// Promote every matching file from `from` to `to`, appending the destination
 /// stage's stamp.
-///
-/// `* to flagged` delegates to [`flag`] (move, no stamp). Other destinations
-/// copy the file and append the destination stage stamp signed by `key`.
 ///
 /// # Errors
 ///
@@ -102,21 +99,6 @@ pub fn promote(
         return Err(EinmoError::IllegalTransition {
             from: from.to_string(),
             to: to.to_string(),
-        });
-    }
-    if to == Stage::Flagged {
-        // Flagging is a move; promote-to-flagged is the same operation.
-        let flag_report = flag(config, from, filter, "", files)?;
-        return Ok(PromotionReport {
-            promoted: flag_report
-                .flagged
-                .into_iter()
-                .map(|rel| Promoted {
-                    rel_path: rel,
-                    stamp_pubkey: String::new(),
-                    non_human: false,
-                })
-                .collect(),
         });
     }
 
@@ -167,7 +149,11 @@ pub fn flag(
     files: Option<&[PathBuf]>,
 ) -> Result<FlagReport> {
     let from_dir = config.stage_dir(stage);
-    let flagged_dir = config.stage_dir(Stage::Flagged);
+    // `EIMP-7` §S.2a: each stage's flagged sink is nested INSIDE it
+    // (`<stage>/flagged/`), not one shared top-level directory — so
+    // re-flagging always finds (or creates) the sink scoped to THIS
+    // origin stage, never another stage's.
+    let flagged_dir = config.flagged_dir(stage);
     let mut report = FlagReport::default();
     let timestamp = now_iso8601();
 
@@ -182,10 +168,9 @@ pub fn flag(
         // goes on top, any already-flagged content (itself possibly already
         // concatenated) stays below. Flags accumulate a history — they
         // never silently replace one another. The existing flagged file, if
-        // any, is still a fully signed `.einmo` envelope (its stamps came
-        // from whichever stage it was originally flagged from); only its
-        // unsigned trailing advisory line is read here, so this never
-        // touches signed content.
+        // any, is still a fully signed `.einmo` envelope; only its unsigned
+        // trailing advisory line is read here, so this never touches signed
+        // content.
         let dst = flagged_dir.join(&rel);
         let advisory = match EinmoFile::from_file(&dst)
             .ok()
@@ -219,12 +204,16 @@ pub struct NoteReport {
 /// signed body of a note" — a throwaway flag graduating into a durable,
 /// attributed record.
 ///
-/// Unlike `flagged/`, a note **is signed** and participates in signature
-/// checks (verify-on-inspect via the ordinary `EinmoFile::from_file` path —
-/// nothing about verification is note-specific). Unlike promoting a stage,
-/// this does **not** consume the flag: `flagged/<rel>` is left in place, so
-/// resolving/retracting the flag itself stays a separate, deliberate
-/// action.
+/// `stage` is the flagged sink to scan (`EIMP-1` §S.2a: `<stage>/flagged/`
+/// — flagging is no longer a `Stage` of its own, so the caller names which
+/// stage's sink they mean).
+///
+/// Unlike a flagged sink, a note **is signed** and participates in
+/// signature checks (verify-on-inspect via the ordinary
+/// `EinmoFile::from_file` path — nothing about verification is
+/// note-specific). Unlike promoting a stage, this does **not** consume the
+/// flag: the flagged artifact is left in place, so resolving/retracting
+/// the flag itself stays a separate, deliberate action.
 ///
 /// **`notes/` is deliberately not a [`Stage`]** — it does not join
 /// `is_legal_transition`'s pairs, `compare`'s stage-to-stage matching, the
@@ -232,11 +221,11 @@ pub struct NoteReport {
 /// `Stage` enum would ripple through every exhaustive match over it across
 /// the crate for a stage that isn't part of the promotion pipeline at all
 /// (no `retract`, no `compare`, nothing to walk as part of "does this suite
-/// have the right shape"); `notes/` sits outside that machinery the same
-/// way `flagged/` already mostly does. Broader integration (`einmo verify`
-/// scanning `notes/`, a `--stage notes` CLI selector) is left for when a
-/// concrete need appears — this function's job is the note format and the
-/// one promotion operation `EIMP-1` §S.3 actually asks for.
+/// have the right shape") — `notes/` sits outside that machinery the same
+/// way a flagged sink does. Broader integration (`einmo verify` scanning
+/// `notes/`, a `--stage notes` CLI selector) is left for when a concrete
+/// need appears — this function's job is the note format and the one
+/// promotion operation `EIMP-1` §S.3 actually asks for.
 ///
 /// # Errors
 ///
@@ -246,10 +235,12 @@ pub struct NoteReport {
 /// [`EinmoError::Io`] on a filesystem failure.
 pub fn promote_flag_to_note(
     config: &TestConfig,
+    stage: Stage,
     key: &KeySource,
     filter: Option<&str>,
     files: Option<&[PathBuf]>,
 ) -> Result<NoteReport> {
+    let flagged_dir = config.flagged_dir(stage);
     let notes_dir = config.stage_dir_for_notes();
     let mut report = NoteReport::default();
 
@@ -260,8 +251,8 @@ pub fn promote_flag_to_note(
     let (configured, _) = derive_keypair(config.configured_passphrase());
     let (notes_signer, _) = derive_keypair(key.passphrase());
 
-    for rel in matching_mirror_paths(config, Stage::Flagged, filter, files)? {
-        let src = config.stage_dir(Stage::Flagged).join(&rel);
+    for rel in matching_mirror_paths_in(config, &flagged_dir, filter, files)? {
+        let src = flagged_dir.join(&rel);
         let flagged = EinmoFile::from_file(&src)?; // verify-on-inspect
         let Some(advisory) = flagged.advisory() else {
             return Err(EinmoError::Config(format!(
@@ -322,8 +313,10 @@ pub fn promote_flag_to_note(
 ///
 /// # Errors
 ///
-/// Returns [`EinmoError::Config`] if `stage` is `output` or `flagged`, or
-/// [`EinmoError::Io`] on a filesystem failure.
+/// Returns [`EinmoError::Config`] if `stage` is `output`, or
+/// [`EinmoError::Io`] on a filesystem failure. (A flagged sink was never a
+/// retractable baseline either, but is no longer even expressible as a
+/// `Stage` argument — `EIMP-7` §S.2a.)
 pub fn retract(
     config: &TestConfig,
     stage: Stage,
@@ -338,11 +331,6 @@ pub fn retract(
         Stage::Output => {
             return Err(EinmoError::Config(
                 "cannot retract from output/: it is regenerated every run".into(),
-            ));
-        }
-        Stage::Flagged => {
-            return Err(EinmoError::Config(
-                "cannot retract from flagged/: it is the terminal sink, not a baseline".into(),
             ));
         }
     };
@@ -452,19 +440,30 @@ fn matching_mirror_paths(
     filter: Option<&str>,
     files: Option<&[PathBuf]>,
 ) -> Result<Vec<PathBuf>> {
+    matching_mirror_paths_in(config, &config.stage_dir(stage), filter, files)
+}
+
+/// As [`matching_mirror_paths`], but against an arbitrary target directory
+/// rather than a [`Stage`]'s own directory — what [`promote_flag_to_note`]
+/// uses to scan a stage's nested flagged sink (`EIMP-7` §S.2a), which is
+/// no longer itself a `Stage`.
+fn matching_mirror_paths_in(
+    config: &TestConfig,
+    target_dir: &Path,
+    filter: Option<&str>,
+    files: Option<&[PathBuf]>,
+) -> Result<Vec<PathBuf>> {
     if let Some(files) = files {
-        let stage_dir = config.stage_dir(stage);
         let mut paths: Vec<PathBuf> = files
             .iter()
             .map(|p| normalize_file_path(p, config))
-            .filter(|p| stage_dir.join(p).exists())
+            .filter(|p| target_dir.join(p).exists())
             .collect();
         paths.sort();
         paths.dedup();
         return Ok(paths);
     }
     let inputs = walk_input_tree(&config.input_path(), config.walk_depth_limit())?;
-    let stage_dir = config.stage_dir(stage);
     let mut paths = Vec::new();
     for input_rel in inputs {
         if let Some(pat) = filter
@@ -473,7 +472,7 @@ fn matching_mirror_paths(
             continue;
         }
         let rel = mirror_input_path(&input_rel);
-        if stage_dir.join(&rel).exists() {
+        if target_dir.join(&rel).exists() {
             paths.push(rel);
         }
     }
@@ -658,13 +657,16 @@ mod tests {
         );
     }
 
-    /// Retraction from `output`/`flagged` is refused — neither is a baseline
-    /// that can be un-promoted.
+    /// Retraction from `output` is refused — it is regenerated every run,
+    /// so there is no baseline to un-promote. (A flagged sink was never
+    /// retractable either, but `EIMP-7` §S.2a removed `Stage::Flagged`
+    /// entirely — `retract(&config, ArtifactLocation::Flagged(_), ...)`
+    /// is now a compile error, not a runtime one, so there is no longer a
+    /// runtime case to assert here.)
     #[test]
-    fn retract_refuses_output_and_flagged() {
+    fn retract_refuses_output() {
         let (_tmp, config) = suite();
         assert!(retract(&config, Stage::Output, None, None).is_err());
-        assert!(retract(&config, Stage::Flagged, None, None).is_err());
     }
 
     #[test]
@@ -754,7 +756,7 @@ mod tests {
         // Origin vacated.
         assert!(!config.stage_dir(Stage::Output).join("a.foo.einmo").exists());
         // Flagged file present with advisory, still chain-valid.
-        let flagged = config.stage_dir(Stage::Flagged).join("a.foo.einmo");
+        let flagged = config.flagged_dir(Stage::Output).join("a.foo.einmo");
         let file = EinmoFile::from_file(&flagged).unwrap();
         assert!(
             file.advisory()
@@ -776,7 +778,7 @@ mod tests {
         // Regenerate and flag again to the same path.
         write_output(&config, "a.foo", "5");
         flag(&config, Stage::Output, None, "second", None).unwrap();
-        let flagged_dir = config.stage_dir(Stage::Flagged);
+        let flagged_dir = config.flagged_dir(Stage::Output);
         // Exactly one flagged file — re-flagging still lands at the one
         // mirror path, it does not suffix a second file.
         let count = fs::read_dir(&flagged_dir).unwrap().count();
@@ -804,7 +806,7 @@ mod tests {
             write_output(&config, "a.foo", "5");
             flag(&config, Stage::Output, None, reason, None).unwrap();
         }
-        let flagged = config.stage_dir(Stage::Flagged).join("a.foo.einmo");
+        let flagged = config.flagged_dir(Stage::Output).join("a.foo.einmo");
         let file = EinmoFile::from_file(&flagged).unwrap();
         let advisory = file.advisory().unwrap();
         let first = advisory.find("# flagged: first").unwrap();
@@ -825,7 +827,7 @@ mod tests {
         flag(&config, Stage::Output, None, "needs a second look", None).unwrap();
 
         let key = KeySource::from_passphrase("a note signer");
-        let report = promote_flag_to_note(&config, &key, None, None).unwrap();
+        let report = promote_flag_to_note(&config, Stage::Output, &key, None, None).unwrap();
         assert_eq!(report.noted, vec![PathBuf::from("a.foo.einmo")]);
 
         let note_path = config.stage_dir_for_notes().join("a.foo.einmo");
@@ -854,11 +856,18 @@ mod tests {
         write_output(&config, "a.foo", "5");
         flag(&config, Stage::Output, None, "needs a second look", None).unwrap();
 
-        promote_flag_to_note(&config, &KeySource::from_passphrase(""), None, None).unwrap();
+        promote_flag_to_note(
+            &config,
+            Stage::Output,
+            &KeySource::from_passphrase(""),
+            None,
+            None,
+        )
+        .unwrap();
 
         assert!(
             config
-                .stage_dir(Stage::Flagged)
+                .flagged_dir(Stage::Output)
                 .join("a.foo.einmo")
                 .exists(),
             "promoting to a note must not remove the flag -- resolving the flag is a separate action"
@@ -873,7 +882,14 @@ mod tests {
         write_output(&config, "a.foo", "5");
         flag(&config, Stage::Output, None, "second", None).unwrap();
 
-        promote_flag_to_note(&config, &KeySource::from_passphrase(""), None, None).unwrap();
+        promote_flag_to_note(
+            &config,
+            Stage::Output,
+            &KeySource::from_passphrase(""),
+            None,
+            None,
+        )
+        .unwrap();
 
         let note = EinmoFile::from_file(&config.stage_dir_for_notes().join("a.foo.einmo")).unwrap();
         let body = note.section("NOTE").unwrap().body();
@@ -1072,7 +1088,7 @@ mod tests {
         assert!(config.stage_dir(Stage::Output).join("c.foo.einmo").exists());
         assert!(
             config
-                .stage_dir(Stage::Flagged)
+                .flagged_dir(Stage::Output)
                 .join("b.foo.einmo")
                 .exists()
         );
@@ -1108,7 +1124,7 @@ mod tests {
         flag(&config, Stage::Output, None, "needs attention", None).unwrap();
 
         let note_key = KeySource::from_passphrase("a-note-signer");
-        let report = promote_flag_to_note(&config, &note_key, None, None).unwrap();
+        let report = promote_flag_to_note(&config, Stage::Output, &note_key, None, None).unwrap();
         assert_eq!(report.noted, vec![PathBuf::from("a.foo.einmo")]);
 
         // The note must pass verify-on-inspect (the real from_file path).
@@ -1134,7 +1150,7 @@ mod tests {
         // The flagged file still verifies (it kept its original stamps) but
         // has NO stage:notes stamp — notes/ participates in signature checks
         // while flagged/ does not add a new attestation.
-        let flagged_path = config.stage_dir(Stage::Flagged).join("a.foo.einmo");
+        let flagged_path = config.flagged_dir(Stage::Output).join("a.foo.einmo");
         let flagged =
             EinmoFile::from_file(&flagged_path).expect("flagged file must still verify-on-inspect");
         assert!(

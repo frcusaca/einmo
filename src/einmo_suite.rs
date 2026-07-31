@@ -492,8 +492,21 @@ pub fn check_suite_integrity(config: &TestConfig, policy: FailurePolicy) -> Resu
     EinmoTestRunner::new(config.clone()).check_integrity(&inputs, extraneous, level, policy)
 }
 
-/// The mirror-relative paths of every artifact currently sitting in
-/// `flagged/` (`EIMP-1` §S.3).
+/// One artifact sitting in a flagged sink, with its origin stage recorded.
+/// `EIMP-7` §S.2a nests flagged sinks per-stage, so the origin is always
+/// known — a per-stage breakdown, not just a flat count, is the whole
+/// point of that change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlaggedArtifact {
+    /// The stage this artifact was flagged FROM (`output`/`checked`/
+    /// `verified`'s nested `flagged/` sink it currently sits in).
+    pub stage: Stage,
+    /// The mirror-relative path within that sink.
+    pub rel_path: PathBuf,
+}
+
+/// Every artifact currently sitting in any stage's flagged sink (`EIMP-1`
+/// §S.3, nested per-stage since `EIMP-7` §S.2a), across all three stages.
 ///
 /// A suite's goal state is "no flags" — any flagged artifact means
 /// unresolved review work, and by default that fails `einmo verify`'s gate
@@ -505,13 +518,22 @@ pub fn check_suite_integrity(config: &TestConfig, policy: FailurePolicy) -> Resu
 ///
 /// # Errors
 ///
-/// Returns [`EinmoError::Io`] if `flagged/` cannot be walked.
-pub fn count_flagged(config: &TestConfig) -> Result<Vec<PathBuf>> {
-    let dir = config.stage_dir(Stage::Flagged);
-    if !dir.exists() {
-        return Ok(Vec::new());
+/// Returns [`EinmoError::Io`] if a stage's flagged sink cannot be walked.
+pub fn count_flagged(config: &TestConfig) -> Result<Vec<FlaggedArtifact>> {
+    let mut out = Vec::new();
+    for stage in Stage::ALL {
+        let dir = config.flagged_dir(stage);
+        if !dir.exists() {
+            continue;
+        }
+        let mut rels = crate::stage::walk_input_tree(&dir, config.walk_depth_limit())?;
+        rels.sort();
+        out.extend(
+            rels.into_iter()
+                .map(|rel_path| FlaggedArtifact { stage, rel_path }),
+        );
     }
-    crate::stage::walk_input_tree(&dir, config.walk_depth_limit())
+    Ok(out)
 }
 
 /// A test suite bound to one work directory and configuration.
@@ -611,8 +633,13 @@ impl EinmoTestRunner {
 
     /// Artifacts in `stage` with no corresponding `input/` file (O5/C3/V3).
     ///
-    /// `flagged/` is never asked: it sits outside the escalation — flagging is
-    /// retirement, so an input-less flagged artifact is a finished job.
+    /// `stage`'s nested flagged sink is never asked: it sits outside the
+    /// escalation — flagging is retirement, so an input-less flagged
+    /// artifact is a finished job. Since `EIMP-7` §S.2a nested the sink
+    /// INSIDE the stage directory being walked here, it must be filtered
+    /// out explicitly (`is_in_flagged_sink`) — otherwise every flagged
+    /// artifact would be walked straight into this orphan check as if it
+    /// were an ordinary one.
     fn orphans_of(
         &self,
         stage: Stage,
@@ -621,8 +648,10 @@ impl EinmoTestRunner {
         let dir = self.config.stage_dir(stage);
         let (present, _) =
             crate::stage::walk_input_tree_reporting(&dir, self.config.walk_depth_limit())?;
+        let flagged_name = self.config.flagged_dir_name();
         let mut out: Vec<Problem> = present
             .into_iter()
+            .filter(|rel| !crate::stage::is_in_flagged_sink(rel, flagged_name))
             .filter(|rel| !expected.contains(rel))
             .map(|path| Problem::OrphanedStageArtifact { stage, path })
             .collect();
@@ -1686,11 +1715,18 @@ pub(crate) fn scan_tests(config: &TestConfig, filter: Option<&str>) -> Result<Ve
         .iter()
         .map(|p| mirror_input_path(p))
         .collect();
-    // Union in anything present in a stage but absent from input/.
+    // Union in anything present in a stage but absent from input/. Each
+    // stage's nested flagged sink (`EIMP-7` §S.2a) is excluded — a flagged
+    // artifact is not one of the stage's own output/checked/verified rows.
+    let flagged_name = config.flagged_dir_name();
     for stage in STAGES {
         let dir = config.stage_dir(stage);
         if let Ok(found) = walk_input_tree(&dir, config.walk_depth_limit()) {
-            rels.extend(found);
+            rels.extend(
+                found
+                    .into_iter()
+                    .filter(|rel| !crate::stage::is_in_flagged_sink(rel, flagged_name)),
+            );
         }
     }
     rels.sort();
@@ -2439,14 +2475,19 @@ mod tests {
         assert!(!results.all_output_written_and_verified());
     }
 
-    /// `flagged/` is exempt: flagging IS retirement, so a flagged artifact with
-    /// no input is a completed job, not an orphan.
+    /// A stage's nested flagged sink is exempt: flagging IS retirement, so
+    /// a flagged artifact with no input is a completed job, not an orphan.
+    /// Also the regression test for `EIMP-7` §S.2a's own hazard: since the
+    /// sink is nested INSIDE `output/` (not a top-level sibling anymore),
+    /// `orphans_of(Stage::Output, ...)`'s walk of `output/` necessarily
+    /// recurses into `output/flagged/` too — this proves that recursion is
+    /// filtered back out, not just that the concept is exempt in theory.
     #[test]
     fn flagged_orphan_is_not_a_violation() {
         let (_tmp, suite0) = suite();
         let config = suite0.config().clone();
         std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
-        let retired = config.stage_dir(Stage::Flagged).join("retired.foo.einmo");
+        let retired = config.flagged_dir(Stage::Output).join("retired.foo.einmo");
         ensure_parent_dir(&retired).unwrap();
         std::fs::write(&retired, "retired").unwrap();
 
@@ -2454,7 +2495,7 @@ mod tests {
 
         assert!(
             results.integrity.is_clean(),
-            "flagged/ is the terminal sink: {:?}",
+            "a stage's flagged sink is a terminal sink, nested or not: {:?}",
             results.integrity.problems
         );
     }
@@ -2481,10 +2522,7 @@ mod tests {
     #[test]
     fn count_flagged_is_zero_for_a_suite_with_no_flags() {
         let (_tmp, suite0) = suite();
-        assert_eq!(
-            count_flagged(suite0.config()).unwrap(),
-            Vec::<PathBuf>::new()
-        );
+        assert_eq!(count_flagged(suite0.config()).unwrap(), Vec::new());
     }
 
     #[test]
@@ -2492,12 +2530,40 @@ mod tests {
         let (_tmp, suite0) = suite();
         let config = suite0.config().clone();
         for name in ["a.foo.einmo", "b.foo.einmo"] {
-            let path = config.stage_dir(Stage::Flagged).join(name);
+            let path = config.flagged_dir(Stage::Output).join(name);
             ensure_parent_dir(&path).unwrap();
             std::fs::write(&path, "irrelevant, count_flagged does not verify").unwrap();
         }
         let flagged = count_flagged(&config).unwrap();
         assert_eq!(flagged.len(), 2);
+        assert!(flagged.iter().all(|f| f.stage == Stage::Output));
+    }
+
+    /// `EIMP-7` §S.2a's whole point for `count_flagged`: origin stage is
+    /// always known and correctly attributed, not merged into one flat
+    /// list.
+    #[test]
+    fn count_flagged_attributes_each_artifact_to_its_own_origin_stage() {
+        let (_tmp, suite0) = suite();
+        let config = suite0.config().clone();
+        let from_output = config.flagged_dir(Stage::Output).join("a.foo.einmo");
+        let from_checked = config.flagged_dir(Stage::Checked).join("b.foo.einmo");
+        for path in [&from_output, &from_checked] {
+            ensure_parent_dir(path).unwrap();
+            std::fs::write(path, "irrelevant").unwrap();
+        }
+        let flagged = count_flagged(&config).unwrap();
+        assert_eq!(flagged.len(), 2);
+        assert!(
+            flagged
+                .iter()
+                .any(|f| f.stage == Stage::Output && f.rel_path == Path::new("a.foo.einmo"))
+        );
+        assert!(
+            flagged
+                .iter()
+                .any(|f| f.stage == Stage::Checked && f.rel_path == Path::new("b.foo.einmo"))
+        );
     }
 
     #[test]

@@ -2427,7 +2427,8 @@ mod tests {
         let report = review.execute(&plan, &keys).unwrap();
         assert_eq!(report.executed.len(), 1);
         assert!(!tmp.path().join("output/a.foo.einmo").exists());
-        let flagged = std::fs::read_to_string(tmp.path().join("flagged/a.foo.einmo")).unwrap();
+        let flagged =
+            std::fs::read_to_string(tmp.path().join("output/flagged/a.foo.einmo")).unwrap();
         assert!(flagged.contains("# flagged: looks wrong"));
     }
 
@@ -2440,7 +2441,8 @@ mod tests {
         review.flag_now(&id, Stage::Output, "looks wrong").unwrap();
 
         assert!(!tmp.path().join("output/a.foo.einmo").exists());
-        let flagged = std::fs::read_to_string(tmp.path().join("flagged/a.foo.einmo")).unwrap();
+        let flagged =
+            std::fs::read_to_string(tmp.path().join("output/flagged/a.foo.einmo")).unwrap();
         assert!(flagged.contains("# flagged: looks wrong"));
     }
 
@@ -2460,7 +2462,8 @@ mod tests {
             .unwrap();
         review.flag_now(&id, Stage::Output, "second").unwrap();
 
-        let flagged = std::fs::read_to_string(tmp.path().join("flagged/a.foo.einmo")).unwrap();
+        let flagged =
+            std::fs::read_to_string(tmp.path().join("output/flagged/a.foo.einmo")).unwrap();
         assert!(
             flagged.contains("# flagged: first"),
             "the earlier flag must survive: {flagged:?}"

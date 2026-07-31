@@ -666,8 +666,8 @@ fn cmd_verify(args: VerifyArgs) -> Result<ExitCode> {
             "einmo: warning: {} flagged artifact(s) present:",
             flagged.len()
         );
-        for rel in &flagged {
-            eprintln!("  {}", rel.display());
+        for f in &flagged {
+            eprintln!("  {} ({} stage)", f.rel_path.display(), f.stage);
         }
     }
     Ok(
