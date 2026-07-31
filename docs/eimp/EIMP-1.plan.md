@@ -579,14 +579,141 @@ Per `EIMP-4` §S.1 these operate on `EinmoReview` and therefore belong to
 performs the split they land in this repo's existing binary; the split then
 moves them wholesale.
 
-- [ ] `einmo review plan|list|decide|undecide|execute` one-shot subcommands
+- [x] `einmo review plan|list|decide|undecide|execute` one-shot subcommands
       (journal-backed session identity) with endpoint-equivalent semantics;
       unit tests
-- [ ] Byte-for-byte equivalence test: `review execute` promotion == existing
+      (2026-07-31 00:13) — landed in `src/bin/einmo_review_server.rs` (per
+      `EIMP-4` §S.1's crate-boundary note, restated at the top of this
+      phase: these verbs belong to `einmo-review-server`, not core's
+      `cli.rs`, and this repo has no split-off crate yet so they land in
+      the existing binary). Restructured the binary from a plain
+      `#[tokio::main] async fn main()` into a top-level clap `Parser` with a
+      `Command` enum: `Serve(ServeArgs)` (today's exact bind/session-file/
+      shutdown behavior, byte-for-byte unchanged, just moved under a
+      subcommand and driven by a manually-built
+      `tokio::runtime::Builder::new_multi_thread().enable_all()` runtime
+      instead of the macro — the only subcommand that touches async at
+      all) plus `Plan`/`List`/`Decide`/`Undecide`/`Execute`, all synchronous
+      over `EinmoReview`'s ordinary API. `main()`/`cli_main`/`dispatch`
+      mirror `src/cli.rs`'s own shape (`ExitCode`-returning, no
+      `process::exit`, clap error handling identical to `cli_main`'s).
+
+      **Session identity**: every one-shot subcommand takes `--session
+      <id>` (optional); given, it calls `EinmoReview::resume(work_dir, id,
+      opts)` (replays the journal, EIMP-1 §S.6); omitted, it
+      `open`/`open_with`s a fresh session. Every subcommand announces (to
+      stderr, so `--json` stdout stays one clean payload) the session id it
+      operated under, so `decide` (no `--session`) mints one and a later
+      `execute --session <that-id>` picks the decision back up — proven by
+      `decide_then_undecide_across_separate_calls_survives_journal_replay`
+      and `list_reflects_a_pending_decision_across_a_resumed_session`,
+      which chain two/three separate `cmd_*` calls (each opening and
+      dropping its own `EinmoReview`, exactly like separate process
+      invocations) purely through a shared `--session` string.
+
+      **`decide`'s decision grammar** mirrors `split_promote_args`'s spoken
+      `to`/`from` convention rather than inventing something unrelated:
+      `promote to <stage>` (or bare `promote <stage>`), `retract from
+      <stage>` (or bare), `flag <stage> <reason…>`, `skip` — parsed by a
+      small pure `parse_decision`/`parse_decidable_stage` pair (checked/
+      verified only, matching `review_server::DecidableStage`), directly
+      unit-tested without a suite fixture.
+
+      **`execute`'s confirm gate and `SignerSet`** mirror
+      `review_server::post_execute` exactly: any pending `Promote` action
+      requires the literal `--confirm PROMOTE` (`confirm_gate`, a pure
+      function pinned by 3 tests, same "kept separate from I/O for direct
+      testability" precedent as `cli.rs`'s `flags_fail_the_gate`);
+      `to_checked` is unconditionally `KeySource::from_passphrase("")`
+      (never goes through the cascade at all, matching the server's
+      hard-coded computer key); `to_verified` is resolved only when
+      `plan_needs_verified_key` (pure, 3 tests) finds a pending `Promote {
+      to: Verified }`, via `src/cli.rs`'s own established key-cascade
+      (`KeyCascadeInputs`, `resolve_stage_key`, `--passphrase`/
+      `--stdin-passphrase`/`--interactive`/`EINMO_PASSPHRASE`/
+      `einmo.toml`/interactive-prompt) — a deliberate, documented widening
+      from the HTTP endpoint's bare `Option<String>` passphrase field: a
+      CLI naturally has an interactive-prompt tier an HTTP request body
+      cannot offer, and the *shape* of the gate and the `SignerSet` (the
+      part `EIMP-1` §S.7 actually specifies) matches exactly; only the
+      *mechanism* resolving `to_verified`'s value is richer.
+
+      **Discrepancies found and resolved, documented per this plan's own
+      convention**:
+      - `ExecutionPlan` has no `Display`/render method to reuse (`EIMP-1`
+        §S.7's "the plan's rendered text if one exists already" — it does
+        not). Added presentation-only rendering (`action_line`,
+        `decision_tag`, `action_json`) local to the bin, mirroring how
+        `review_server.rs` already has its own private `decision_tag`/
+        `PlannedActionResponse` — presentation lives at the frontend, not
+        the core session object.
+      - `KeyCascadeInputs` was not re-exported from `lib.rs` (only
+        `resolve_stage_key`/`KeySource` were); added it to the curated
+        `pub use config::{…}` list — the minimum surface a second CLI
+        binary needs to reuse the established cascade rather than
+        reinventing passphrase resolution.
+      - `EinmoError::io`/`review_server::decision_tag`/`cli.rs`'s
+        `read_stdin_line`/`prompt_tty` are `pub(crate)`/private to core's
+        own modules and therefore invisible across the crate boundary a
+        `src/bin/*.rs` file sits on (a `src/bin` file is a separate crate
+        linking the package's lib as `extern crate einmo`, even though
+        both live in one Cargo package) — small, unavoidable local
+        duplicates were written instead (`io_err` via `EinmoError::Io`'s
+        public struct-variant fields, `read_stdin_line`, `prompt_tty`,
+        `decision_tag`), each documented at its definition as a deliberate
+        cross-boundary duplication rather than an oversight.
+      - `--json` output uses `serde_json::json!`/`Value`'s `Display`
+        (proper escaping) rather than `cli.rs`'s hand-rolled
+        `format!("{{\"x\":\"{}\"}}", …)` strings: `cli.rs`'s JSON values are
+        always path-safe substrings, but `decide`'s `flag` reason is
+        free-text a reviewer types, which can contain quotes — correctness
+        (rust_instructions.md §1a's optimization order) wins over
+        cosmetic-only convention match here.
+      - `Serve`'s move under a subcommand changes its invocation syntax
+        (`einmo-review-server <suite>` becomes `einmo-review-server serve
+        <suite>`) — `ServeArgs`' own flags/behavior are byte-for-byte
+        unchanged, only the subcommand wrapper is new. This repo has no
+        automated test or script that invokes the bare old form
+        programmatically (checked: no `tests/` integration test, no
+        `Command::new` spawn of this binary anywhere; only
+        `scripts/einmo_review_client.sh`'s help text mentions the old
+        invocation prosaically) — left as a Phase C/D follow-up
+        (`scripts/einmo_review_client.sh`'s two help-text lines) rather
+        than touched here, per this phase's own scope boundary.
+
+      25 new tests in `src/bin/einmo_review_server.rs` (clap-parsing smoke
+      tests; `parse_decision`/`parse_decidable_stage`/`list_opts`/
+      `confirm_gate`/`plan_needs_verified_key` as pure, directly-tested
+      functions; functional tests over a seeded tempdir suite exercising
+      the full decide→execute chain, the confirm-gate refusal, and a
+      `checked`-then-`verified` promotion using an explicit `--passphrase`
+      so no test ever reaches the interactive-prompt tier). einmo lib stays
+      at 276 tests (only `lib.rs`'s export list changed); workspace total
+      276 (lib) + 25 (this bin) + 4 (zweimomo unit) + 3 (zweimomo
+      integration) = 308, all green. `cargo clippy --workspace --all-targets
+      -- -D warnings` and `cargo fmt --check` both clean.
+- [x] Byte-for-byte equivalence test: `review execute` promotion == existing
       `einmo promote`
       (note: `EIMP-2` Phase C already proved `EinmoReview::execute` ==
       `transitions::promote` at the library level — this task is the *CLI*
       surface's equivalent)
+      (2026-07-31 00:13) —
+      `cli_execute_promote_matches_einmo_promote_cli_at_the_cli_surface` in
+      `src/bin/einmo_review_server.rs`: the baseline runs the actual `einmo`
+      binary's CLI path via the exported `einmo::cli_main` entry point
+      (`einmo promote output to checked <suite>`, not a re-implementation);
+      the review path chains `cmd_decide`+`cmd_execute` across a shared
+      `--session` id, exactly like two separate process invocations. Both
+      run over independently-seeded, identical fixtures. Compared via
+      `EinmoFile::sections()` filtered to exclude `STAMPS` (a local
+      `body_sections_excluding_stamps`, since the library's own
+      `body_sections` helper is `pub(crate)` and invisible across the bin's
+      crate boundary) rather than raw bytes — timestamps legitimately
+      differ between two independent runs (each stamp signs its own
+      generation time), the same reasoning `review.rs`'s own
+      `execute_promote_matches_cli_promote_byte_for_byte` (the Phase A,
+      library-level equivalence test this one complements) already
+      documented. Passes.
 
 ## Phase C — the server (EIMP-1.md §S.7)
 

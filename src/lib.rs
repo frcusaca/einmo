@@ -38,7 +38,10 @@ mod verify;
 pub use cli::cli_main;
 pub use collation::Collation;
 pub use compare::{ComparisonResult, DiffEntry, MatchSections, compare};
-pub use config::{KeySource, Perspective, PerspectiveOf, StageDirs, TestConfig, resolve_stage_key};
+pub use config::{
+    KeyCascadeInputs, KeySource, Perspective, PerspectiveOf, StageDirs, TestConfig,
+    resolve_stage_key,
+};
 pub use corpus_signer::{CorpusSigner, SectionDigest, SectionManifest, SectionSig};
 pub use einmo_suite::{
     EinmoSuite, Evaluator, FailurePolicy, FileResult, Problem, SuiteIntegrity, TestResults,
