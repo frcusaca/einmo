@@ -1170,7 +1170,7 @@ mod tests {
         write_input(ctx.path(), "a.foo", "{1+1;}");
         let config =
             crate::config::TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         suite.evaluate_all(&Echo).unwrap();
         ctx
     }
@@ -2409,7 +2409,7 @@ mod tests {
         }
         let config =
             crate::config::TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         suite.evaluate_all(&Echo).unwrap();
 
         let state = Arc::new(AppState::default());

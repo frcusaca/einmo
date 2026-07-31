@@ -3,7 +3,7 @@
 //!
 //! The JavaScript suite is organized into progressive-difficulty tiers —
 //! `day.1/`, `week.2/`, `month.2/`, `years.later/` — each its own
-//! independently-gated [`einmo::EinmoSuite`] with its own `input/`/
+//! independently-gated [`einmo::EinmoTestRunner`] with its own `input/`/
 //! `output/`/`checked/` tree and its own `README.*.md` (see each tier
 //! directory). Only tiers with content are exercised here; a tier directory
 //! that exists but has no `input/` files yet is skipped, not failed — new
@@ -17,7 +17,7 @@
 
 use std::path::{Path, PathBuf};
 
-use einmo::{EinmoFile, EinmoSuite, Evaluator, TestConfig, ValidationLevel};
+use einmo::{EinmoFile, EinmoTestRunner, Evaluator, TestConfig, ValidationLevel};
 use zweimomo::BoaEvaluator;
 
 /// The tiers, oldest (easiest) first. Directory name doubles as the
@@ -60,7 +60,7 @@ fn run_tier(tier: &str, dir: &Path) {
     let config = TestConfig::new(dir, ValidationLevel::Checked)
         .with_suite_name(format!("zweimomo/suites/javascript/{tier}"));
 
-    let suite = EinmoSuite::new(config);
+    let suite = EinmoTestRunner::new(config);
     let results = suite
         .evaluate_all(&BoaEvaluator)
         .unwrap_or_else(|e| panic!("{tier}: evaluate_all should not fail at the fs level: {e}"));
@@ -82,7 +82,7 @@ fn run_tier(tier: &str, dir: &Path) {
 /// Crash-crumb defense must survive a stack overflow in the evaluator.
 ///
 /// This re-spawns the test binary as a child with `EINMO_ZWEIMOMO_CRASH_CHILD`,
-/// which drives `EinmoSuite::evaluate` with a `StackOverflowEvaluator`
+/// which drives `EinmoTestRunner::evaluate` with a `StackOverflowEvaluator`
 /// (infinite recursion) and crashes mid-evaluation. The parent then asserts
 /// the crash-crumb (a signed `.einmo` with `TEST IN PROGRESS` status)
 /// survived the crash and its stamp chain validates.
@@ -104,7 +104,7 @@ fn crash_crumb_survives_stack_overflow() {
     if std::env::var("EINMO_ZWEIMOMO_CRASH_CHILD").is_ok() {
         let dir = std::env::var("EINMO_CRASH_TEST_DIR").unwrap();
         let config = TestConfig::new(&dir, ValidationLevel::Output);
-        let suite = EinmoSuite::new(config);
+        let suite = EinmoTestRunner::new(config);
         let input_dir = Path::new(&dir).join("input");
         std::fs::create_dir_all(&input_dir).unwrap();
         std::fs::write(input_dir.join("overflow.js"), "trigger").unwrap();
@@ -174,7 +174,7 @@ fn eimp3_output_drift_comprehensive() {
     // signer that originally produced this fixture. `output/` must be
     // byte-for-byte untouched.
     let config = TestConfig::new(&scratch, ValidationLevel::Output);
-    let suite = EinmoSuite::new(config);
+    let suite = EinmoTestRunner::new(config);
     let out_path = scratch.join("output").join("integer_arithmetic.js.einmo");
     let bytes_before = std::fs::read(&out_path).unwrap();
     let rerun = suite
@@ -196,7 +196,7 @@ fn eimp3_output_drift_comprehensive() {
     )
     .unwrap();
     let second_config = TestConfig::new(&scratch, ValidationLevel::Output);
-    let second_suite = EinmoSuite::new(second_config);
+    let second_suite = EinmoTestRunner::new(second_config);
     let co_signed = second_suite
         .evaluate(Path::new("integer_arithmetic.js"), &BoaEvaluator)
         .unwrap();

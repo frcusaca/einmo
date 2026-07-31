@@ -1308,7 +1308,7 @@ mod tests {
         let ctx = test_context();
         write_input(ctx.path(), "a.foo", "{1+1;}");
         let config = TestConfig::new(ctx.path(), ValidationLevel::Output);
-        let suite = einmo::EinmoSuite::new(config);
+        let suite = einmo::EinmoTestRunner::new(config);
         suite.evaluate_all(&Echo).unwrap();
         ctx
     }

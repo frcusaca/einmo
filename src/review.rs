@@ -1308,7 +1308,7 @@ mod tests {
         write_input(ctx.path(), "a.foo", "{1+1;}");
         write_input(ctx.path(), "b.foo", "{2+2;}");
         let config = TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         suite.evaluate_all(&Echo).unwrap();
         ctx
     }
@@ -1515,7 +1515,7 @@ mod tests {
         promote_output_to_checked(tmp.path()); // checked := "2" (1+1)
         write_input(tmp.path(), "a.foo", "{3+3;}");
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         let regen = suite
             .regenerate_output(std::path::Path::new("a.foo"), &Echo)
             .unwrap();
@@ -1569,7 +1569,7 @@ mod tests {
         // decision was based on is no longer what's on disk.
         write_input(tmp.path(), "a.foo", "{9+9;}");
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         suite
             .regenerate_output(std::path::Path::new("a.foo"), &Echo)
             .unwrap();
@@ -1585,7 +1585,7 @@ mod tests {
         // b.foo has no decision at all.
         write_input(tmp.path(), "b.foo", "{9+9;}");
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         suite
             .regenerate_output(std::path::Path::new("b.foo"), &Echo)
             .unwrap();
@@ -1601,7 +1601,7 @@ mod tests {
 
         write_input(tmp.path(), "a.foo", "{9+9;}");
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         suite
             .regenerate_output(std::path::Path::new("a.foo"), &Echo)
             .unwrap();
@@ -1684,7 +1684,7 @@ mod tests {
         review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
         write_input(tmp.path(), "a.foo", "{9+9;}");
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         suite
             .regenerate_output(std::path::Path::new("a.foo"), &Echo)
             .unwrap();
@@ -2188,7 +2188,7 @@ mod tests {
         // genuinely differs from the existing checked/ baseline.
         write_input(tmp.path(), "a.foo", "{9+9;}");
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         suite
             .regenerate_output(std::path::Path::new("a.foo"), &Echo)
             .unwrap();
@@ -2281,7 +2281,7 @@ mod tests {
             write_input(tmp.path(), &format!("case{i}.foo"), "{1+1;}");
         }
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         suite.evaluate_all(&Echo).unwrap();
 
         let review = EinmoReview::open(tmp.path());
@@ -2454,7 +2454,7 @@ mod tests {
         // flag_now moves output/a.foo.einmo away; regenerate it so there is
         // something to flag again.
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         suite
             .evaluate(std::path::Path::new("a.foo"), &Echo)
             .unwrap();
@@ -2816,7 +2816,7 @@ mod tests {
             write_input(tmp.path(), &format!("case{i}.foo"), "{1+1;}");
         }
         let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         suite.evaluate_all(&Echo).unwrap();
 
         let review = Arc::new(EinmoReview::open(tmp.path()));
@@ -2899,7 +2899,7 @@ mod tests {
         write_input(ctx.path(), "b.foo", "{2+2;}");
         write_input(ctx.path(), "c.foo", "{3+3;}");
         let config = TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         suite.evaluate_all(&Echo).unwrap();
         promote_output_to_checked(ctx.path());
 
@@ -3004,7 +3004,7 @@ mod tests {
 
         write_input(ctx.path(), "c.foo", "{99+99;}");
         let config = TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
         suite
             .regenerate_output(std::path::Path::new("c.foo"), &Echo)
             .unwrap();

@@ -973,7 +973,7 @@ fn cmd_evaluate(args: EvaluateArgs) -> Result<ExitCode> {
 }
 
 /// `einmo regenerate-output`: like `evaluate`, but a drifted case is
-/// deliberately replaced instead of failing (`EinmoSuite::regenerate_output`,
+/// deliberately replaced instead of failing (`EinmoTestRunner::regenerate_output`,
 /// `EIMP-3.md` §Specification).
 fn cmd_regenerate_output(args: EvaluateArgs) -> Result<ExitCode> {
     run_evaluate_like(args, true, "regenerated")
@@ -981,15 +981,15 @@ fn cmd_regenerate_output(args: EvaluateArgs) -> Result<ExitCode> {
 
 /// Shared driver for `cmd_evaluate`/`cmd_regenerate_output`: walk+filter the
 /// input tree, run each input through `evaluator`, and report per-file
-/// success/failure. `force` selects `EinmoSuite::regenerate_output` (drift
-/// replaces) over `EinmoSuite::evaluate` (drift fails); `verb` only affects
+/// success/failure. `force` selects `EinmoTestRunner::regenerate_output` (drift
+/// replaces) over `EinmoTestRunner::evaluate` (drift fails); `verb` only affects
 /// the summary line's wording/JSON key.
 fn run_evaluate_like(args: EvaluateArgs, force: bool, verb: &str) -> Result<ExitCode> {
     let mut config = TestConfig::new(&args.work_dir, ValidationLevel::Output);
     if let Some(limit) = args.walk_depth_limit {
         config = config.with_walk_depth_limit(limit);
     }
-    let suite = crate::einmo_suite::EinmoSuite::new(config);
+    let suite = crate::einmo_suite::EinmoTestRunner::new(config);
     let evaluator = CommandEvaluator {
         command: args.command,
     };

@@ -25,13 +25,17 @@ here rather than repeated per checkbox):
 
 ## Phase 0 — preconditions, design freeze, and the rename
 
-- [ ] STOP — preconditions: `cargo test --workspace`, `cargo clippy
-      --all-targets -- -D warnings`, `cargo fmt --check` all clean. Do not
-      begin while any test is broken (`EIMP-0` §8).
-- [ ] Read `docs/eimp/EIMP-7.md` in full — in particular §S.3
+- [x] STOP — preconditions: `cargo clippy --all-targets -- -D warnings`
+      and `cargo fmt --check` clean; `cargo test --workspace` confirmed
+      clean immediately prior to this (356/356, the jia-merge
+      verification commit `82d1231`). Do not begin while any test is
+      broken (`EIMP-0` §8).
+      (2026-07-31)
+- [x] Read `docs/eimp/EIMP-7.md` in full — in particular §S.3
       (`EinmoCase`/`StageAgreement`) and §S.7 (the comparison
       unification), which carry the design decisions the rest of this
       plan assumes.
+      (2026-07-31)
 - [x] Resolve `EIMP-7.md`'s three original §Open Questions with the human;
       record each answer in the spec body.
       (2026-07-31) — all three resolved in conversation and written into
@@ -57,22 +61,38 @@ here rather than repeated per checkbox):
 - [x] `EIMP-7.md` §Open Questions is now empty — the design is frozen.
       Reopen explicitly rather than deciding otherwise mid-implementation.
       (2026-07-31)
-- [ ] Set `EIMP-7.md` frontmatter `status: Implementing` and `begun: [x]`;
+- [x] Set `EIMP-7.md` frontmatter `status: Implementing` and `begun: [x]`;
       commit both EIMP files stating that work has commenced.
-- [ ] **S.0 — rename `einmo_suite::EinmoSuite` → `EinmoTestRunner`.**
+      (2026-07-31)
+- [x] **S.0 — rename `einmo_suite::EinmoSuite` → `EinmoTestRunner`.**
       Mechanical, no behavior change, must compile as one commit. 51
       occurrences across 6 files: `src/einmo_suite.rs` (31),
       `src/review.rs` (12), `src/cli.rs` (4), `src/review_server.rs` (2),
       `src/lib.rs` (1, the `pub use` at line 47), `src/bin/
       einmo_review_server.rs` (1).
-  - [ ] Rename the type, its `impl` blocks, and the `pub use` export.
-  - [ ] Update `einmo_suite.rs`'s module doc comment (line 1-2 names
+      **Correction found while executing**: the plan's own survey missed
+      a 7th file in a *different crate* — `zweimomo/tests/suites.rs` (6
+      occurrences) — caught by the post-rename `cargo test --workspace`
+      failing to compile with `E0432: unresolved import`, exactly the
+      kind of miss a compile-and-test gate exists to catch. Fixed;
+      recorded here so the blast-radius count above is now known
+      incomplete (57 total, not 51) rather than silently left wrong.
+      (2026-07-31)
+  - [x] Rename the type, its `impl` blocks, and the `pub use` export.
+        (2026-07-31)
+  - [x] Update `einmo_suite.rs`'s module doc comment (line 1-2 names
         `EinmoSuite` as "the test runner" — that sentence becomes correct
         again only after the rename).
-  - [ ] `cargo test --workspace` green, `clippy`/`fmt` clean. This is a
+        (2026-07-31)
+  - [x] `cargo test --workspace` green, `clippy`/`fmt` clean. This is a
         pure rename: the test count must be **unchanged at 356**, and no
         test body should need editing beyond the type name.
-  - [ ] Commit: "EIMP-7 S.0: rename EinmoSuite to EinmoTestRunner".
+        (2026-07-31) — 356/356 (318 einmo lib + 31 einmo-review-server
+        bin + 4 zweimomo lib + 3 zweimomo tests/suites.rs), identical
+        composition to pre-rename. `cargo fmt --check` / `cargo clippy
+        --all-targets -- -D warnings` both clean.
+  - [x] Commit: "EIMP-7 S.0: rename EinmoSuite to EinmoTestRunner".
+        (2026-07-31)
 
 ## Phase A — `EinmoStorage` + `EinmoDirectory` (§S.1, §S.2)
 

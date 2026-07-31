@@ -1,5 +1,6 @@
-//! The test runner: [`EinmoSuite`] drives an [`Evaluator`] over the `input/`
-//! tree, assembles signed `.einmo` envelopes, and writes them to `output/`.
+//! The test runner: [`EinmoTestRunner`] drives an [`Evaluator`] over the
+//! `input/` tree, assembles signed `.einmo` envelopes, and writes them to
+//! `output/`.
 //!
 //! The trait is einmo's own — `Vec<String>`, no dependency on any Foolish
 //! crate. Adapters (in zweimomo) format their interpreter's values to strings
@@ -478,7 +479,7 @@ impl TestResults {
 /// orphaned artifacts (see [`SuiteIntegrity`]).
 ///
 /// This is what `einmo verify` reports alongside signature integrity, and what
-/// [`EinmoSuite::evaluate_all`] folds into its results — one implementation, so
+/// [`EinmoTestRunner::evaluate_all`] folds into its results — one implementation, so
 /// the CLI and the library can never disagree about what a sound suite is.
 ///
 /// # Errors
@@ -488,7 +489,7 @@ pub fn check_suite_integrity(config: &TestConfig, policy: FailurePolicy) -> Resu
     let (inputs, extraneous) =
         crate::stage::walk_input_tree_reporting(&config.input_path(), config.walk_depth_limit())?;
     let level = config.validation_level();
-    EinmoSuite::new(config.clone()).check_integrity(&inputs, extraneous, level, policy)
+    EinmoTestRunner::new(config.clone()).check_integrity(&inputs, extraneous, level, policy)
 }
 
 /// The mirror-relative paths of every artifact currently sitting in
@@ -515,15 +516,15 @@ pub fn count_flagged(config: &TestConfig) -> Result<Vec<PathBuf>> {
 
 /// A test suite bound to one work directory and configuration.
 #[derive(Debug)]
-pub struct EinmoSuite {
+pub struct EinmoTestRunner {
     config: TestConfig,
 }
 
-impl EinmoSuite {
+impl EinmoTestRunner {
     /// Bind a suite to `config`.
     #[must_use]
     pub fn new(config: TestConfig) -> Self {
-        EinmoSuite { config }
+        EinmoTestRunner { config }
     }
 
     /// The suite's configuration.
@@ -786,7 +787,7 @@ impl EinmoSuite {
         self.evaluate_impl(input_rel, evaluator, false)
     }
 
-    /// Like [`EinmoSuite::evaluate`], but a content mismatch against the
+    /// Like [`EinmoTestRunner::evaluate`], but a content mismatch against the
     /// existing `output/` baseline is deliberately **replaced** instead of
     /// failing as drift (`EIMP-3` §Specification "New CLI verb: explicit
     /// regenerate") — the `einmo regenerate-output` verb's library
@@ -795,7 +796,7 @@ impl EinmoSuite {
     ///
     /// # Errors
     ///
-    /// As [`EinmoSuite::evaluate`].
+    /// As [`EinmoTestRunner::evaluate`].
     pub fn regenerate_output(
         &self,
         input_rel: &Path,
@@ -831,7 +832,7 @@ impl EinmoSuite {
     ///
     /// # Errors
     ///
-    /// As [`EinmoSuite::evaluate`].
+    /// As [`EinmoTestRunner::evaluate`].
     pub fn evaluate_inline(
         &self,
         name: &str,
@@ -1016,7 +1017,7 @@ impl EinmoSuite {
     ///
     /// # Errors
     ///
-    /// As [`EinmoSuite::evaluate_all`].
+    /// As [`EinmoTestRunner::evaluate_all`].
     pub fn evaluate_all_inline(
         &self,
         pairs: &[(&str, &str)],
@@ -1798,12 +1799,12 @@ mod tests {
         }
     }
 
-    fn suite() -> (tempfile::TempDir, EinmoSuite) {
+    fn suite() -> (tempfile::TempDir, EinmoTestRunner) {
         let tmp = tempfile::tempdir().unwrap();
         let config = TestConfig::new(tmp.path(), ValidationLevel::Output);
         config.ensure_stage_dirs().unwrap();
         std::fs::create_dir_all(config.input_path()).unwrap();
-        (tmp, EinmoSuite::new(config))
+        (tmp, EinmoTestRunner::new(config))
     }
 
     #[test]
@@ -1871,7 +1872,7 @@ mod tests {
         )
         .unwrap();
         let second_config = TestConfig::new(tmp.path(), ValidationLevel::Output);
-        let second_suite = EinmoSuite::new(second_config);
+        let second_suite = EinmoTestRunner::new(second_config);
         let second = second_suite.evaluate(Path::new("a.foo"), &Echo).unwrap();
         assert!(second.written_and_verified);
         assert!(!second.drifted, "identical content is not drift");
@@ -2033,7 +2034,7 @@ mod tests {
             },
         ]);
         config.ensure_stage_dirs().unwrap();
-        let suite = EinmoSuite::new(config);
+        let suite = EinmoTestRunner::new(config);
         suite.evaluate_inline("p.foo", "hello", &Echo).unwrap();
         let out = suite.config().stage_dir(Stage::Output).join("p.foo.einmo");
         let file = EinmoFile::from_file(&out).unwrap();
@@ -2056,7 +2057,7 @@ mod tests {
                 )
                 .unwrap();
             }
-            let suite = EinmoSuite::new(config);
+            let suite = EinmoTestRunner::new(config);
             let results = suite.evaluate_all(&Echo).unwrap();
             assert_eq!(results.files.len(), 6);
             assert!(results.files.iter().all(|f| f.written_and_verified));
@@ -2139,7 +2140,7 @@ mod tests {
         let big_dep: String = (0..300).map(|i| format!("DIFFERENT {i}\n")).collect();
         std::fs::write(config.input_path().join("big.foo"), &big_ref).unwrap();
         std::fs::write(config.input_path().join("big++x.foo"), &big_dep).unwrap();
-        let suite = EinmoSuite::new(config);
+        let suite = EinmoTestRunner::new(config);
         let results = suite.evaluate_all(&Echo).unwrap();
         let dep = results
             .files
@@ -2216,7 +2217,7 @@ mod tests {
         std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
         std::fs::write(config.input_path().join(".a.foo.swp"), "vim").unwrap();
 
-        let results = EinmoSuite::new(config).evaluate_all(&Echo).unwrap();
+        let results = EinmoTestRunner::new(config).evaluate_all(&Echo).unwrap();
 
         assert_eq!(results.files.len(), 1, "the swap file is not a test");
         assert_eq!(
@@ -2337,7 +2338,7 @@ mod tests {
             .with_validation_level(ValidationLevel::Output);
         std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
 
-        let results = EinmoSuite::new(config).evaluate_all(&Echo).unwrap();
+        let results = EinmoTestRunner::new(config).evaluate_all(&Echo).unwrap();
 
         assert!(
             results.integrity.is_clean(),
@@ -2358,7 +2359,7 @@ mod tests {
             .with_validation_level(ValidationLevel::Checked);
         std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
 
-        let results = EinmoSuite::new(config).evaluate_all(&Echo).unwrap();
+        let results = EinmoTestRunner::new(config).evaluate_all(&Echo).unwrap();
 
         assert_eq!(
             results.integrity.problems,
@@ -2422,7 +2423,7 @@ mod tests {
         ensure_parent_dir(&orphan).unwrap();
         std::fs::write(&orphan, "not even a real envelope").unwrap();
 
-        let results = EinmoSuite::new(config).evaluate_all(&Echo).unwrap();
+        let results = EinmoTestRunner::new(config).evaluate_all(&Echo).unwrap();
 
         assert!(
             results
@@ -2449,7 +2450,7 @@ mod tests {
         ensure_parent_dir(&retired).unwrap();
         std::fs::write(&retired, "retired").unwrap();
 
-        let results = EinmoSuite::new(config).evaluate_all(&Echo).unwrap();
+        let results = EinmoTestRunner::new(config).evaluate_all(&Echo).unwrap();
 
         assert!(
             results.integrity.is_clean(),
@@ -2465,7 +2466,7 @@ mod tests {
         let config = suite0.config().clone();
         std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
 
-        let results = EinmoSuite::new(config).evaluate_all(&Echo).unwrap();
+        let results = EinmoTestRunner::new(config).evaluate_all(&Echo).unwrap();
 
         assert!(results.integrity.is_clean());
         assert!(results.integrity.report().is_empty());
@@ -2507,7 +2508,7 @@ mod tests {
             .clone()
             .require_correspondence(Stage::Output, Stage::Checked);
         std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
-        let suite = EinmoSuite::new(config);
+        let suite = EinmoTestRunner::new(config);
         let results = suite.evaluate_all(&Echo).unwrap();
         // checked/ is empty → only_in_a → not clean.
         assert!(
@@ -2546,7 +2547,7 @@ mod tests {
         if std::env::var("EINMO_CRASH_TEST_CHILD_ABORT").is_ok() {
             let dir = std::env::var("EINMO_CRASH_TEST_DIR").unwrap();
             let config = TestConfig::new(dir.as_str(), ValidationLevel::Output);
-            let suite = EinmoSuite::new(config);
+            let suite = EinmoTestRunner::new(config);
             let input_dir = std::path::Path::new(&dir).join("input");
             std::fs::create_dir_all(&input_dir).unwrap();
             std::fs::write(input_dir.join("crash.foo"), "trigger").unwrap();
@@ -2612,7 +2613,7 @@ mod tests {
         if std::env::var("EINMO_CRASH_TEST_CHILD_STACK").is_ok() {
             let dir = std::env::var("EINMO_CRASH_TEST_DIR").unwrap();
             let config = TestConfig::new(dir.as_str(), ValidationLevel::Output);
-            let suite = EinmoSuite::new(config);
+            let suite = EinmoTestRunner::new(config);
             let input_dir = std::path::Path::new(&dir).join("input");
             std::fs::create_dir_all(&input_dir).unwrap();
             std::fs::write(input_dir.join("overflow.foo"), "trigger").unwrap();
@@ -2664,7 +2665,7 @@ mod tests {
         }
         let tmp = tempfile::tempdir().unwrap();
         let config = TestConfig::new(tmp.path(), ValidationLevel::Output);
-        let suite = EinmoSuite::new(config);
+        let suite = EinmoTestRunner::new(config);
         let input_dir = tmp.path().join("input");
         std::fs::create_dir_all(&input_dir).unwrap();
         std::fs::write(input_dir.join("test.foo"), "hello").unwrap();
@@ -2700,7 +2701,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let config = TestConfig::new(tmp.path(), ValidationLevel::Output)
             .with_duration_limit(std::time::Duration::from_millis(10));
-        let suite = EinmoSuite::new(config);
+        let suite = EinmoTestRunner::new(config);
         let input_dir = tmp.path().join("input");
         std::fs::create_dir_all(&input_dir).unwrap();
         std::fs::write(input_dir.join("slow.foo"), "trigger").unwrap();
@@ -2730,7 +2731,7 @@ mod tests {
         let config = TestConfig::new(tmp.path(), ValidationLevel::Output)
             .with_parallel(Some(1))
             .with_suite_duration_limit(std::time::Duration::from_millis(80));
-        let suite = EinmoSuite::new(config);
+        let suite = EinmoTestRunner::new(config);
         let input_dir = tmp.path().join("input");
         std::fs::create_dir_all(&input_dir).unwrap();
         for i in 0..5 {
@@ -2756,7 +2757,7 @@ mod tests {
     /// process-global `EINMO_*` environment variables.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    fn plant_crumb(suite: &EinmoSuite, rel: &str, source: &str) -> PathBuf {
+    fn plant_crumb(suite: &EinmoTestRunner, rel: &str, source: &str) -> PathBuf {
         let out_path = suite
             .config()
             .stage_dir(Stage::Output)
@@ -2803,7 +2804,7 @@ mod tests {
             .with_ignore_catastrophe_crumbs(vec![PathBuf::from("a.foo.einmo")]);
         config.ensure_stage_dirs().unwrap();
         std::fs::create_dir_all(config.input_path()).unwrap();
-        let suite = EinmoSuite::new(config);
+        let suite = EinmoTestRunner::new(config);
         std::fs::write(suite.config().input_path().join("a.foo"), "{5;}").unwrap();
         plant_crumb(&suite, "a.foo", "{5;}");
         let results = suite.evaluate_all(&Echo).unwrap();
@@ -2831,7 +2832,7 @@ mod tests {
             TestConfig::new(tmp.path(), ValidationLevel::Output).with_rerun_catastrophes(true);
         config.ensure_stage_dirs().unwrap();
         std::fs::create_dir_all(config.input_path()).unwrap();
-        let suite = EinmoSuite::new(config);
+        let suite = EinmoTestRunner::new(config);
         std::fs::write(suite.config().input_path().join("a.foo"), "{5;}").unwrap();
         let out_path = plant_crumb(&suite, "a.foo", "{5;}");
         let results = suite.evaluate_all(&Echo).unwrap();

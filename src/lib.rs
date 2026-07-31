@@ -45,7 +45,7 @@ pub use config::{
 };
 pub use corpus_signer::{CorpusSigner, SectionDigest, SectionManifest, SectionSig};
 pub use einmo_suite::{
-    EinmoSuite, Evaluator, FailurePolicy, FileResult, Problem, SuiteIntegrity, TestResults,
+    EinmoTestRunner, Evaluator, FailurePolicy, FileResult, Problem, SuiteIntegrity, TestResults,
     ValidationLevel, check_suite_integrity, count_flagged,
 };
 pub use error::EinmoError;
