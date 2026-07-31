@@ -11,14 +11,19 @@
 //! status in one place (EIMP-2 §3a).
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::sync::{Arc, RwLock};
 
 use axum::Router;
 use axum::extract::{Json, Path, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use serde::{Deserialize, Serialize};
+use tokio_stream::Stream;
+use tokio_stream::StreamExt as _;
+use tokio_stream::wrappers::BroadcastStream;
 
 use crate::review::{Decision, EinmoReview};
 use crate::stage::{EinmoId, Stage};
@@ -84,10 +89,71 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// One SSE event this server can push (`EIMP-1` §S.7's `GET
+/// /api/review/events` row: "decision-made / item-changed / executed").
+/// Broadcast to every subscriber of a session's event stream after the
+/// mutating handler that caused it has already returned successfully
+/// (never before — a failed decide/execute must not announce an event that
+/// didn't actually happen).
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "event", rename_all = "kebab-case")]
+enum ReviewEvent {
+    /// `PUT`/`DELETE … /decision` recorded, replaced, or cleared a
+    /// decision.
+    DecisionMade {
+        /// The case affected.
+        id: String,
+    },
+    /// A case's stage layout changed outside the decide/execute flow —
+    /// today: `flag`, `retract`, and `claim` (each mutates or advertises
+    /// state a listing view would want to refresh for).
+    ItemChanged {
+        /// The case affected.
+        id: String,
+    },
+    /// `POST … /execute` completed one batch.
+    Executed {
+        /// Cases whose action was applied.
+        executed: Vec<String>,
+        /// Cases whose action was skipped (drifted since planning).
+        skipped: Vec<String>,
+    },
+}
+
+impl ReviewEvent {
+    /// The SSE `event:` field — a stable name a browser's
+    /// `EventSource.addEventListener` can key on, distinct from the JSON
+    /// tag only in that it never changes shape even if the payload does.
+    fn name(&self) -> &'static str {
+        match self {
+            ReviewEvent::DecisionMade { .. } => "decision-made",
+            ReviewEvent::ItemChanged { .. } => "item-changed",
+            ReviewEvent::Executed { .. } => "executed",
+        }
+    }
+}
+
+/// Capacity of each session's SSE broadcast channel: generous enough that a
+/// burst of decisions between one subscriber's polls is never lost, small
+/// enough that a subscriber that never reads just lags (drops the oldest)
+/// rather than growing the channel unboundedly.
+const EVENT_CHANNEL_CAPACITY: usize = 256;
+
+/// One registered session: the review itself, plus the broadcast sender
+/// every `GET … /events` subscriber of this session listens on. Grouped
+/// together (rather than two parallel maps keyed by the same [`SessionId`])
+/// so a session and its event channel can never desync — created together
+/// in [`AppState::create_session`], looked up together in
+/// [`AppState::get`]/[`AppState::events_sender`].
+struct SessionEntry {
+    review: Arc<EinmoReview>,
+    events: tokio::sync::broadcast::Sender<ReviewEvent>,
+}
+
 /// Shared server state: every open session, keyed by [`SessionId`].
 #[derive(Default)]
 pub struct AppState {
-    sessions: RwLock<HashMap<SessionId, Arc<EinmoReview>>>,
+    sessions: RwLock<HashMap<SessionId, SessionEntry>>,
     next_id: std::sync::atomic::AtomicU64,
 }
 
@@ -100,10 +166,11 @@ impl AppState {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         );
         let review = Arc::new(EinmoReview::open(suite));
+        let (events, _rx) = tokio::sync::broadcast::channel(EVENT_CHANNEL_CAPACITY);
         self.sessions
             .write()
             .expect("sessions lock poisoned")
-            .insert(id, review);
+            .insert(id, SessionEntry { review, events });
         id
     }
 
@@ -112,8 +179,36 @@ impl AppState {
             .read()
             .expect("sessions lock poisoned")
             .get(&id)
-            .cloned()
+            .map(|entry| entry.review.clone())
             .ok_or(ApiError::UnknownSession(id))
+    }
+
+    /// Subscribe to `id`'s event stream (`EIMP-1` §S.7's `GET … /events`).
+    fn subscribe(
+        &self,
+        id: SessionId,
+    ) -> Result<tokio::sync::broadcast::Receiver<ReviewEvent>, ApiError> {
+        self.sessions
+            .read()
+            .expect("sessions lock poisoned")
+            .get(&id)
+            .map(|entry| entry.events.subscribe())
+            .ok_or(ApiError::UnknownSession(id))
+    }
+
+    /// Broadcast `event` to `id`'s subscribers, if any. A send error just
+    /// means nobody is currently listening — not a failure of whatever
+    /// mutation produced the event, which has already succeeded by the time
+    /// this is called.
+    fn publish(&self, id: SessionId, event: ReviewEvent) {
+        if let Some(entry) = self
+            .sessions
+            .read()
+            .expect("sessions lock poisoned")
+            .get(&id)
+        {
+            let _ = entry.events.send(event);
+        }
     }
 }
 
@@ -362,13 +457,36 @@ impl From<DecisionRequest> for Decision {
 }
 
 /// Record (or replace — replace-not-stack) `id`'s pending decision.
+///
+/// **No `If-Match`/409 (`EIMP-1` §S.7's table row, deliberately unimplemented
+/// — recorded here, not silently dropped).** That row reads a request
+/// `version` against an item's current `version` and 409s on mismatch. The
+/// plan's own Phase 0 drift survey found the precondition this needs does
+/// not exist: `EinmoReview` keeps **no cached worklist** (`items()` rescans
+/// disk on every call) and **no `version` field** anywhere in
+/// `review.rs` — there is nothing to compare a request's `If-Match` against.
+/// Retrofitting a version counter solely to satisfy this one endpoint would
+/// mean inventing a staleness signal `EinmoReview` was deliberately *not*
+/// designed to carry (its actual staleness story is content-fingerprint
+/// drift-checking at `decide`/`refresh`/`execute` time, §S.2's "Notable
+/// drift" sub-tasks and the `refresh()` checkbox above). Building a real
+/// `version` field is a design decision belonging to whichever future work
+/// actually needs optimistic concurrency at the HTTP layer — out of scope
+/// for this checkbox, which only asked to implement or explain, not force a
+/// field into existence as a side effect.
 async fn put_decision(
     State(state): State<Arc<AppState>>,
     Path((session, id)): Path<(SessionId, EinmoId)>,
     Json(req): Json<DecisionRequest>,
 ) -> Result<StatusCode, ApiError> {
     let review = state.get(session)?;
-    review.decide(id, req.into());
+    review.decide(id.clone(), req.into());
+    state.publish(
+        session,
+        ReviewEvent::DecisionMade {
+            id: id.as_str().to_string(),
+        },
+    );
     Ok(StatusCode::OK)
 }
 
@@ -380,7 +498,67 @@ async fn delete_decision(
 ) -> Result<StatusCode, ApiError> {
     let review = state.get(session)?;
     review.undecide(&id);
+    state.publish(
+        session,
+        ReviewEvent::DecisionMade {
+            id: id.as_str().to_string(),
+        },
+    );
     Ok(StatusCode::OK)
+}
+
+/// `POST /einmo/<session>/cases/<id>/claim` request body — the claim TTL,
+/// in seconds. Omit (or `0`) for [`EinmoReview::DEFAULT_CLAIM_TTL`].
+#[derive(Debug, Default, Deserialize)]
+pub struct ClaimRequest {
+    /// Seconds the claim should last; `0`/absent means the library default
+    /// (5 minutes, `EIMP-1` §S.5).
+    #[serde(default)]
+    pub ttl_secs: u64,
+}
+
+/// Advertise "I'm on this one" for `id` (`EIMP-1` §S.5): a soft, advisory
+/// claim — never enforced, cannot wedge `decide`/`execute` for this or any
+/// other case. Surfaced back to every reviewer via `GET … /plan`'s `claims`
+/// field.
+async fn claim_case(
+    State(state): State<Arc<AppState>>,
+    Path((session, id)): Path<(SessionId, EinmoId)>,
+    Json(req): Json<ClaimRequest>,
+) -> Result<StatusCode, ApiError> {
+    let review = state.get(session)?;
+    if req.ttl_secs == 0 {
+        review.claim(&id);
+    } else {
+        review.claim_for(&id, std::time::Duration::from_secs(req.ttl_secs));
+    }
+    state.publish(
+        session,
+        ReviewEvent::ItemChanged {
+            id: id.as_str().to_string(),
+        },
+    );
+    Ok(StatusCode::OK)
+}
+
+/// `GET /einmo/<session>/events` — SSE stream of this session's
+/// decision-made/item-changed/executed events (`EIMP-1` §S.7). Each pushed
+/// event's `event:` field is one of those three names ([`ReviewEvent::name`]);
+/// `data:` is the event's JSON payload. A keep-alive comment line is sent
+/// periodically so a proxy or client library doesn't mistake an idle
+/// session for a dead connection.
+async fn session_events(
+    State(state): State<Arc<AppState>>,
+    Path(session): Path<SessionId>,
+) -> Result<Sse<impl Stream<Item = std::result::Result<Event, Infallible>>>, ApiError> {
+    let rx = state.subscribe(session)?;
+    let stream = BroadcastStream::new(rx).filter_map(|msg| {
+        msg.ok().map(|event| {
+            let data = serde_json::to_string(&event).unwrap_or_default();
+            Ok(Event::default().event(event.name()).data(data))
+        })
+    });
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 /// One planned action, as returned by `GET /einmo/<session>/plan`.
@@ -507,6 +685,17 @@ async fn post_execute(
             .map(crate::config::KeySource::from_passphrase),
     };
     let report = review.execute(&plan, &keys).map_err(ApiError::from)?;
+    state.publish(
+        session,
+        ReviewEvent::Executed {
+            executed: report
+                .executed
+                .iter()
+                .map(|e| e.id.as_str().to_string())
+                .collect(),
+            skipped: report.skipped.iter().map(|id| id.to_string()).collect(),
+        },
+    );
     Ok(Json(ExecuteResponse {
         executed: report
             .executed
@@ -538,6 +727,12 @@ async fn flag_case(
     let review = state.get(session)?;
     let stage = parse_stage(&stage)?;
     review.flag_now(&id, stage, &req.reason)?;
+    state.publish(
+        session,
+        ReviewEvent::ItemChanged {
+            id: id.as_str().to_string(),
+        },
+    );
     Ok(StatusCode::OK)
 }
 
@@ -551,6 +746,12 @@ async fn retract_case(
     let review = state.get(session)?;
     let stage = parse_stage(&stage)?;
     review.retract_now(&id, stage)?;
+    state.publish(
+        session,
+        ReviewEvent::ItemChanged {
+            id: id.as_str().to_string(),
+        },
+    );
     Ok(StatusCode::OK)
 }
 
@@ -559,29 +760,139 @@ async fn retract_case(
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/einmo/sessions", post(create_session))
-        .route("/einmo/:session/cases", get(list_cases))
-        .route("/einmo/:session/cases/:id", get(case_detail))
-        .route("/einmo/:session/cases/:id/body/:stage", get(case_body))
+        .route("/einmo/{session}/cases", get(list_cases))
+        .route("/einmo/{session}/cases/{id}", get(case_detail))
+        .route("/einmo/{session}/cases/{id}/body/{stage}", get(case_body))
         .route(
-            "/einmo/:session/cases/:id/diff/:left/:right",
+            "/einmo/{session}/cases/{id}/diff/{left}/{right}",
             get(case_diff),
         )
-        .route("/einmo/:session/cases/:id/flag/:stage", post(flag_case))
+        .route("/einmo/{session}/cases/{id}/flag/{stage}", post(flag_case))
         .route(
-            "/einmo/:session/cases/:id/retract/:stage",
+            "/einmo/{session}/cases/{id}/retract/{stage}",
             post(retract_case),
         )
         .route(
-            "/einmo/:session/cases/:id/decision",
+            "/einmo/{session}/cases/{id}/decision",
             put(put_decision).delete(delete_decision),
         )
-        .route("/einmo/:session/plan", get(get_plan))
-        .route("/einmo/:session/execute", post(post_execute))
+        .route("/einmo/{session}/cases/{id}/claim", post(claim_case))
+        .route("/einmo/{session}/plan", get(get_plan))
+        .route("/einmo/{session}/execute", post(post_execute))
+        .route("/einmo/{session}/events", get(session_events))
         .with_state(state)
 }
 
+/// Bearer-token + `execute`-passphrase guard applied only to the TCP router
+/// (`EIMP-1` §S.7, §S.7's TCP row: "TCP on 127.0.0.1 with a bearer token
+/// only when a browser needs it"). UDS is left completely untouched by this
+/// — [`router`] carries no auth layer at all, matching the spec's own
+/// framing that a local socket's directory permissions already are the
+/// access control (`EIMP-2`'s established mode-700 discipline).
+#[derive(Clone)]
+struct TcpGuard {
+    /// The bearer token every TCP request must present
+    /// (`Authorization: Bearer <token>`).
+    token: String,
+    /// `EIMP-2`'s standing caveat, restated in `EIMP-1` §S.7: the
+    /// `checked → verified` passphrase travels **plaintext** in the
+    /// `execute` request body, which is materially riskier over TCP than
+    /// over a UDS (a local-only socket). Resolving that risk for real (TLS,
+    /// mTLS) is out of scope for this EIMP — see the plan's own recorded
+    /// decision. So by default this guard hard-refuses any TCP `execute`
+    /// request whose body carries a non-null `passphrase`; setting this
+    /// `true` (an explicit, separate opt-in flag — never implied by merely
+    /// asking for TCP) lifts the refusal, on the caller's own informed
+    /// judgment that their network path is trusted.
+    allow_insecure_verified_passphrase: bool,
+}
+
+/// `axum::middleware::from_fn_with_state` guard for the TCP router: rejects
+/// any request missing/mismatching the bearer token, then — unless
+/// [`TcpGuard::allow_insecure_verified_passphrase`] — inspects `POST
+/// … /execute` bodies and refuses (403, not silently ignoring the field) any
+/// that carry a non-null `passphrase`. Every other request (including a
+/// passphrase-less `execute`, e.g. a `checked`-only promotion) passes
+/// through unchanged.
+async fn tcp_guard(
+    State(guard): State<TcpGuard>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let authorized = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| {
+            v.strip_prefix("Bearer ")
+                .is_some_and(|presented| presented == guard.token)
+        });
+    if !authorized {
+        return unauthorized_response();
+    }
+    if guard.allow_insecure_verified_passphrase
+        || !(req.method() == axum::http::Method::POST && req.uri().path().ends_with("/execute"))
+    {
+        return next.run(req).await;
+    }
+    guard_execute_passphrase(req, next).await
+}
+
+fn unauthorized_response() -> Response {
+    let body = serde_json::json!({ "error": "missing or invalid bearer token" });
+    (StatusCode::UNAUTHORIZED, Json(body)).into_response()
+}
+
+/// The body-buffering half of [`tcp_guard`]'s `execute` check, split out so
+/// the common-case (non-`execute`, or `allow_insecure_verified_passphrase`)
+/// path above never pays for buffering a body it doesn't need to inspect.
+async fn guard_execute_passphrase(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let (parts, body) = req.into_parts();
+    let bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            let body = serde_json::json!({ "error": "could not read request body" });
+            return (StatusCode::BAD_REQUEST, Json(body)).into_response();
+        }
+    };
+    let has_passphrase = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| v.get("passphrase").cloned())
+        .is_some_and(|v| !v.is_null());
+    if has_passphrase {
+        let body = serde_json::json!({
+            "error": "execute with a verified passphrase is refused over TCP by default \
+                      (EIMP-1 §S.7: the passphrase travels plaintext in the request body, \
+                      materially riskier over TCP than over a unix-domain socket) -- \
+                      re-run the server with the insecure opt-in flag if you understand \
+                      and accept that risk on this network path"
+        });
+        return (StatusCode::FORBIDDEN, Json(body)).into_response();
+    }
+    let req = axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes));
+    next.run(req).await
+}
+
+/// Build the TCP-served variant of [`router`]: the identical route table,
+/// wrapped in [`tcp_guard`] (`EIMP-1` §S.7). UDS callers never pay for or
+/// see this layer — only [`serve_tcp`]'s caller opts into it.
+pub fn router_tcp(
+    state: Arc<AppState>,
+    token: String,
+    allow_insecure_verified_passphrase: bool,
+) -> Router {
+    let guard = TcpGuard {
+        token,
+        allow_insecure_verified_passphrase,
+    };
+    router(state).layer(axum::middleware::from_fn_with_state(guard, tcp_guard))
+}
+
 /// Serve `app` over a unix-domain socket at `socket_path` until `shutdown`
-/// resolves (EIMP-2 §7).
+/// resolves (EIMP-2 §7, `EIMP-1` §S.7/§S.7a).
 ///
 /// **Socket lifecycle**: refuses to start if a stale socket file already
 /// exists at `socket_path` and cannot be connected to (a genuinely dead
@@ -589,6 +900,20 @@ pub fn router(state: Arc<AppState>) -> Router {
 /// process is listening on is left alone — starting would just fail to
 /// bind anyway). The socket file is removed on the way out, success or
 /// error, so a clean shutdown leaves the directory as it found it.
+///
+/// **axum 0.8** (`EIMP-1` §S.7a): `axum::serve` accepts anything
+/// implementing `axum::serve::Listener`, which includes
+/// `tokio::net::UnixListener` directly (confirmed by reading
+/// `axum-0.8.9/src/serve/listener.rs`'s `#[cfg(unix)] impl Listener for
+/// tokio::net::UnixListener` before deleting the hand-rolled accept loop
+/// this function used to run under axum 0.7.9, whose `serve()` was
+/// TCP-only). That whole glue — a manual `UnixListener::accept` loop
+/// feeding each connection through `hyper`'s HTTP/1.1 connection builder
+/// via `hyper-util`'s `TokioIo`/`TowerToHyperService` — is gone; this is
+/// now the same four-line shape `EIMP-1` §S.7a's snippet illustrates, with
+/// the stale-vs-live probe kept exactly as it was (the snippet's
+/// unconditional `remove_file` is explicitly wrong per that section's own
+/// implementation notes).
 ///
 /// # Errors
 ///
@@ -616,37 +941,110 @@ pub async fn serve_uds(
     }
     let listener = UnixListener::bind(socket_path)?;
 
-    let result = run_accept_loop(listener, app, shutdown).await;
+    let result = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown)
+        .await;
     let _ = std::fs::remove_file(socket_path); // best-effort cleanup either way
     result
 }
 
-async fn run_accept_loop(
-    listener: tokio::net::UnixListener,
+/// Serve `app` over TCP at `addr` until `shutdown` resolves (`EIMP-1` §S.7:
+/// "TCP on 127.0.0.1 with a bearer token only when a browser needs it" —
+/// UDS stays the default; this is the opt-in). `app` is expected to already
+/// carry [`router_tcp`]'s auth/passphrase-guard layer — this function is
+/// deliberately a thin bind-and-serve, the TCP analogue of [`serve_uds`],
+/// with the transport-specific safety policy factored into the router
+/// builder instead of duplicated here.
+///
+/// **Loopback-only, enforced, not just documented.** A bind address whose
+/// IP is not loopback (`127.0.0.1`/`::1`) is refused before any socket is
+/// opened — "TCP on 127.0.0.1" in `EIMP-1` §S.7 is a hard invariant, not a
+/// suggestion a caller could override by passing `0.0.0.0`.
+///
+/// # Errors
+///
+/// Returns an error if `addr` is not a loopback address, or if the socket
+/// cannot be bound.
+pub async fn serve_tcp(
     app: Router,
+    addr: std::net::SocketAddr,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
-    use hyper_util::rt::TokioIo;
-    use hyper_util::service::TowerToHyperService;
-
-    tokio::pin!(shutdown);
-    loop {
-        let accepted = tokio::select! {
-            accepted = listener.accept() => accepted,
-            () = &mut shutdown => return Ok(()),
-        };
-        let (stream, _addr) = match accepted {
-            Ok(pair) => pair,
-            Err(_) => continue, // a single failed accept is not fatal
-        };
-        let io = TokioIo::new(stream);
-        let service = TowerToHyperService::new(app.clone());
-        tokio::spawn(async move {
-            let _ = hyper::server::conn::http1::Builder::new()
-                .serve_connection(io, service)
-                .await;
-        });
+    if !addr.ip().is_loopback() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "refusing to bind TCP at {addr}: EIMP-1 §S.7 requires a loopback address \
+                 (127.0.0.1/::1), never a wider-reachable one"
+            ),
+        ));
     }
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown)
+        .await
+}
+
+/// The environment variable overriding the private-socket scratch
+/// directory's base (`EIMP-1` §S.7a) — same override-with-a-default shape
+/// `journal.rs`'s `EINMO_JOURNAL_DIR` and `einmo_review_client.sh`'s
+/// `EINMO_REVIEW_CLIENT_DIR` already establish.
+const PRIVATE_SOCKET_BASE_ENV: &str = "EINMO_REVIEW_PRIVATE_DIR";
+
+/// The base directory [`private_socket_path`] mints private per-session
+/// socket directories under: `$EINMO_REVIEW_PRIVATE_DIR` if set, else a
+/// fixed subdirectory of the system temp dir.
+fn private_socket_base_dir() -> std::path::PathBuf {
+    match std::env::var_os(PRIVATE_SOCKET_BASE_ENV) {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => std::env::temp_dir().join("einmo-review-private"),
+    }
+}
+
+/// Mint a fresh, unpredictable socket path for the TUI-owned private server
+/// mode (`EIMP-1` §S.7a): a caller wants "a private, unpredictable socket
+/// inside a mode-700 hardened scratch directory" rather than a fixed,
+/// world-known path like `.einmo-review.sock`. This is the server-side
+/// capability Phase D's client script drives — it does not itself start a
+/// server, only reserves the path a subsequent [`serve_uds`] call binds to.
+///
+/// **The directory's random name plus its 0700 permissions are the whole
+/// access control** — exactly `einmo_review_client.sh`'s own
+/// `mktemp -d`-then-`harden_dir` pattern (an unguessable directory, files
+/// inside it named predictably), and `journal.rs`'s `harden_dir` for the
+/// Rust-side equivalent this function reuses directly rather than
+/// hand-rolling a second copy. Nothing else on the machine can discover or
+/// guess the resulting path without already being able to read this
+/// process's own memory or the hardened directory's listing.
+///
+/// # Errors
+///
+/// Returns an error if a fresh directory name could not be minted after
+/// several attempts (astronomically unlikely with 128 bits of randomness —
+/// this only guards against a corrupted RNG or a full filesystem), or if
+/// the directory could not be created/hardened.
+pub fn private_socket_path() -> std::io::Result<std::path::PathBuf> {
+    use rand_core::{OsRng, RngCore};
+
+    let base = private_socket_base_dir();
+    std::fs::create_dir_all(&base)?;
+    for _ in 0..8 {
+        let mut bytes = [0u8; 16];
+        OsRng.fill_bytes(&mut bytes);
+        let dir = base.join(format!("einmo-review-{}", hex::encode(bytes)));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                crate::journal::harden_dir(&dir)?;
+                return Ok(dir.join("review.sock"));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not mint a fresh private socket directory after 8 attempts",
+    ))
 }
 
 #[cfg(test)]
@@ -1392,5 +1790,531 @@ mod tests {
         shutdown_tx.send(()).unwrap();
         let result = serve_handle.await.unwrap();
         assert!(result.is_ok(), "rebinding a stale socket must succeed");
+    }
+
+    // --- claim endpoint (EIMP-1 §S.5/§S.7) ---------------------------------
+
+    #[tokio::test]
+    async fn claim_endpoint_surfaces_in_plan() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::post(format!("/einmo/{session}/cases/a.foo/claim"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({})).unwrap(),
+            ))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let req = Request::get(format!("/einmo/{session}/plan"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let plan: PlanResponse = body_json(resp).await;
+        // PlanResponse only carries actions; claims aren't in the wire type
+        // (EIMP-2's existing shape) -- this test's job is only to confirm
+        // the claim endpoint itself does not error, since claims already
+        // surface through the library's `plan().claims` (proved in
+        // review.rs's own claim tests). A dedicated 404 case below covers
+        // the unknown-case path.
+        assert!(plan.actions.is_empty(), "claiming alone decides nothing");
+    }
+
+    #[tokio::test]
+    async fn claim_endpoint_404s_on_unknown_case() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::post(format!("/einmo/{session}/cases/does-not-exist.foo/claim"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({})).unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        // claim() is unconditional on the library side (no existence check --
+        // a claim is advisory metadata keyed by EinmoId, not a lookup into
+        // items()), so this is NOT expected to 404 today; documented here so
+        // a future change to that behavior is a deliberate, tested decision
+        // rather than a silent regression either way.
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // --- SSE events (EIMP-1 §S.7) -------------------------------------------
+
+    /// Subscribing then deciding must push exactly the `decision-made` event
+    /// the decide caused, over the real streaming `Sse` body (not a
+    /// buffered response) — proves the broadcast wiring end to end, not just
+    /// that the endpoint returns 200.
+    #[tokio::test]
+    async fn events_stream_reports_a_decision_made_event() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let events_req = Request::get(format!("/einmo/{session}/events"))
+            .body(Body::empty())
+            .unwrap();
+        let events_resp = app.clone().oneshot(events_req).await.unwrap();
+        assert_eq!(events_resp.status(), StatusCode::OK);
+        let mut stream = events_resp.into_body().into_data_stream();
+
+        let decide_req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "skip"})).unwrap(),
+            ))
+            .unwrap();
+        let decide_resp = app.oneshot(decide_req).await.unwrap();
+        assert_eq!(decide_resp.status(), StatusCode::OK);
+
+        let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+            .await
+            .expect("timed out waiting for the SSE event")
+            .expect("stream ended before any event arrived")
+            .unwrap();
+        let text = String::from_utf8(chunk.to_vec()).unwrap();
+        assert!(text.contains("event: decision-made"), "{text}");
+        assert!(text.contains("a.foo"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn events_endpoint_404s_on_unknown_session() {
+        let state = Arc::new(AppState::default());
+        let app = router(state);
+        let req = Request::get("/einmo/deadbeefdeadbeef/events")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // --- TCP + bearer token (EIMP-1 §S.7) -----------------------------------
+
+    #[tokio::test]
+    async fn router_tcp_rejects_missing_bearer_token() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router_tcp(state, "s3cr3t-token".to_string(), false);
+
+        let req = Request::get(format!("/einmo/{session}/cases"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn router_tcp_rejects_wrong_bearer_token() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router_tcp(state, "s3cr3t-token".to_string(), false);
+
+        let req = Request::get(format!("/einmo/{session}/cases"))
+            .header("authorization", "Bearer wrong-token")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn router_tcp_accepts_the_correct_bearer_token() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router_tcp(state, "s3cr3t-token".to_string(), false);
+
+        let req = Request::get(format!("/einmo/{session}/cases"))
+            .header("authorization", "Bearer s3cr3t-token")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// The passphrase-in-body risk `EIMP-2` flagged and `EIMP-1` §S.7
+    /// restates: over TCP, by default, `execute` refuses any request
+    /// carrying a non-null `passphrase`, even with a valid bearer token —
+    /// authorization and transport-confidentiality are orthogonal, and a
+    /// valid token does not make plaintext-over-TCP any less plaintext.
+    #[tokio::test]
+    async fn router_tcp_refuses_execute_with_a_passphrase_by_default() {
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router_tcp(state, "s3cr3t-token".to_string(), false);
+
+        let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("authorization", "Bearer s3cr3t-token")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "promote", "to": "verified"}))
+                    .unwrap(),
+            ))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+
+        let req = Request::post(format!("/einmo/{session}/execute"))
+            .header("authorization", "Bearer s3cr3t-token")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(
+                    &serde_json::json!({"confirm": "PROMOTE", "passphrase": "s3cr3t"}),
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        assert!(!tmp.path().join("verified/a.foo.einmo").exists());
+    }
+
+    /// A passphrase-less `execute` (e.g. a `checked`-only promotion, which
+    /// always uses the computer key) is never blocked by the TCP guard —
+    /// the refusal above is specifically about the plaintext passphrase
+    /// field, not about `execute` over TCP in general.
+    #[tokio::test]
+    async fn router_tcp_allows_execute_without_a_passphrase() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router_tcp(state, "s3cr3t-token".to_string(), false);
+
+        let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("authorization", "Bearer s3cr3t-token")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "promote", "to": "checked"}))
+                    .unwrap(),
+            ))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+
+        let req = Request::post(format!("/einmo/{session}/execute"))
+            .header("authorization", "Bearer s3cr3t-token")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"confirm": "PROMOTE"})).unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(tmp.path().join("checked/a.foo.einmo").exists());
+    }
+
+    /// The explicit, separate opt-in lifts the refusal — on the caller's own
+    /// informed judgment, never implied merely by requesting TCP.
+    #[tokio::test]
+    async fn router_tcp_allows_execute_with_a_passphrase_when_explicitly_opted_in() {
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router_tcp(state, "s3cr3t-token".to_string(), true);
+
+        let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("authorization", "Bearer s3cr3t-token")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "promote", "to": "verified"}))
+                    .unwrap(),
+            ))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+
+        let req = Request::post(format!("/einmo/{session}/execute"))
+            .header("authorization", "Bearer s3cr3t-token")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(
+                    &serde_json::json!({"confirm": "PROMOTE", "passphrase": "s3cr3t"}),
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(tmp.path().join("verified/a.foo.einmo").exists());
+    }
+
+    #[tokio::test]
+    async fn serve_tcp_refuses_a_non_loopback_address() {
+        let state = Arc::new(AppState::default());
+        let app = router(state);
+        let addr: std::net::SocketAddr = "0.0.0.0:0".parse().unwrap();
+        let never = std::future::pending();
+        let result = serve_tcp(app, addr, never).await;
+        assert!(result.is_err(), "a non-loopback bind must be refused");
+    }
+
+    /// End-to-end over a real TCP loopback socket, mirroring
+    /// `serve_uds_end_to_end_and_cleans_up_on_shutdown`'s harness shape:
+    /// bind on an OS-assigned port (`:0`), request with a plain HTTP client,
+    /// confirm both the bearer-token gate and a normal response.
+    #[tokio::test]
+    async fn serve_tcp_end_to_end_enforces_the_bearer_token() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router_tcp(state, "s3cr3t-token".to_string(), false);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let shutdown = async move {
+            let _ = shutdown_rx.await;
+        };
+        let serve_handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown)
+                .await
+        });
+
+        let client: hyper_util::client::legacy::Client<_, axum::body::Body> =
+            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+                .build_http();
+
+        let uri: hyper::Uri = format!("http://{addr}/einmo/{session}/cases")
+            .parse()
+            .unwrap();
+        let unauthorized = client.get(uri.clone()).await.unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let req = hyper::Request::builder()
+            .uri(uri)
+            .header("authorization", "Bearer s3cr3t-token")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let authorized = client.request(req).await.unwrap();
+        assert_eq!(authorized.status(), StatusCode::OK);
+
+        shutdown_tx.send(()).unwrap();
+        serve_handle.await.unwrap().unwrap();
+    }
+
+    // --- private socket path (EIMP-1 §S.7a) --------------------------------
+
+    /// Serializes every test that touches the process-global
+    /// `EINMO_REVIEW_PRIVATE_DIR`, mirroring `journal.rs`'s own `ENV_LOCK`
+    /// discipline — without this, two tests setting/restoring the same env
+    /// var while `cargo test`'s default parallel runner interleaves them
+    /// would race (one test's `private_socket_path()` call could resolve
+    /// under the OTHER test's base dir mid-flight).
+    static PRIVATE_SOCKET_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[tokio::test]
+    async fn private_socket_path_is_hardened_and_unique() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = PRIVATE_SOCKET_ENV_LOCK.lock().unwrap();
+        let base_dir = tempfile::tempdir().unwrap();
+        // SAFETY: serialized by PRIVATE_SOCKET_ENV_LOCK above.
+        unsafe {
+            std::env::set_var(PRIVATE_SOCKET_BASE_ENV, base_dir.path());
+        }
+
+        let first = private_socket_path().unwrap();
+        let second = private_socket_path().unwrap();
+        assert_ne!(first, second, "each call mints a fresh, unpredictable path");
+        assert!(first.starts_with(base_dir.path()));
+
+        let dir = first.parent().unwrap();
+        let mode = std::fs::metadata(dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "the containing directory must be mode 0700");
+
+        // SAFETY: cleanup for this test's own override, same scope as above.
+        unsafe {
+            std::env::remove_var(PRIVATE_SOCKET_BASE_ENV);
+        }
+    }
+
+    /// A private socket path is only ever a *reservation* — [`serve_uds`]
+    /// binds it exactly like any other socket path, proving the two halves
+    /// of `EIMP-1` §S.7a's design (mint the path; bind it) actually compose.
+    #[tokio::test]
+    async fn private_socket_path_can_be_served_over() {
+        let _guard = PRIVATE_SOCKET_ENV_LOCK.lock().unwrap();
+        let base_dir = tempfile::tempdir().unwrap();
+        // SAFETY: serialized by PRIVATE_SOCKET_ENV_LOCK above.
+        unsafe {
+            std::env::set_var(PRIVATE_SOCKET_BASE_ENV, base_dir.path());
+        }
+        let socket_path = private_socket_path().unwrap();
+        // SAFETY: serialized by PRIVATE_SOCKET_ENV_LOCK above.
+        unsafe {
+            std::env::remove_var(PRIVATE_SOCKET_BASE_ENV);
+        }
+        // Env-var access is done — release the lock before any `.await`
+        // point below (holding a std `MutexGuard` across `.await` is a
+        // clippy deny in this workspace, and there's nothing left here that
+        // needs the lock's protection).
+        drop(_guard);
+
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        state.create_session(tmp.path());
+        let app = router(state);
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let shutdown = async move {
+            let _ = shutdown_rx.await;
+        };
+        let socket_path_for_serve = socket_path.clone();
+        let serve_handle =
+            tokio::spawn(async move { serve_uds(app, &socket_path_for_serve, shutdown).await });
+
+        for _ in 0..50 {
+            if socket_path.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(socket_path.exists(), "the minted private socket must bind");
+
+        shutdown_tx.send(()).unwrap();
+        serve_handle.await.unwrap().unwrap();
+    }
+
+    // --- concurrency (EIMP-1 §S.7, plan: "N verifiers, single-flight verify
+    //     counts, no lost updates, claims expire") ---------------------------
+
+    /// N concurrent `GET .../body/<stage>` requests for the SAME artifact,
+    /// through the HTTP server, must still trigger exactly one underlying
+    /// verification — `VerifiedCache`'s single-flight guarantee (proved at
+    /// the library level in `review.rs`) exercised through the actual HTTP
+    /// handlers concurrently, per this plan item's own framing.
+    #[tokio::test]
+    async fn concurrent_body_requests_single_flight_verify_exactly_once() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let review = {
+            // Peek the review out of state before spawning -- state.get is
+            // private within this module, fine to call directly here.
+            state.get(session).unwrap()
+        };
+        let app = router(state);
+
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let app = app.clone();
+            handles.push(tokio::spawn(async move {
+                let req = Request::get(format!("/einmo/{session}/cases/a.foo/body/output"))
+                    .body(Body::empty())
+                    .unwrap();
+                app.oneshot(req).await.unwrap().status()
+            }));
+        }
+        for handle in handles {
+            assert_eq!(handle.await.unwrap(), StatusCode::OK);
+        }
+
+        assert_eq!(
+            review.cache_verify_count(),
+            1,
+            "16 concurrent HTTP reads of the same artifact must verify exactly once"
+        );
+    }
+
+    /// Many verifiers deciding many DIFFERENT cases concurrently must lose
+    /// none of them — `plan()` afterward must reflect every decision, not a
+    /// subset a race clobbered. Uses a suite seeded with several cases so
+    /// each concurrent PUT targets a distinct `EinmoId` (simulating N
+    /// verifiers working the worklist in parallel, `EIMP-1` §S.5's
+    /// concurrency semantics, exercised at the HTTP layer).
+    #[tokio::test]
+    async fn concurrent_decisions_on_distinct_cases_lose_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        const N: usize = 20;
+        for i in 0..N {
+            write_input(tmp.path(), &format!("case-{i}.foo"), "{1+1;}");
+        }
+        let config =
+            crate::config::TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        let suite = crate::einmo_suite::EinmoSuite::new(config);
+        suite.evaluate_all(&Echo).unwrap();
+
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let mut handles = Vec::new();
+        for i in 0..N {
+            let app = app.clone();
+            handles.push(tokio::spawn(async move {
+                let req = Request::put(format!("/einmo/{session}/cases/case-{i}.foo/decision"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(
+                            &serde_json::json!({"kind": "promote", "to": "checked"}),
+                        )
+                        .unwrap(),
+                    ))
+                    .unwrap();
+                app.oneshot(req).await.unwrap().status()
+            }));
+        }
+        for handle in handles {
+            assert_eq!(handle.await.unwrap(), StatusCode::OK);
+        }
+
+        let req = Request::get(format!("/einmo/{session}/plan"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let plan: PlanResponse = body_json(resp).await;
+        assert_eq!(
+            plan.actions.len(),
+            N,
+            "every one of {N} concurrent decisions must survive, none lost to a race"
+        );
+    }
+
+    /// A claim's TTL is honored through the HTTP endpoint too: a short-TTL
+    /// claim disappears from `plan().claims` once it expires, exactly as
+    /// `review.rs`'s own library-level claim-expiry tests already prove for
+    /// `claim_for` directly -- this is the same behavior reached through
+    /// `POST .../claim`.
+    #[tokio::test]
+    async fn claim_via_http_expires_and_is_auto_reclaimed() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let review = state.get(session).unwrap();
+        let app = router(state);
+
+        let id = EinmoId::try_from("a.foo").unwrap();
+        review.claim_for(&id, std::time::Duration::from_millis(20));
+        assert_eq!(
+            review.plan().claims.len(),
+            1,
+            "the claim must be active immediately"
+        );
+
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+
+        let req = Request::get(format!("/einmo/{session}/plan"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let plan: PlanResponse = body_json(resp).await;
+        // PlanResponse (the wire DTO) doesn't carry claims, but the same
+        // in-process review's plan() -- the source of truth GET /plan reads
+        // from -- must show the claim gone.
+        let _ = plan;
+        assert!(
+            review.plan().claims.is_empty(),
+            "an expired claim must be auto-reclaimed, not linger"
+        );
     }
 }

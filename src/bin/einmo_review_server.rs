@@ -28,6 +28,7 @@
 //! to fall back to, but a CLI naturally does.
 
 use std::ffi::OsString;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -76,9 +77,42 @@ enum Command {
 
 #[derive(Args, Debug)]
 struct ServeArgs {
-    /// Where to bind the unix-domain socket.
+    /// Where to bind the unix-domain socket. Overridden by `--private`,
+    /// which mints its own path instead.
     #[arg(long, default_value = ".einmo-review.sock")]
     socket: PathBuf,
+    /// Bind a fresh, unpredictable socket inside a mode-700 scratch
+    /// directory instead of `--socket` (`EIMP-1` §S.7a: the TUI-owned
+    /// private-server shape a driving script mints per session, rather than
+    /// the standalone server's fixed, world-known path). The resulting
+    /// socket path is printed as the FIRST line of stdout — the only thing
+    /// this mode ever writes to stdout — so a caller can capture it, e.g.
+    /// `SOCKET=$(einmo-review-server serve --private <suite>)`. Every other
+    /// message (suite/session/socket announcement, shutdown) goes to
+    /// stderr, same as the standalone mode.
+    #[arg(long)]
+    private: bool,
+    /// Additionally bind TCP on a loopback address (`EIMP-1` §S.7: "TCP on
+    /// 127.0.0.1 with a bearer token only when a browser needs it"). UDS
+    /// always binds regardless of this flag — TCP is a pure addition, never
+    /// a replacement. Requires `--token`.
+    #[arg(long, requires = "token")]
+    tcp: Option<SocketAddr>,
+    /// The bearer token TCP clients must present
+    /// (`Authorization: Bearer <token>`). Required when `--tcp` is given;
+    /// meaningless (and ignored) without it.
+    #[arg(long)]
+    token: Option<String>,
+    /// Lift the default refusal to execute a `checked → verified` promotion
+    /// (passphrase in the request body) over the TCP listener. `EIMP-2`'s
+    /// standing caveat, restated in `EIMP-1` §S.7: that passphrase travels
+    /// **plaintext** in the request body, materially riskier over TCP than
+    /// over a UDS (a local-only socket) — building an actual mitigation
+    /// (TLS, mTLS) is out of this EIMP's scope, so the default is a hard
+    /// refusal and this flag is the explicit, separate, informed opt-in
+    /// past it. Meaningless without `--tcp`.
+    #[arg(long)]
+    allow_insecure_tcp_verified_passphrase: bool,
     /// The suite work directory to open a review session over.
     suite: PathBuf,
 }
@@ -242,43 +276,119 @@ fn run_serve_blocking(args: ServeArgs) -> ExitCode {
     runtime.block_on(run_serve(args))
 }
 
-/// Bind `args.socket`, open one session over `args.suite` against itself
+/// Bind (`args.socket`, or a fresh private path when `args.private` —
+/// `EIMP-1` §S.7a), open one session over `args.suite` against itself
 /// (`POST /einmo/sessions`), write `<socket-path>.session`, and serve until
-/// `Ctrl-C`/`SIGTERM`. Both files are removed on exit. Unchanged from this
-/// binary's original plain-`main` behavior — only its home (a `Serve`
-/// subcommand rather than the whole binary) moved.
+/// `Ctrl-C`/`SIGTERM`. Optionally also binds TCP (`args.tcp`). All files and
+/// the suite lock are removed on exit.
+///
+/// **Suite lockfile (`EIMP-1` §S.5, plan Phase C).** Acquired first, before
+/// any socket is touched: a second server — of ANY kind, this standalone
+/// mode or a future TUI-owned private one — already reviewing `args.suite`
+/// makes this call refuse outright, so a losing race never binds a socket
+/// it would then have to unwind.
 async fn run_serve(args: ServeArgs) -> ExitCode {
+    let socket_path = if args.private {
+        match einmo::private_socket_path() {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("einmo-review-server: failed to mint a private socket path: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        args.socket.clone()
+    };
+
+    let suite_lock = match einmo::SuiteLock::acquire(&args.suite, &socket_path) {
+        Ok(lock) => lock,
+        Err(e) => {
+            eprintln!("einmo-review-server: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     let state = std::sync::Arc::new(einmo::AppState::default());
     let session = state.create_session(&args.suite);
-    let app = einmo::router(state);
+    let uds_app = einmo::router(state.clone());
 
-    let session_file = session_file_path(&args.socket);
+    let session_file = session_file_path(&socket_path);
     if let Err(e) = std::fs::write(&session_file, session.to_string()) {
         eprintln!(
             "einmo-review-server: failed to write session file {}: {e}",
             session_file.display()
         );
+        drop(suite_lock);
         return ExitCode::FAILURE;
     }
 
+    if args.private {
+        // Machine-consumable: the ONLY thing this mode writes to stdout, so
+        // a driving script can do `SOCKET=$(einmo-review-server serve
+        // --private <suite>)` (EIMP-1 §S.7a).
+        println!("{}", socket_path.display());
+    }
     eprintln!(
         "einmo-review-server: suite {} session {session} socket {}",
         args.suite.display(),
-        args.socket.display()
+        socket_path.display()
     );
 
-    let socket_for_cleanup = args.socket.clone();
-    let session_file_for_cleanup = session_file.clone();
-    let shutdown = async move {
-        let _ = tokio::signal::ctrl_c().await;
-        eprintln!("einmo-review-server: shutting down");
+    // One broadcast shutdown signal feeds both listeners (UDS always; TCP
+    // only if requested) so Ctrl-C/SIGTERM tears down whichever are
+    // running, not just the first one awaited.
+    let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
+
+    let tcp_handle = match (args.tcp, args.token.clone()) {
+        (Some(addr), Some(token)) => {
+            eprintln!(
+                "einmo-review-server: TCP {addr}{}",
+                if args.allow_insecure_tcp_verified_passphrase {
+                    " (bearer token required; INSECURE: verified passphrases allowed in the clear)"
+                } else {
+                    " (bearer token required; verified-promotion passphrases refused over this listener)"
+                }
+            );
+            let tcp_app =
+                einmo::router_tcp(state, token, args.allow_insecure_tcp_verified_passphrase);
+            let mut rx = shutdown_tx.subscribe();
+            let tcp_shutdown = async move {
+                let _ = rx.recv().await;
+            };
+            Some(tokio::spawn(async move {
+                einmo::serve_tcp(tcp_app, addr, tcp_shutdown).await
+            }))
+        }
+        _ => None,
     };
 
-    let result = einmo::serve_uds(app, &args.socket, shutdown).await;
-    let _ = std::fs::remove_file(&session_file_for_cleanup);
-    let _ = std::fs::remove_file(&socket_for_cleanup);
+    let ctrl_c_tx = shutdown_tx.clone();
+    let ctrl_c_task = tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        eprintln!("einmo-review-server: shutting down");
+        let _ = ctrl_c_tx.send(());
+    });
 
-    match result {
+    let mut uds_shutdown_rx = shutdown_tx.subscribe();
+    let uds_shutdown = async move {
+        let _ = uds_shutdown_rx.recv().await;
+    };
+    let uds_result = einmo::serve_uds(uds_app, &socket_path, uds_shutdown).await;
+
+    // The UDS listener returning (cleanly or with an error) means this
+    // process is done either way -- make sure the TCP listener (if any)
+    // and the ctrl_c watcher wind down too, rather than leaking either.
+    let _ = shutdown_tx.send(());
+    ctrl_c_task.abort();
+    if let Some(handle) = tcp_handle {
+        let _ = handle.await;
+    }
+
+    let _ = std::fs::remove_file(&session_file);
+    let _ = std::fs::remove_file(&socket_path);
+    drop(suite_lock);
+
+    match uds_result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("einmo-review-server: {e}");
@@ -794,6 +904,74 @@ mod tests {
             panic!("expected Serve");
         };
         assert_eq!(a.socket, PathBuf::from(".einmo-review.sock"));
+        assert!(!a.private);
+        assert_eq!(a.tcp, None);
+        assert_eq!(a.token, None);
+        assert!(!a.allow_insecure_tcp_verified_passphrase);
+    }
+
+    #[test]
+    fn cli_parses_serve_private_flag() {
+        let cli = Cli::try_parse_from(["einmo-review-server", "serve", "--private", "/tmp/suite"])
+            .unwrap();
+        let Command::Serve(a) = cli.command else {
+            panic!("expected Serve");
+        };
+        assert!(a.private);
+    }
+
+    #[test]
+    fn cli_parses_serve_tcp_and_token() {
+        let cli = Cli::try_parse_from([
+            "einmo-review-server",
+            "serve",
+            "--tcp",
+            "127.0.0.1:9000",
+            "--token",
+            "s3cr3t",
+            "/tmp/suite",
+        ])
+        .unwrap();
+        let Command::Serve(a) = cli.command else {
+            panic!("expected Serve");
+        };
+        assert_eq!(a.tcp, Some("127.0.0.1:9000".parse().unwrap()));
+        assert_eq!(a.token.as_deref(), Some("s3cr3t"));
+        assert!(!a.allow_insecure_tcp_verified_passphrase);
+    }
+
+    /// `--tcp` without `--token` is a clap-level parse error (`requires`) —
+    /// the server must never accept an unauthenticated TCP listener even by
+    /// omission.
+    #[test]
+    fn cli_serve_tcp_without_token_is_rejected() {
+        let result = Cli::try_parse_from([
+            "einmo-review-server",
+            "serve",
+            "--tcp",
+            "127.0.0.1:9000",
+            "/tmp/suite",
+        ]);
+        assert!(result.is_err(), "--tcp must require --token");
+    }
+
+    #[test]
+    fn cli_parses_serve_allow_insecure_tcp_verified_passphrase() {
+        let cli = Cli::try_parse_from([
+            "einmo-review-server",
+            "serve",
+            "--tcp",
+            "127.0.0.1:9000",
+            "--token",
+            "s3cr3t",
+            "--allow-insecure-tcp-verified-passphrase",
+            "/tmp/suite",
+        ])
+        .unwrap();
+        let Command::Serve(a) = cli.command else {
+            panic!("expected Serve");
+        };
+        assert!(a.allow_insecure_tcp_verified_passphrase);
     }
 
     #[test]
@@ -1045,6 +1223,49 @@ mod tests {
             work_dir: work_dir.to_path_buf(),
             session: Some(session.to_string()),
         }
+    }
+
+    fn serve_args(suite: &Path, socket: PathBuf) -> ServeArgs {
+        ServeArgs {
+            socket,
+            private: false,
+            tcp: None,
+            token: None,
+            allow_insecure_tcp_verified_passphrase: false,
+            suite: suite.to_path_buf(),
+        }
+    }
+
+    /// The suite lockfile (`EIMP-1` §S.5, plan Phase C's "Suite lockfile")
+    /// must refuse `run_serve` outright when another server already holds
+    /// the same suite — proven here by pre-acquiring the lock ourselves
+    /// (rather than actually running a second server and racing `Ctrl-C`,
+    /// which `run_serve`'s own shutdown path has no test-injectable hook
+    /// for). `std::process::ExitCode` has no public equality check on
+    /// stable Rust (the same limitation `cli.rs`'s `flags_fail_the_gate`
+    /// note already documents), so this asserts the refusal's actual
+    /// consequence — no socket ever bound — rather than the exit code
+    /// value itself.
+    #[tokio::test]
+    async fn run_serve_refuses_when_suite_lock_is_held() {
+        let tmp = seeded_suite();
+        let socket_dir = tempfile::tempdir().unwrap();
+        let held_socket = socket_dir.path().join("held.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&held_socket).unwrap();
+        let _keep_alive = listener; // must stay bound for the probe to see it as live
+        let _lock = einmo::SuiteLock::acquire(tmp.path(), &held_socket).unwrap();
+
+        let losing_socket = socket_dir.path().join("losing.sock");
+        let _ = run_serve(serve_args(tmp.path(), losing_socket.clone())).await;
+
+        assert!(
+            !losing_socket.exists(),
+            "a suite-lock refusal must never even attempt to bind a socket"
+        );
+        assert!(
+            !session_file_path(&losing_socket).exists(),
+            "a suite-lock refusal must never write a session file either"
+        );
     }
 
     #[test]

@@ -502,6 +502,17 @@ impl EinmoReview {
         self.journal.path()
     }
 
+    /// Test-only hook: how many times [`VerifiedCache`] actually ran
+    /// verification (not cache hits) — exposed `pub(crate)` so a
+    /// concurrency test in `review_server.rs` (a sibling module, `EIMP-1`
+    /// Phase C's "single-flight verify counts... through the HTTP server
+    /// specifically") can confirm N concurrent `GET .../body/<stage>`
+    /// requests for the same artifact still verify exactly once.
+    #[cfg(test)]
+    pub(crate) fn cache_verify_count(&self) -> usize {
+        self.cache.verify_count()
+    }
+
     /// The worklist: every case matching `self.opts`, its per-stage status,
     /// and the reviewer's current decision (if any).
     ///

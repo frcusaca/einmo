@@ -32,6 +32,7 @@ mod review;
 mod review_server;
 mod signature;
 mod stage;
+mod suite_lock;
 mod transitions;
 mod verify;
 
@@ -58,11 +59,12 @@ pub use review::{
     VerifiedBody,
 };
 pub use review_server::{
-    ApiError, AppState, DiffLineResponse, DiffResponse, SectionDiffResponse, SessionId, router,
-    serve_uds,
+    ApiError, AppState, DiffLineResponse, DiffResponse, SectionDiffResponse, SessionId,
+    private_socket_path, router, router_tcp, serve_tcp, serve_uds,
 };
 pub use signature::{Stamp, StampRole, Stamps};
 pub use stage::{EinmoId, Stage};
+pub use suite_lock::{SuiteLock, suite_lock_path};
 pub use transitions::{
     FlagReport, NoteReport, PromotionReport, RetractReport, SignatureReport, confirm_signatures,
     flag, promote, promote_flag_to_note, retract,

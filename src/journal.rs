@@ -198,7 +198,13 @@ pub fn journal_path(session_id: &str) -> PathBuf {
 /// `einmo_review_client.sh`'s `harden_dir` applies to its scratch space,
 /// since a journal can carry case ids and decision details a reviewer may
 /// not want group/other-readable.
-fn harden_dir(dir: &Path) -> std::io::Result<()> {
+///
+/// `pub(crate)`: also reused by [`crate::suite_lock`] (the advisory
+/// suite-lock scratch dir) and [`crate::review_server`] (the TUI-owned
+/// private-socket scratch dir, `EIMP-1` §S.7a) — both want this exact
+/// mode-700 discipline over their own scratch subdirectories rather than a
+/// second hand-rolled copy.
+pub(crate) fn harden_dir(dir: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(dir)?;
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))

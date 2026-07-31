@@ -1,5 +1,24 @@
 # EIMP-1.plan — einmo-review-session
+```system_reboot_stash
+The system has to be rebooted due to lack of disk space, you may remove this fenced block of text once you've read and understood it.
+The system stopped working due to running out of disk space. I have since rebooted the computer to install more disk space. But we 
+did notice that there was an exceedingly large log file. We believe there is an infinite loop, or other misbehaving code near
+the production of these logs. So first priority:
 
+- [ ] Find out why there is so much log. If it is code error, fix it. If it is development process, update process to remove log between runs. This is high prioirty, instrument a fix, commit before continuing to the rest of jia-sprint.
+
+Here is the offending files:
+agent@agent1-0:/yolo$ wc -l /yolo/tmp/einmo-journal/undecide-chain.jsonl  /yolo/tmp/einmo-journal/verified-with-passphrase.jsonl  /yolo/tmp/einmo-journal/list-chain.jsonl                    
+  33782267 /yolo/tmp/einmo-journal/undecide-chain.jsonl                                                                                                                                       
+  23637673 /yolo/tmp/einmo-journal/verified-with-passphrase.jsonl                                                                                                                             
+   3619858 /yolo/tmp/einmo-journal/list-chain.jsonl                                                                                                                                           
+  61039798 total                                                                                                                                                                              
+agent@agent1-0:/yolo$ ls -lah /yolo/tmp/einmo-journal/undecide-chain.jsonl /yolo/tmp/einmo-journal/verified-with-passphrase.jsonl  /yolo/tmp/einmo-journal/list-chain.jsonl                   
+-rw-r--r-- 1 agent agent 422M Jul 31 01:07 /yolo/tmp/einmo-journal/list-chain.jsonl                                                                                                           
+-rw-r--r-- 1 agent agent 3.2G Jul 31 01:12 /yolo/tmp/einmo-journal/undecide-chain.jsonl                                                                                                       
+-rw-r--r-- 1 agent agent 2.7G Jul 31 01:12 /yolo/tmp/einmo-journal/verified-with-passphrase.jsonl                                                                                             
+PTAL!!!
+```
 Read `docs/eimp/EIMP-1.md` before acting on any task below. Tasks run top to
 bottom; each phase lands value on its own. This plan is adapted from the
 original `FOOP-25.plan.md` (in `foolish-rust`), with worktree/branch
@@ -727,41 +746,308 @@ moves them wholesale.
       decision `PUT`/`DELETE`, plan, execute — with typed extractors and an
       `ApiError`→HTTP-status mapping
       (2026-07-29 18:26 → 2026-07-29, Phases D–I) — `EIMP-2`.
-- [ ] **TUI-owned private server mode (`EIMP-1.md` §S.7a)** — the default
+- [x] **TUI-owned private server mode (`EIMP-1.md` §S.7a)** — the default
       launch shape: the client script starts its own server on a private,
       unpredictable socket inside its mode-700 scratch dir, drives it, and
       terminates it on exit (including `Ctrl-C`/abnormal exit, via the
       script's existing `trap` cleanup plus the server's `ctrl_c` handler).
       The standalone long-lived server stays available — this is an
       additional default mode, not a replacement
-  - [ ] Upgrade `axum` 0.7.9 → 0.8.x and **delete** the hand-rolled UDS
+      (2026-07-31 00:41) — the SERVER-side capability is complete; the
+      CLIENT-side driving script is explicitly Phase D's job (unchanged,
+      not touched here). See the three sub-items below for what shipped.
+  - [x] Upgrade `axum` 0.7.9 → 0.8.x and **delete** the hand-rolled UDS
         accept loop (`hyper` HTTP/1.1 builder + `hyper-util` `TokioIo`/
         `TowerToHyperService` + manual `UnixListener` loop) that `EIMP-2`
         Phase D only needed because 0.7's `serve()` is TCP-only. Verify the
         `Listener` impl for `tokio::net::UnixListener` is present in the
         enabled feature set before deleting the glue, and re-check whether
         `hyper`/`hyper-util` remain needed at all afterward
-  - [ ] Keep `EIMP-2` Phase D's stale-vs-live socket probe
+        (2026-07-31 00:41) — `Cargo.toml`: `axum = "0.8"` (resolved to
+        0.8.9). Verified `#[cfg(unix)] impl Listener for
+        tokio::net::UnixListener` exists unconditionally (not feature-gated)
+        by reading `axum-0.8.9/src/serve/listener.rs` directly before
+        deleting anything — matches §S.7a's own instruction to verify
+        against the installed crate's source, not assume. `serve_uds`
+        (`src/review_server.rs`) is now `axum::serve(listener,
+        app).with_graceful_shutdown(shutdown)`; `run_accept_loop` (the
+        hand-rolled `hyper`/`hyper-util` glue) is deleted entirely. Route
+        syntax updated `:param` → `{param}` (matchit 0.8's breaking change,
+        confirmed via axum's own CHANGELOG.md before editing). Also added
+        `serve_tcp`/`router_tcp` (see the TCP checkbox below) using the same
+        `axum::serve` shape, since one `Listener`-generic `serve()` now
+        covers both transports.
+
+        **`hyper`/`hyper-util`/`tower`/`hyperlocal` re-check**: grepped
+        every use site first, per this checkbox's own instruction. Nothing
+        in production code (`src/**/*.rs` outside `#[cfg(test)]`) uses any
+        of the four anymore — the only remaining call sites are
+        `review_server.rs`'s own tests, which drive a real UDS/TCP client
+        against a real bound socket (`hyper_util::client::legacy::Client`
+        + `hyperlocal::Uri`) to prove `serve_uds`/`serve_tcp` end-to-end,
+        and `tower::ServiceExt::oneshot` for the rest of the test suite's
+        in-process request harness. All four moved from `[dependencies]` to
+        `[dev-dependencies]` in `Cargo.toml` accordingly — axum itself still
+        pulls its own private copies transitively for production use, this
+        crate simply no longer depends on them directly outside tests.
+  - [x] Keep `EIMP-2` Phase D's stale-vs-live socket probe
         (`UnixStream::connect` succeeds → refuse; fails → remove and
         rebind). §S.7a's illustrative snippet unlinks unconditionally,
         which would let a new server stomp a live one's socket
-  - [ ] Socket path is per-session and unpredictable inside the hardened
+        (2026-07-31 00:41) — untouched by the axum rewrite: `serve_uds`
+        still probes with `tokio::net::UnixStream::connect` before ever
+        calling `UnixListener::bind`, exactly as before. Pinned by the three
+        pre-existing tests (`serve_uds_end_to_end_and_cleans_up_on_shutdown`,
+        `serve_uds_refuses_a_live_socket`, `serve_uds_rebinds_a_stale_socket_file`),
+        all still green after the rewrite — the axum 0.8 migration changed
+        `serve_uds`'s internals, never its externally-observed probe
+        behavior.
+  - [x] Socket path is per-session and unpredictable inside the hardened
         scratch dir — never a fixed world-known `/tmp` path
-- [ ] `einmo review serve` as a *subcommand* spelling (today it is a
+        (2026-07-31 00:41) — new `review_server::private_socket_path()`
+        (`src/review_server.rs`, re-exported from `lib.rs`): mints a random
+        128-bit directory name (`rand_core::OsRng`, the same primitive
+        `review.rs`'s own `random_session_id` already uses) under
+        `$EINMO_REVIEW_PRIVATE_DIR` (or a fixed temp-dir subdirectory),
+        hardens it to mode 0700 via `journal.rs`'s `harden_dir` (promoted
+        `pub(crate)` and reused rather than duplicated — DRY per
+        `rust_instructions.md` §2b), and returns
+        `<random-dir>/review.sock` inside it — the directory's randomness
+        plus its 0700 permissions are the whole access control, mirroring
+        `einmo_review_client.sh`'s own `mktemp -d`-then-`harden_dir`
+        pattern (an unguessable directory, a predictably-named file inside
+        it) exactly as this checkbox asked.
+
+        **Design decision on shape**: this function ONLY mints and reserves
+        the path; it does not itself start a server. Wired into
+        `einmo-review-server serve` as a new `--private` flag
+        (`src/bin/einmo_review_server.rs`): when set, `run_serve` calls
+        `private_socket_path()` instead of using `--socket`, then binds it
+        with the ordinary `serve_uds` exactly like the standalone path —
+        the capability and its consumption are the same code path, only
+        the socket's origin differs. `--private` mode prints the resulting
+        socket path as the FIRST (and only) line of stdout — everything
+        else already went to stderr — so a driving script can do `SOCKET=$(
+        einmo-review-server serve --private <suite>)`. This is deliberately
+        the server-side capability only; the bash script that calls it with
+        its own `trap`-based lifecycle is Phase D's work, per this task's
+        own scope boundary.
+
+        6 new tests: 2 for `private_socket_path` itself (uniqueness +
+        mode-0700 hardening; end-to-end bind-over-it via `serve_uds`), plus
+        a clap-parsing test and a `run_serve` suite-lock-interaction test in
+        the bin (see the suite-lockfile checkbox below).
+- [x] `einmo review serve` as a *subcommand* spelling (today it is a
       standalone `einmo-review-server` binary); decide whether both spellings
       survive the `EIMP-4` split or the subcommand form is dropped —
       record the decision rather than doing it by default
-- [ ] TCP 127.0.0.1 + bearer token behind a flag (UDS remains the default).
+      (2026-07-31 00:41) — **decision, not implemented (per this checkbox's
+      own instruction)**: do NOT add a new `einmo review serve` spelling
+      now. Reasoning, read against `EIMP-1.md` §S.1 and this plan's own
+      repeated framing:
+
+      1. **Naming-surface decisions belong to `EIMP-4`, not this EIMP.**
+         §S.1 is explicit that `EIMP-4` "splits the repository into
+         published `einmo` (core) and published `einmo-review-server`" and
+         that "Phase B's `einmo review …` verbs belong to
+         `einmo-review-server`" as THAT crate's binary's subcommands — not
+         core `einmo`'s `cli.rs`. Phase B already followed this: the
+         one-shot verbs (`plan`/`list`/`decide`/`undecide`/`execute`) landed
+         in `src/bin/einmo_review_server.rs`, not `src/cli.rs`, specifically
+         because this repo has no split-off crate yet and "until `EIMP-4`
+         performs the split they land in this repo's existing binary; the
+         split then moves them wholesale." The exact same reasoning applies
+         to `serve`: it already lives on the `einmo-review-server` binary
+         (`einmo-review-server serve <suite>`, moved under a `Serve`
+         subcommand in Phase B). Inventing a SECOND spelling
+         (`einmo review serve`) on core's `einmo` binary today would mean
+         building a naming surface `EIMP-4` might delete or reshape anyway
+         once the crates are physically separate — exactly the
+         "make anything that would make the split harder" risk §S.1 warns
+         against, restated for a binary name instead of a dependency.
+      2. **There is no `einmo review` subcommand namespace on core's `einmo`
+         binary to attach `serve` to.** `src/cli.rs` has no `review`
+         subcommand at all (checked directly) — building one now, for one
+         verb, ahead of `EIMP-4` deciding the actual crate/binary shape,
+         would be speculative surface with no consumer.
+      3. **Both spellings surviving is plausible but not this EIMP's call.**
+         A bare `einmo-review-server` binary (direct, scriptable, matches
+         every other one-shot verb already living there) and a hypothetical
+         `einmo review serve` (discoverable under the more commonly-typed
+         `einmo` binary) are not mutually exclusive — `EIMP-4` could ship
+         both, the way `cargo-einmo` already aliases `einmo`. But deciding
+         THAT is squarely `EIMP-4` §S.1 territory (it owns the split and
+         therefore the binary-naming consequences of the split), not
+         something to pre-empt here by writing code for a binary that
+         doesn't exist yet.
+
+      **Net**: `einmo-review-server serve <suite>` (and its `cargo
+      einmo-review-server` alias) remains the only spelling. `EIMP-4`
+      inherits this exact recorded reasoning when it performs the split and
+      decides binary/subcommand naming for real.
+- [x] TCP 127.0.0.1 + bearer token behind a flag (UDS remains the default).
       Note `EIMP-2`'s standing caveat: the `checked to verified` passphrase
       travels plaintext in the execute body, which is materially riskier
       over TCP than over a UDS — resolve that *before* enabling TCP, not
       after
-- [ ] Suite lockfile: a second server on the same suite refuses to start
-- [ ] The remaining §S.7 endpoints: `diff` (needs Phase A's `diff`),
+      (2026-07-31 00:41) — **resolution chosen**: (a) TCP+bearer-token as an
+      explicit opt-in (`einmo-review-server serve --tcp <addr> --token
+      <token>`; UDS always binds regardless — TCP is additive, never a
+      replacement), PLUS (b) a hard, non-silent refusal of any `execute`
+      request over that TCP listener whose body carries a non-null
+      `passphrase`, UNLESS the caller also passes the separate, explicit
+      `--allow-insecure-tcp-verified-passphrase` flag. This is option
+      (a)+(b) from this task's own menu of reasonable resolutions, not the
+      "document loudly and defer to `EIMP-6`" alternative — because (b) was
+      concretely implementable in-scope (a body-buffering `axum` middleware
+      the size of the existing `ApiError` mapping) and a hard-refusal
+      default is strictly safer than a documentation-only mitigation for a
+      risk this exact EIMP is the one introducing (TCP support did not
+      exist before this checkbox). TLS/mTLS remain explicitly out of
+      scope — the opt-in flag is a deliberate, informed-consent escape
+      hatch for a trusted network path, not a substitute for real
+      transport security, and is named and documented as exactly that.
+
+      **What shipped** (`src/review_server.rs`): `serve_tcp` (the TCP
+      analogue of `serve_uds`, loopback-only — refuses to bind any
+      non-127.0.0.1/::1 address, a hard invariant checked in code, not just
+      documented); `router_tcp` (wraps `router` in a bearer-token +
+      passphrase-guard `axum::middleware::from_fn_with_state` layer, called
+      `tcp_guard`); the guard rejects any request missing/mismatching
+      `Authorization: Bearer <token>` (401) before it rejects a
+      passphrase-carrying `execute` body (403) — auth and the
+      transport-confidentiality risk are checked independently, since a
+      valid token does not make plaintext-over-TCP any less plaintext. UDS
+      (`router`) carries NONE of this layer — a local socket's directory
+      permissions remain the whole access control there, unchanged.
+      `src/bin/einmo_review_server.rs`'s `ServeArgs` gained `--tcp
+      <SocketAddr>` (clap `requires = "token"` — TCP can never bind without
+      a token, not even by omission), `--token <String>`, and
+      `--allow-insecure-tcp-verified-passphrase`; `run_serve` binds UDS
+      always and additionally spawns TCP when `--tcp`/`--token` are given,
+      sharing one `AppState` (one review, reachable both ways at once — the
+      spec's own "multiple verifiers, concurrently" / "browser review" use
+      cases), torn down together via one broadcast shutdown channel feeding
+      both listeners plus the `Ctrl-C` handler.
+
+      11 new tests: bearer-token accept/reject (3), passphrase-refused vs.
+      passphrase-less-allowed vs. explicit-opt-in-allowed over TCP (3),
+      non-loopback-bind-refused (1), a real end-to-end TCP loopback test
+      proving the bearer gate over an actual bound socket (1, mirrors the
+      existing UDS end-to-end test's harness shape), plus clap-parsing
+      tests for the three new flags including `--tcp` without `--token`
+      being rejected at parse time (3).
+- [x] Suite lockfile: a second server on the same suite refuses to start
+      (2026-07-31 00:41) — new module `src/suite_lock.rs`
+      (`SuiteLock`/`suite_lock_path`, re-exported from `lib.rs`). Path
+      precedent: follows `journal.rs`'s §S.6 reasoning exactly (ephemeral
+      session/process state, not part of the reviewed corpus, so it must
+      NOT live inside the suite or show up in the suite's own `git
+      status`) rather than `EIMP-1.md`'s own literal "inside the suite's
+      own scratch/state area" phrasing, which this task's instructions
+      flagged as worth checking against precedent — `journal_dir()`'s
+      scratch base already is that precedent, so the lock lives there too:
+      `journal_dir().join("suite-<hex>.lock")`, where `<hex>` is a
+      truncated SHA-256 of the suite's CANONICALIZED path (so two different
+      relative/symlinked spellings of the same suite collide on the same
+      lock, as they must; not a security boundary, just a stable filesystem
+      -safe name).
+
+      **Same stale-vs-live discipline as the socket probe**, reusing it
+      directly rather than re-inventing: the lock file's *content* is the
+      new server's own socket path, so `SuiteLock::acquire` probes that
+      recorded path with `std::os::unix::net::UnixStream::connect` — the
+      exact test already used to distinguish a live server from a crashed
+      one's leftover file. Connect succeeds → refuse (`EinmoError::Io` with
+      `ErrorKind::AddrInUse`); connect fails/empty/unreadable → the lock is
+      stale, reclaimed silently. Released on `Drop` (a clean shutdown
+      leaves no trace), applies to BOTH standalone and (once minted, see
+      above) TUI-private sockets, since `run_serve`
+      (`src/bin/einmo_review_server.rs`) acquires it unconditionally,
+      before either socket path variant is bound — "a second server of ANY
+      kind" per this checkbox's own text.
+
+      11 new tests: 6 in `suite_lock.rs` (path stability/uniqueness,
+      acquire-then-drop releases, refuses-while-live, reclaims-stale,
+      errors-on-nonexistent-suite) + 1 functional test in the bin
+      (`run_serve_refuses_when_suite_lock_is_held`, asserting the
+      observable consequence — no socket ever bound — rather than the
+      `ExitCode` value, which has no public equality check on stable Rust
+      per `cli.rs`'s own established note).
+- [x] The remaining §S.7 endpoints: `diff` (needs Phase A's `diff`),
       claims, If-Match/409 (needs a `version` on items — see the Phase 0
       finding that no cached worklist or version exists), and SSE events
-- [ ] Concurrency tests: N verifiers, single-flight verify counts, no lost
+      (2026-07-31 00:41) — checked each sub-item against the actual code
+      before touching anything, per this task's own instruction:
+  - `diff`: **already shipped** by Phase A
+    (`GET /einmo/<session>/cases/<id>/diff/<left>/<right>`, `case_diff` in
+    `src/review_server.rs`, landed 2026-07-30 17:47 per Phase A's own
+    checkbox above) — confirmed by reading the router and its 5 existing
+    tests; not re-implemented.
+  - claims: `EinmoReview::claim`/`claim_for` existed (Phase A, 2026-07-30
+    19:09) but had NO HTTP endpoint — genuinely missing, now implemented:
+    `POST /einmo/<session>/cases/<id>/claim` (`claim_case`), body
+    `{ttl_secs?}` (0/absent = the library's own 5-minute default). 2 new
+    tests.
+  - If-Match/409: **still blocked, explained rather than force-built** —
+    re-confirmed the Phase 0 finding this checkbox itself cites still
+    holds (`grep -n "version" src/review.rs` finds nothing but this
+    checkbox's own citation): `EinmoReview` keeps no cached worklist
+    (`items()` rescans disk every call) and no `version` field anywhere.
+    `EinmoReview`'s actual staleness story is content-fingerprint drift
+    checking (`decide`/`refresh`/`execute`, the Phase A `refresh()`
+    checkbox above), a deliberately different mechanism than optimistic
+    -concurrency versioning. Retrofitting a `version` counter solely to
+    satisfy this one HTTP row would invent a staleness signal the object
+    was not designed to carry, as a side effect of one endpoint — exactly
+    what this checkbox's own text warned against forcing. Documented in
+    place as a doc comment on `put_decision` in `src/review_server.rs`
+    rather than silently dropped; left for whichever future work actually
+    needs HTTP-layer optimistic concurrency to design `version` properly.
+  - SSE events: **genuinely missing, now implemented** —
+    `GET /einmo/<session>/events` (`session_events`), backed by a
+    per-session `tokio::sync::broadcast` channel added to `AppState`
+    (`SessionEntry` groups a session's `Arc<EinmoReview>` with its event
+    sender so the two can never desync). Every mutating handler
+    (`put_decision`/`delete_decision`/`flag_case`/`retract_case`/
+    `post_execute`/`claim_case`) publishes a `ReviewEvent`
+    (`DecisionMade`/`ItemChanged`/`Executed`, matching this row's own
+    "decision-made / item-changed / executed") AFTER its mutation already
+    succeeded — a failed request never announces an event that didn't
+    happen. Streamed via `axum::response::sse::Sse` over
+    `tokio_stream::wrappers::BroadcastStream` (new direct dependencies
+    `futures-util`/`tokio-stream`, both already unconditional transitive
+    dependencies of axum's own `response::sse` module — its own doc
+    example uses exactly this pair). 2 new tests, including a real
+    streaming-body test (subscribe, then decide, then read the pushed SSE
+    frame off `Body::into_data_stream()` with a timeout) rather than only
+    asserting a 200 status.
+- [x] Concurrency tests: N verifiers, single-flight verify counts, no lost
       updates, claims expire
+      (2026-07-31 00:41) — 3 new tests in `src/review_server.rs`, all
+      exercising the HTTP layer concurrently per this checkbox's own
+      framing (not new library infrastructure — reusing Phase A's existing
+      single-flight cache and claim-expiry mechanisms, driven through real
+      concurrent HTTP requests):
+  - `concurrent_body_requests_single_flight_verify_exactly_once`: 16
+    concurrent `GET .../body/output` requests for the SAME artifact, via
+    `tokio::spawn` + the shared `Router`'s `Clone`, then asserts the
+    underlying `VerifiedCache`'s verify counter is exactly 1 — reached via
+    a new `#[cfg(test)] pub(crate) EinmoReview::cache_verify_count()` hook
+    (`src/review.rs`) exposed specifically because `review_server.rs` is a
+    sibling module and the field is private.
+  - `concurrent_decisions_on_distinct_cases_lose_none`: 20 verifiers
+    deciding 20 DIFFERENT cases concurrently (simulating "N verifiers"
+    against one session, since today's design is single-implicit-reviewer
+    per the Phase 0 drift finding — there is no `ReviewerId` to
+    parameterize by, so concurrency is exercised across cases instead of
+    across reviewer identities); asserts `plan()` afterward reflects all
+    20, none lost to a race on the shared `DecisionBook`.
+  - `claim_via_http_expires_and_is_auto_reclaimed`: a short-TTL claim
+    (`claim_for`, 20ms) is active immediately, then gone from
+    `plan().claims` after it expires — the same auto-reclaim behavior
+    `review.rs`'s own library-level claim tests already prove, reached
+    through the HTTP-adjacent path this checkbox specifically asked for.
 
 ## Phase D — the thin client script (EIMP-1.md §S.8)
 
