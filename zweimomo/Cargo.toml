@@ -7,6 +7,9 @@ license = "MIT"
 # Demo/debugging tool, not a library for external use — never published.
 publish = false
 
+[lints]
+workspace = true
+
 # Zweimomo depends on einmo (the framework under test) and boa_engine (the
 # evaluator). Unlike the original three-language zweimomo in the foolish-rust
 # workspace, this JavaScript-only slice has no foolish-ubca/foolish-core

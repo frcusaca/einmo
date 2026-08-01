@@ -1,0 +1,21 @@
+--- src/verify.rs
++++ replace verify_all -> Vec<StampVerification> with vec![]
+@@ -21,17 +21,17 @@
+ // ---------------------------------------------------------------------------
+ 
+ /// Per-stamp verification verdict for an [`EinmoFile`].
+ pub type StampVerification = StampCheck;
+ 
+ /// Verify every stamp of an already-parsed file against its own signed prefix.
+ #[must_use]
+ pub fn verify_all(file: &EinmoFile) -> Vec<StampVerification> {
+-    file.verify_all()
++    vec![] /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Parse `bytes` and verify all stamps; return the file only if the chain is
+ /// fully valid (verify-on-inspect).
+ ///
+ /// # Errors
+ ///
+ /// Returns [`EinmoError::Parse`] on a malformed envelope, or

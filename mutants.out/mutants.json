@@ -1,0 +1,898 @@
+[
+  {
+    "diff": "--- src/verify.rs\n+++ replace verify_all -> Vec<StampVerification> with vec![]\n@@ -21,17 +21,17 @@\n // ---------------------------------------------------------------------------\n \n /// Per-stamp verification verdict for an [`EinmoFile`].\n pub type StampVerification = StampCheck;\n \n /// Verify every stamp of an already-parsed file against its own signed prefix.\n #[must_use]\n pub fn verify_all(file: &EinmoFile) -> Vec<StampVerification> {\n-    file.verify_all()\n+    vec![] /* ~ changed by cargo-mutants ~ */\n }\n \n /// Parse `bytes` and verify all stamps; return the file only if the chain is\n /// fully valid (verify-on-inspect).\n ///\n /// # Errors\n ///\n /// Returns [`EinmoError::Parse`] on a malformed envelope, or\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "verify_all",
+      "return_type": "-> Vec<StampVerification>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 30
+        },
+        "start": {
+          "column": 1,
+          "line": 26
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:29:5: replace verify_all -> Vec<StampVerification> with vec![]",
+    "package": "einmo",
+    "replacement": "vec![]",
+    "span": {
+      "end": {
+        "column": 22,
+        "line": 29
+      },
+      "start": {
+        "column": 5,
+        "line": 29
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace verify_all -> Vec<StampVerification> with vec![Default::default()]\n@@ -21,17 +21,17 @@\n // ---------------------------------------------------------------------------\n \n /// Per-stamp verification verdict for an [`EinmoFile`].\n pub type StampVerification = StampCheck;\n \n /// Verify every stamp of an already-parsed file against its own signed prefix.\n #[must_use]\n pub fn verify_all(file: &EinmoFile) -> Vec<StampVerification> {\n-    file.verify_all()\n+    vec![Default::default()] /* ~ changed by cargo-mutants ~ */\n }\n \n /// Parse `bytes` and verify all stamps; return the file only if the chain is\n /// fully valid (verify-on-inspect).\n ///\n /// # Errors\n ///\n /// Returns [`EinmoError::Parse`] on a malformed envelope, or\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "verify_all",
+      "return_type": "-> Vec<StampVerification>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 30
+        },
+        "start": {
+          "column": 1,
+          "line": 26
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:29:5: replace verify_all -> Vec<StampVerification> with vec![Default::default()]",
+    "package": "einmo",
+    "replacement": "vec![Default::default()]",
+    "span": {
+      "end": {
+        "column": 22,
+        "line": 29
+      },
+      "start": {
+        "column": 5,
+        "line": 29
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace verify_bytes -> Result<EinmoFile> with Ok(Default::default())\n@@ -32,35 +32,17 @@\n /// Parse `bytes` and verify all stamps; return the file only if the chain is\n /// fully valid (verify-on-inspect).\n ///\n /// # Errors\n ///\n /// Returns [`EinmoError::Parse`] on a malformed envelope, or\n /// [`EinmoError::Verification`] if any stamp fails.\n pub fn verify_bytes(bytes: &[u8]) -> Result<EinmoFile> {\n-    let file = EinmoFile::parse(bytes)?;\n-    // Verify against the ACTUAL file bytes up to the STAMPS section, not the\n-    // recomputed canonical form. This detects metadata whitespace tampering\n-    // that `parse()` would normalize away (e.g. extra spaces after a `key:`).\n-    let raw_prefix = raw_signed_prefix(bytes, &file)?;\n-    let checks = file.stamps().verify_chain(raw_prefix);\n-    let failed: Vec<&str> = checks\n-        .iter()\n-        .filter(|c| !c.ok)\n-        .map(|c| c.key.as_str())\n-        .collect();\n-    if failed.is_empty() {\n-        Ok(file)\n-    } else {\n-        Err(EinmoError::Verification(format!(\n-            \"stamp(s) failed: {}\",\n-            failed.join(\", \")\n-        )))\n-    }\n+    Ok(Default::default()) /* ~ changed by cargo-mutants ~ */\n }\n \n /// Extract the raw bytes from the start of the file up to (not including) the\n /// STAMPS section's content — i.e. everything up to and including the separator\n /// that introduces the STAMPS section. This is the byte range that stage stamps\n /// sign as \"prior bytes\".\n ///\n /// The file layout is:\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "verify_bytes",
+      "return_type": "-> Result<EinmoFile>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 59
+        },
+        "start": {
+          "column": 1,
+          "line": 32
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:40:5: replace verify_bytes -> Result<EinmoFile> with Ok(Default::default())",
+    "package": "einmo",
+    "replacement": "Ok(Default::default())",
+    "span": {
+      "end": {
+        "column": 6,
+        "line": 58
+      },
+      "start": {
+        "column": 5,
+        "line": 40
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ delete ! in verify_bytes\n@@ -40,17 +40,17 @@\n     let file = EinmoFile::parse(bytes)?;\n     // Verify against the ACTUAL file bytes up to the STAMPS section, not the\n     // recomputed canonical form. This detects metadata whitespace tampering\n     // that `parse()` would normalize away (e.g. extra spaces after a `key:`).\n     let raw_prefix = raw_signed_prefix(bytes, &file)?;\n     let checks = file.stamps().verify_chain(raw_prefix);\n     let failed: Vec<&str> = checks\n         .iter()\n-        .filter(|c| !c.ok)\n+        .filter(|c|  /* ~ changed by cargo-mutants ~ */c.ok)\n         .map(|c| c.key.as_str())\n         .collect();\n     if failed.is_empty() {\n         Ok(file)\n     } else {\n         Err(EinmoError::Verification(format!(\n             \"stamp(s) failed: {}\",\n             failed.join(\", \")\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "verify_bytes",
+      "return_type": "-> Result<EinmoFile>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 59
+        },
+        "start": {
+          "column": 1,
+          "line": 32
+        }
+      }
+    },
+    "genre": "UnaryOperator",
+    "name": "src/verify.rs:48:21: delete ! in verify_bytes",
+    "package": "einmo",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 22,
+        "line": 48
+      },
+      "start": {
+        "column": 21,
+        "line": 48
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace raw_signed_prefix -> Result<&'a[u8]> with Ok(Vec::leak(Vec::new()))\n@@ -68,40 +68,17 @@\n /// header_line\\n\n /// <metadata>\n /// SEP <body1> SEP <body2> SEP ... SEP <stamps>\n /// ```\n /// The signed prefix includes the header, metadata, every body, and the final\n /// separator that introduces STAMPS. So we must find the `(num_bodies + 1)`-th\n /// occurrence of `separator` after the header line.\n fn raw_signed_prefix<'a>(bytes: &'a [u8], file: &EinmoFile) -> Result<&'a [u8]> {\n-    let separator = file.separator().as_bytes();\n-    let num_bodies = file.sections().len();\n-    // Skip the header line (everything up to and including the first LF).\n-    let header_end = bytes\n-        .iter()\n-        .position(|&b| b == b'\\n')\n-        .ok_or_else(|| EinmoError::Parse(\"missing header newline\".into()))?;\n-    let mut search_from = header_end + 1;\n-    let mut prefix_end = 0usize;\n-    for i in 0..(num_bodies + 1) {\n-        match find_subsequence(&bytes[search_from..], separator) {\n-            Some(pos) => {\n-                prefix_end = search_from + pos + separator.len();\n-                search_from = prefix_end;\n-            }\n-            None => {\n-                return Err(EinmoError::Parse(format!(\n-                    \"could not find separator #{} for raw signed prefix\",\n-                    i + 1\n-                )));\n-            }\n-        }\n-    }\n-    Ok(&bytes[..prefix_end])\n+    Ok(Vec::leak(Vec::new())) /* ~ changed by cargo-mutants ~ */\n }\n \n fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {\n     if needle.is_empty() {\n         return None;\n     }\n     haystack.windows(needle.len()).position(|w| w == needle)\n }\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "raw_signed_prefix",
+      "return_type": "-> Result<&'a[u8]>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 61
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:76:5: replace raw_signed_prefix -> Result<&'a[u8]> with Ok(Vec::leak(Vec::new()))",
+    "package": "einmo",
+    "replacement": "Ok(Vec::leak(Vec::new()))",
+    "span": {
+      "end": {
+        "column": 29,
+        "line": 99
+      },
+      "start": {
+        "column": 5,
+        "line": 76
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace raw_signed_prefix -> Result<&'a[u8]> with Ok(Vec::leak(vec![0]))\n@@ -68,40 +68,17 @@\n /// header_line\\n\n /// <metadata>\n /// SEP <body1> SEP <body2> SEP ... SEP <stamps>\n /// ```\n /// The signed prefix includes the header, metadata, every body, and the final\n /// separator that introduces STAMPS. So we must find the `(num_bodies + 1)`-th\n /// occurrence of `separator` after the header line.\n fn raw_signed_prefix<'a>(bytes: &'a [u8], file: &EinmoFile) -> Result<&'a [u8]> {\n-    let separator = file.separator().as_bytes();\n-    let num_bodies = file.sections().len();\n-    // Skip the header line (everything up to and including the first LF).\n-    let header_end = bytes\n-        .iter()\n-        .position(|&b| b == b'\\n')\n-        .ok_or_else(|| EinmoError::Parse(\"missing header newline\".into()))?;\n-    let mut search_from = header_end + 1;\n-    let mut prefix_end = 0usize;\n-    for i in 0..(num_bodies + 1) {\n-        match find_subsequence(&bytes[search_from..], separator) {\n-            Some(pos) => {\n-                prefix_end = search_from + pos + separator.len();\n-                search_from = prefix_end;\n-            }\n-            None => {\n-                return Err(EinmoError::Parse(format!(\n-                    \"could not find separator #{} for raw signed prefix\",\n-                    i + 1\n-                )));\n-            }\n-        }\n-    }\n-    Ok(&bytes[..prefix_end])\n+    Ok(Vec::leak(vec![0])) /* ~ changed by cargo-mutants ~ */\n }\n \n fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {\n     if needle.is_empty() {\n         return None;\n     }\n     haystack.windows(needle.len()).position(|w| w == needle)\n }\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "raw_signed_prefix",
+      "return_type": "-> Result<&'a[u8]>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 61
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:76:5: replace raw_signed_prefix -> Result<&'a[u8]> with Ok(Vec::leak(vec![0]))",
+    "package": "einmo",
+    "replacement": "Ok(Vec::leak(vec![0]))",
+    "span": {
+      "end": {
+        "column": 29,
+        "line": 99
+      },
+      "start": {
+        "column": 5,
+        "line": 76
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace raw_signed_prefix -> Result<&'a[u8]> with Ok(Vec::leak(vec![1]))\n@@ -68,40 +68,17 @@\n /// header_line\\n\n /// <metadata>\n /// SEP <body1> SEP <body2> SEP ... SEP <stamps>\n /// ```\n /// The signed prefix includes the header, metadata, every body, and the final\n /// separator that introduces STAMPS. So we must find the `(num_bodies + 1)`-th\n /// occurrence of `separator` after the header line.\n fn raw_signed_prefix<'a>(bytes: &'a [u8], file: &EinmoFile) -> Result<&'a [u8]> {\n-    let separator = file.separator().as_bytes();\n-    let num_bodies = file.sections().len();\n-    // Skip the header line (everything up to and including the first LF).\n-    let header_end = bytes\n-        .iter()\n-        .position(|&b| b == b'\\n')\n-        .ok_or_else(|| EinmoError::Parse(\"missing header newline\".into()))?;\n-    let mut search_from = header_end + 1;\n-    let mut prefix_end = 0usize;\n-    for i in 0..(num_bodies + 1) {\n-        match find_subsequence(&bytes[search_from..], separator) {\n-            Some(pos) => {\n-                prefix_end = search_from + pos + separator.len();\n-                search_from = prefix_end;\n-            }\n-            None => {\n-                return Err(EinmoError::Parse(format!(\n-                    \"could not find separator #{} for raw signed prefix\",\n-                    i + 1\n-                )));\n-            }\n-        }\n-    }\n-    Ok(&bytes[..prefix_end])\n+    Ok(Vec::leak(vec![1])) /* ~ changed by cargo-mutants ~ */\n }\n \n fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {\n     if needle.is_empty() {\n         return None;\n     }\n     haystack.windows(needle.len()).position(|w| w == needle)\n }\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "raw_signed_prefix",
+      "return_type": "-> Result<&'a[u8]>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 61
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:76:5: replace raw_signed_prefix -> Result<&'a[u8]> with Ok(Vec::leak(vec![1]))",
+    "package": "einmo",
+    "replacement": "Ok(Vec::leak(vec![1]))",
+    "span": {
+      "end": {
+        "column": 29,
+        "line": 99
+      },
+      "start": {
+        "column": 5,
+        "line": 76
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace == with != in raw_signed_prefix\n@@ -73,17 +73,17 @@\n /// separator that introduces STAMPS. So we must find the `(num_bodies + 1)`-th\n /// occurrence of `separator` after the header line.\n fn raw_signed_prefix<'a>(bytes: &'a [u8], file: &EinmoFile) -> Result<&'a [u8]> {\n     let separator = file.separator().as_bytes();\n     let num_bodies = file.sections().len();\n     // Skip the header line (everything up to and including the first LF).\n     let header_end = bytes\n         .iter()\n-        .position(|&b| b == b'\\n')\n+        .position(|&b| b != /* ~ changed by cargo-mutants ~ */ b'\\n')\n         .ok_or_else(|| EinmoError::Parse(\"missing header newline\".into()))?;\n     let mut search_from = header_end + 1;\n     let mut prefix_end = 0usize;\n     for i in 0..(num_bodies + 1) {\n         match find_subsequence(&bytes[search_from..], separator) {\n             Some(pos) => {\n                 prefix_end = search_from + pos + separator.len();\n                 search_from = prefix_end;\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "raw_signed_prefix",
+      "return_type": "-> Result<&'a[u8]>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 61
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/verify.rs:81:26: replace == with != in raw_signed_prefix",
+    "package": "einmo",
+    "replacement": "!=",
+    "span": {
+      "end": {
+        "column": 28,
+        "line": 81
+      },
+      "start": {
+        "column": 26,
+        "line": 81
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace + with - in raw_signed_prefix\n@@ -75,17 +75,17 @@\n fn raw_signed_prefix<'a>(bytes: &'a [u8], file: &EinmoFile) -> Result<&'a [u8]> {\n     let separator = file.separator().as_bytes();\n     let num_bodies = file.sections().len();\n     // Skip the header line (everything up to and including the first LF).\n     let header_end = bytes\n         .iter()\n         .position(|&b| b == b'\\n')\n         .ok_or_else(|| EinmoError::Parse(\"missing header newline\".into()))?;\n-    let mut search_from = header_end + 1;\n+    let mut search_from = header_end - /* ~ changed by cargo-mutants ~ */ 1;\n     let mut prefix_end = 0usize;\n     for i in 0..(num_bodies + 1) {\n         match find_subsequence(&bytes[search_from..], separator) {\n             Some(pos) => {\n                 prefix_end = search_from + pos + separator.len();\n                 search_from = prefix_end;\n             }\n             None => {\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "raw_signed_prefix",
+      "return_type": "-> Result<&'a[u8]>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 61
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/verify.rs:83:38: replace + with - in raw_signed_prefix",
+    "package": "einmo",
+    "replacement": "-",
+    "span": {
+      "end": {
+        "column": 39,
+        "line": 83
+      },
+      "start": {
+        "column": 38,
+        "line": 83
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace + with * in raw_signed_prefix\n@@ -75,17 +75,17 @@\n fn raw_signed_prefix<'a>(bytes: &'a [u8], file: &EinmoFile) -> Result<&'a [u8]> {\n     let separator = file.separator().as_bytes();\n     let num_bodies = file.sections().len();\n     // Skip the header line (everything up to and including the first LF).\n     let header_end = bytes\n         .iter()\n         .position(|&b| b == b'\\n')\n         .ok_or_else(|| EinmoError::Parse(\"missing header newline\".into()))?;\n-    let mut search_from = header_end + 1;\n+    let mut search_from = header_end * /* ~ changed by cargo-mutants ~ */ 1;\n     let mut prefix_end = 0usize;\n     for i in 0..(num_bodies + 1) {\n         match find_subsequence(&bytes[search_from..], separator) {\n             Some(pos) => {\n                 prefix_end = search_from + pos + separator.len();\n                 search_from = prefix_end;\n             }\n             None => {\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "raw_signed_prefix",
+      "return_type": "-> Result<&'a[u8]>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 61
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/verify.rs:83:38: replace + with * in raw_signed_prefix",
+    "package": "einmo",
+    "replacement": "*",
+    "span": {
+      "end": {
+        "column": 39,
+        "line": 83
+      },
+      "start": {
+        "column": 38,
+        "line": 83
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace + with - in raw_signed_prefix\n@@ -77,17 +77,17 @@\n     let num_bodies = file.sections().len();\n     // Skip the header line (everything up to and including the first LF).\n     let header_end = bytes\n         .iter()\n         .position(|&b| b == b'\\n')\n         .ok_or_else(|| EinmoError::Parse(\"missing header newline\".into()))?;\n     let mut search_from = header_end + 1;\n     let mut prefix_end = 0usize;\n-    for i in 0..(num_bodies + 1) {\n+    for i in 0..(num_bodies - /* ~ changed by cargo-mutants ~ */ 1) {\n         match find_subsequence(&bytes[search_from..], separator) {\n             Some(pos) => {\n                 prefix_end = search_from + pos + separator.len();\n                 search_from = prefix_end;\n             }\n             None => {\n                 return Err(EinmoError::Parse(format!(\n                     \"could not find separator #{} for raw signed prefix\",\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "raw_signed_prefix",
+      "return_type": "-> Result<&'a[u8]>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 61
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/verify.rs:85:29: replace + with - in raw_signed_prefix",
+    "package": "einmo",
+    "replacement": "-",
+    "span": {
+      "end": {
+        "column": 30,
+        "line": 85
+      },
+      "start": {
+        "column": 29,
+        "line": 85
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace + with * in raw_signed_prefix\n@@ -77,17 +77,17 @@\n     let num_bodies = file.sections().len();\n     // Skip the header line (everything up to and including the first LF).\n     let header_end = bytes\n         .iter()\n         .position(|&b| b == b'\\n')\n         .ok_or_else(|| EinmoError::Parse(\"missing header newline\".into()))?;\n     let mut search_from = header_end + 1;\n     let mut prefix_end = 0usize;\n-    for i in 0..(num_bodies + 1) {\n+    for i in 0..(num_bodies * /* ~ changed by cargo-mutants ~ */ 1) {\n         match find_subsequence(&bytes[search_from..], separator) {\n             Some(pos) => {\n                 prefix_end = search_from + pos + separator.len();\n                 search_from = prefix_end;\n             }\n             None => {\n                 return Err(EinmoError::Parse(format!(\n                     \"could not find separator #{} for raw signed prefix\",\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "raw_signed_prefix",
+      "return_type": "-> Result<&'a[u8]>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 61
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/verify.rs:85:29: replace + with * in raw_signed_prefix",
+    "package": "einmo",
+    "replacement": "*",
+    "span": {
+      "end": {
+        "column": 30,
+        "line": 85
+      },
+      "start": {
+        "column": 29,
+        "line": 85
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace + with - in raw_signed_prefix\n@@ -80,17 +80,17 @@\n         .iter()\n         .position(|&b| b == b'\\n')\n         .ok_or_else(|| EinmoError::Parse(\"missing header newline\".into()))?;\n     let mut search_from = header_end + 1;\n     let mut prefix_end = 0usize;\n     for i in 0..(num_bodies + 1) {\n         match find_subsequence(&bytes[search_from..], separator) {\n             Some(pos) => {\n-                prefix_end = search_from + pos + separator.len();\n+                prefix_end = search_from + pos - /* ~ changed by cargo-mutants ~ */ separator.len();\n                 search_from = prefix_end;\n             }\n             None => {\n                 return Err(EinmoError::Parse(format!(\n                     \"could not find separator #{} for raw signed prefix\",\n                     i + 1\n                 )));\n             }\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "raw_signed_prefix",
+      "return_type": "-> Result<&'a[u8]>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 61
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/verify.rs:88:48: replace + with - in raw_signed_prefix",
+    "package": "einmo",
+    "replacement": "-",
+    "span": {
+      "end": {
+        "column": 49,
+        "line": 88
+      },
+      "start": {
+        "column": 48,
+        "line": 88
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace + with * in raw_signed_prefix\n@@ -80,17 +80,17 @@\n         .iter()\n         .position(|&b| b == b'\\n')\n         .ok_or_else(|| EinmoError::Parse(\"missing header newline\".into()))?;\n     let mut search_from = header_end + 1;\n     let mut prefix_end = 0usize;\n     for i in 0..(num_bodies + 1) {\n         match find_subsequence(&bytes[search_from..], separator) {\n             Some(pos) => {\n-                prefix_end = search_from + pos + separator.len();\n+                prefix_end = search_from + pos * /* ~ changed by cargo-mutants ~ */ separator.len();\n                 search_from = prefix_end;\n             }\n             None => {\n                 return Err(EinmoError::Parse(format!(\n                     \"could not find separator #{} for raw signed prefix\",\n                     i + 1\n                 )));\n             }\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "raw_signed_prefix",
+      "return_type": "-> Result<&'a[u8]>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 61
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/verify.rs:88:48: replace + with * in raw_signed_prefix",
+    "package": "einmo",
+    "replacement": "*",
+    "span": {
+      "end": {
+        "column": 49,
+        "line": 88
+      },
+      "start": {
+        "column": 48,
+        "line": 88
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace + with - in raw_signed_prefix\n@@ -80,17 +80,17 @@\n         .iter()\n         .position(|&b| b == b'\\n')\n         .ok_or_else(|| EinmoError::Parse(\"missing header newline\".into()))?;\n     let mut search_from = header_end + 1;\n     let mut prefix_end = 0usize;\n     for i in 0..(num_bodies + 1) {\n         match find_subsequence(&bytes[search_from..], separator) {\n             Some(pos) => {\n-                prefix_end = search_from + pos + separator.len();\n+                prefix_end = search_from - /* ~ changed by cargo-mutants ~ */ pos + separator.len();\n                 search_from = prefix_end;\n             }\n             None => {\n                 return Err(EinmoError::Parse(format!(\n                     \"could not find separator #{} for raw signed prefix\",\n                     i + 1\n                 )));\n             }\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "raw_signed_prefix",
+      "return_type": "-> Result<&'a[u8]>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 61
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/verify.rs:88:42: replace + with - in raw_signed_prefix",
+    "package": "einmo",
+    "replacement": "-",
+    "span": {
+      "end": {
+        "column": 43,
+        "line": 88
+      },
+      "start": {
+        "column": 42,
+        "line": 88
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace + with * in raw_signed_prefix\n@@ -80,17 +80,17 @@\n         .iter()\n         .position(|&b| b == b'\\n')\n         .ok_or_else(|| EinmoError::Parse(\"missing header newline\".into()))?;\n     let mut search_from = header_end + 1;\n     let mut prefix_end = 0usize;\n     for i in 0..(num_bodies + 1) {\n         match find_subsequence(&bytes[search_from..], separator) {\n             Some(pos) => {\n-                prefix_end = search_from + pos + separator.len();\n+                prefix_end = search_from * /* ~ changed by cargo-mutants ~ */ pos + separator.len();\n                 search_from = prefix_end;\n             }\n             None => {\n                 return Err(EinmoError::Parse(format!(\n                     \"could not find separator #{} for raw signed prefix\",\n                     i + 1\n                 )));\n             }\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "raw_signed_prefix",
+      "return_type": "-> Result<&'a[u8]>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 100
+        },
+        "start": {
+          "column": 1,
+          "line": 61
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/verify.rs:88:42: replace + with * in raw_signed_prefix",
+    "package": "einmo",
+    "replacement": "*",
+    "span": {
+      "end": {
+        "column": 43,
+        "line": 88
+      },
+      "start": {
+        "column": 42,
+        "line": 88
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace find_subsequence -> Option<usize> with None\n@@ -95,20 +95,17 @@\n                 )));\n             }\n         }\n     }\n     Ok(&bytes[..prefix_end])\n }\n \n fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {\n-    if needle.is_empty() {\n-        return None;\n-    }\n-    haystack.windows(needle.len()).position(|w| w == needle)\n+    None /* ~ changed by cargo-mutants ~ */\n }\n \n // ---------------------------------------------------------------------------\n // fs-touching convenience (the only item in this module that reads a file)\n // ---------------------------------------------------------------------------\n \n impl EinmoFile {\n     /// Read, parse, and **verify all stamps**; refuse a tampered file.\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "find_subsequence",
+      "return_type": "-> Option<usize>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 107
+        },
+        "start": {
+          "column": 1,
+          "line": 102
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:103:5: replace find_subsequence -> Option<usize> with None",
+    "package": "einmo",
+    "replacement": "None",
+    "span": {
+      "end": {
+        "column": 61,
+        "line": 106
+      },
+      "start": {
+        "column": 5,
+        "line": 103
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace find_subsequence -> Option<usize> with Some(0)\n@@ -95,20 +95,17 @@\n                 )));\n             }\n         }\n     }\n     Ok(&bytes[..prefix_end])\n }\n \n fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {\n-    if needle.is_empty() {\n-        return None;\n-    }\n-    haystack.windows(needle.len()).position(|w| w == needle)\n+    Some(0) /* ~ changed by cargo-mutants ~ */\n }\n \n // ---------------------------------------------------------------------------\n // fs-touching convenience (the only item in this module that reads a file)\n // ---------------------------------------------------------------------------\n \n impl EinmoFile {\n     /// Read, parse, and **verify all stamps**; refuse a tampered file.\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "find_subsequence",
+      "return_type": "-> Option<usize>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 107
+        },
+        "start": {
+          "column": 1,
+          "line": 102
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:103:5: replace find_subsequence -> Option<usize> with Some(0)",
+    "package": "einmo",
+    "replacement": "Some(0)",
+    "span": {
+      "end": {
+        "column": 61,
+        "line": 106
+      },
+      "start": {
+        "column": 5,
+        "line": 103
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace find_subsequence -> Option<usize> with Some(1)\n@@ -95,20 +95,17 @@\n                 )));\n             }\n         }\n     }\n     Ok(&bytes[..prefix_end])\n }\n \n fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {\n-    if needle.is_empty() {\n-        return None;\n-    }\n-    haystack.windows(needle.len()).position(|w| w == needle)\n+    Some(1) /* ~ changed by cargo-mutants ~ */\n }\n \n // ---------------------------------------------------------------------------\n // fs-touching convenience (the only item in this module that reads a file)\n // ---------------------------------------------------------------------------\n \n impl EinmoFile {\n     /// Read, parse, and **verify all stamps**; refuse a tampered file.\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "find_subsequence",
+      "return_type": "-> Option<usize>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 107
+        },
+        "start": {
+          "column": 1,
+          "line": 102
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:103:5: replace find_subsequence -> Option<usize> with Some(1)",
+    "package": "einmo",
+    "replacement": "Some(1)",
+    "span": {
+      "end": {
+        "column": 61,
+        "line": 106
+      },
+      "start": {
+        "column": 5,
+        "line": 103
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace == with != in find_subsequence\n@@ -98,17 +98,17 @@\n     }\n     Ok(&bytes[..prefix_end])\n }\n \n fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {\n     if needle.is_empty() {\n         return None;\n     }\n-    haystack.windows(needle.len()).position(|w| w == needle)\n+    haystack.windows(needle.len()).position(|w| w != /* ~ changed by cargo-mutants ~ */ needle)\n }\n \n // ---------------------------------------------------------------------------\n // fs-touching convenience (the only item in this module that reads a file)\n // ---------------------------------------------------------------------------\n \n impl EinmoFile {\n     /// Read, parse, and **verify all stamps**; refuse a tampered file.\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "find_subsequence",
+      "return_type": "-> Option<usize>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 107
+        },
+        "start": {
+          "column": 1,
+          "line": 102
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/verify.rs:106:51: replace == with != in find_subsequence",
+    "package": "einmo",
+    "replacement": "!=",
+    "span": {
+      "end": {
+        "column": 53,
+        "line": 106
+      },
+      "start": {
+        "column": 51,
+        "line": 106
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace EinmoFile::from_file -> Result<Self> with Ok(Default::default())\n@@ -116,25 +116,17 @@\n     /// This is the verify-on-inspect entry point every reading code path uses.\n     ///\n     /// # Errors\n     ///\n     /// Returns [`EinmoError::Io`] if the file cannot be read,\n     /// [`EinmoError::Parse`] if malformed, or [`EinmoError::Verification`] if\n     /// any stamp fails.\n     pub fn from_file(path: &Path) -> Result<Self> {\n-        let bytes = std::fs::read(path).map_err(|e| EinmoError::io(path, e))?;\n-        verify_bytes(&bytes).map_err(|e| match e {\n-            // Annotate verification/parse failures with the path for the caller.\n-            EinmoError::Verification(msg) => {\n-                EinmoError::Verification(format!(\"{}: {msg}\", path.display()))\n-            }\n-            EinmoError::Parse(msg) => EinmoError::Parse(format!(\"{}: {msg}\", path.display())),\n-            other => other,\n-        })\n+        Ok(Default::default()) /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n // ---------------------------------------------------------------------------\n // The `verify` walk over a stage (or all stages)\n // ---------------------------------------------------------------------------\n \n /// The outcome of verifying one file in a stage.\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "EinmoFile::from_file",
+      "return_type": "-> Result<Self>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 133
+        },
+        "start": {
+          "column": 5,
+          "line": 114
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:124:9: replace EinmoFile::from_file -> Result<Self> with Ok(Default::default())",
+    "package": "einmo",
+    "replacement": "Ok(Default::default())",
+    "span": {
+      "end": {
+        "column": 11,
+        "line": 132
+      },
+      "start": {
+        "column": 9,
+        "line": 124
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace VerificationReport::all_ok -> bool with true\n@@ -154,17 +154,17 @@\n     /// Per-file verdicts, in deterministic path order.\n     pub files: Vec<FileVerification>,\n }\n \n impl VerificationReport {\n     /// `true` if every file verified (or the report is empty).\n     #[must_use]\n     pub fn all_ok(&self) -> bool {\n-        self.files.iter().all(|f| f.ok)\n+        true /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// The count of files that failed verification.\n     #[must_use]\n     pub fn failures(&self) -> usize {\n         self.files.iter().filter(|f| !f.ok).count()\n     }\n }\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "VerificationReport::all_ok",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 163
+        },
+        "start": {
+          "column": 5,
+          "line": 159
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:162:9: replace VerificationReport::all_ok -> bool with true",
+    "package": "einmo",
+    "replacement": "true",
+    "span": {
+      "end": {
+        "column": 40,
+        "line": 162
+      },
+      "start": {
+        "column": 9,
+        "line": 162
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace VerificationReport::all_ok -> bool with false\n@@ -154,17 +154,17 @@\n     /// Per-file verdicts, in deterministic path order.\n     pub files: Vec<FileVerification>,\n }\n \n impl VerificationReport {\n     /// `true` if every file verified (or the report is empty).\n     #[must_use]\n     pub fn all_ok(&self) -> bool {\n-        self.files.iter().all(|f| f.ok)\n+        false /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// The count of files that failed verification.\n     #[must_use]\n     pub fn failures(&self) -> usize {\n         self.files.iter().filter(|f| !f.ok).count()\n     }\n }\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "VerificationReport::all_ok",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 163
+        },
+        "start": {
+          "column": 5,
+          "line": 159
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:162:9: replace VerificationReport::all_ok -> bool with false",
+    "package": "einmo",
+    "replacement": "false",
+    "span": {
+      "end": {
+        "column": 40,
+        "line": 162
+      },
+      "start": {
+        "column": 9,
+        "line": 162
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace VerificationReport::failures -> usize with 0\n@@ -160,17 +160,17 @@\n     #[must_use]\n     pub fn all_ok(&self) -> bool {\n         self.files.iter().all(|f| f.ok)\n     }\n \n     /// The count of files that failed verification.\n     #[must_use]\n     pub fn failures(&self) -> usize {\n-        self.files.iter().filter(|f| !f.ok).count()\n+        0 /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n /// Verify every `.einmo` file in `stage` (or across all stages when `None`).\n ///\n /// Discovery mirrors the `input/` tree: for each input, the stage's\n /// corresponding `.einmo` is verified if present. When `files` is `Some`, only\n /// those user-provided paths (normalized to mirror-relative) are verified.\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "VerificationReport::failures",
+      "return_type": "-> usize",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 169
+        },
+        "start": {
+          "column": 5,
+          "line": 165
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:168:9: replace VerificationReport::failures -> usize with 0",
+    "package": "einmo",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 52,
+        "line": 168
+      },
+      "start": {
+        "column": 9,
+        "line": 168
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace VerificationReport::failures -> usize with 1\n@@ -160,17 +160,17 @@\n     #[must_use]\n     pub fn all_ok(&self) -> bool {\n         self.files.iter().all(|f| f.ok)\n     }\n \n     /// The count of files that failed verification.\n     #[must_use]\n     pub fn failures(&self) -> usize {\n-        self.files.iter().filter(|f| !f.ok).count()\n+        1 /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n /// Verify every `.einmo` file in `stage` (or across all stages when `None`).\n ///\n /// Discovery mirrors the `input/` tree: for each input, the stage's\n /// corresponding `.einmo` is verified if present. When `files` is `Some`, only\n /// those user-provided paths (normalized to mirror-relative) are verified.\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "VerificationReport::failures",
+      "return_type": "-> usize",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 169
+        },
+        "start": {
+          "column": 5,
+          "line": 165
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:168:9: replace VerificationReport::failures -> usize with 1",
+    "package": "einmo",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 52,
+        "line": 168
+      },
+      "start": {
+        "column": 9,
+        "line": 168
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ delete ! in VerificationReport::failures\n@@ -160,17 +160,17 @@\n     #[must_use]\n     pub fn all_ok(&self) -> bool {\n         self.files.iter().all(|f| f.ok)\n     }\n \n     /// The count of files that failed verification.\n     #[must_use]\n     pub fn failures(&self) -> usize {\n-        self.files.iter().filter(|f| !f.ok).count()\n+        self.files.iter().filter(|f|  /* ~ changed by cargo-mutants ~ */f.ok).count()\n     }\n }\n \n /// Verify every `.einmo` file in `stage` (or across all stages when `None`).\n ///\n /// Discovery mirrors the `input/` tree: for each input, the stage's\n /// corresponding `.einmo` is verified if present. When `files` is `Some`, only\n /// those user-provided paths (normalized to mirror-relative) are verified.\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "VerificationReport::failures",
+      "return_type": "-> usize",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 169
+        },
+        "start": {
+          "column": 5,
+          "line": 165
+        }
+      }
+    },
+    "genre": "UnaryOperator",
+    "name": "src/verify.rs:168:38: delete ! in VerificationReport::failures",
+    "package": "einmo",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 39,
+        "line": 168
+      },
+      "start": {
+        "column": 38,
+        "line": 168
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ replace verify -> Result<VerificationReport> with Ok(Default::default())\n@@ -178,74 +178,17 @@\n /// # Errors\n ///\n /// Returns [`EinmoError::Io`] if the input tree cannot be walked.\n pub fn verify(\n     config: &TestConfig,\n     stage: Option<Stage>,\n     files: Option<&[PathBuf]>,\n ) -> Result<VerificationReport> {\n-    let stages: Vec<Stage> = match stage {\n-        Some(s) => vec![s],\n-        None => Stage::ALL.to_vec(),\n-    };\n-    let mut files_vec = Vec::new();\n-    for s in &stages {\n-        // Verifying a stage verifies its nested flagged sink too (`EIMP-7`\n-        // §S.2a): a flagged artifact still carries its original stamps and\n-        // must still pass verify-on-inspect, and flagging is no longer\n-        // independently selectable now that it isn't a `Stage` of its own.\n-        for dir in [config.stage_dir(*s), config.flagged_dir(*s)] {\n-            let rels: Vec<PathBuf> = if let Some(provided) = files {\n-                let mut v: Vec<PathBuf> = provided\n-                    .iter()\n-                    .map(|p| normalize_file_path(p, config))\n-                    .filter(|p| dir.join(p).exists())\n-                    .collect();\n-                v.sort();\n-                v.dedup();\n-                v\n-            } else {\n-                let inputs = walk_input_tree(&config.input_path(), config.walk_depth_limit())?;\n-                inputs\n-                    .into_iter()\n-                    .map(|p| crate::stage::mirror_input_path(&p))\n-                    .collect()\n-            };\n-            for rel in rels {\n-                let path = dir.join(&rel);\n-                // Absence is not a verification failure. A stage that has not\n-                // been promoted to yet simply has no artifact — reporting\n-                // \"FAILED: no such file\" for every unpopulated `verified/`\n-                // entry drowns real tampering in noise and makes `verify\n-                // --all` red by default. Whether an artifact *ought* to exist\n-                // is a correspondence question (`compare`); whether a file\n-                // that exists is sound is this function's question. Missing\n-                // inputs for existing artifacts are caught by\n-                // `check_suite_integrity`.\n-                if !path.exists() {\n-                    continue;\n-                }\n-                let verdict = match EinmoFile::from_file(&path) {\n-                    Ok(_) => FileVerification {\n-                        rel_path: rel,\n-                        ok: true,\n-                        detail: None,\n-                    },\n-                    Err(e) => FileVerification {\n-                        rel_path: rel,\n-                        ok: false,\n-                        detail: Some(e.to_string()),\n-                    },\n-                };\n-                files_vec.push(verdict);\n-            }\n-        }\n-    }\n-    Ok(VerificationReport { files: files_vec })\n+    Ok(Default::default()) /* ~ changed by cargo-mutants ~ */\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n     use crate::format::{DEFAULT_SEPARATOR, Metadata, Section, Status};\n     use crate::signature::{Stamps, derive_keypair};\n \n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "verify",
+      "return_type": "-> Result<VerificationReport>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 244
+        },
+        "start": {
+          "column": 1,
+          "line": 172
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/verify.rs:186:5: replace verify -> Result<VerificationReport> with Ok(Default::default())",
+    "package": "einmo",
+    "replacement": "Ok(Default::default())",
+    "span": {
+      "end": {
+        "column": 48,
+        "line": 243
+      },
+      "start": {
+        "column": 5,
+        "line": 186
+      }
+    }
+  },
+  {
+    "diff": "--- src/verify.rs\n+++ delete ! in verify\n@@ -216,17 +216,17 @@\n                 // been promoted to yet simply has no artifact — reporting\n                 // \"FAILED: no such file\" for every unpopulated `verified/`\n                 // entry drowns real tampering in noise and makes `verify\n                 // --all` red by default. Whether an artifact *ought* to exist\n                 // is a correspondence question (`compare`); whether a file\n                 // that exists is sound is this function's question. Missing\n                 // inputs for existing artifacts are caught by\n                 // `check_suite_integrity`.\n-                if !path.exists() {\n+                if  /* ~ changed by cargo-mutants ~ */path.exists() {\n                     continue;\n                 }\n                 let verdict = match EinmoFile::from_file(&path) {\n                     Ok(_) => FileVerification {\n                         rel_path: rel,\n                         ok: true,\n                         detail: None,\n                     },\n",
+    "file": "src/verify.rs",
+    "function": {
+      "function_name": "verify",
+      "return_type": "-> Result<VerificationReport>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 244
+        },
+        "start": {
+          "column": 1,
+          "line": 172
+        }
+      }
+    },
+    "genre": "UnaryOperator",
+    "name": "src/verify.rs:224:20: delete ! in verify",
+    "package": "einmo",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 21,
+        "line": 224
+      },
+      "start": {
+        "column": 20,
+        "line": 224
+      }
+    }
+  }
+]

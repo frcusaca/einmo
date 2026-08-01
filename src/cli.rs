@@ -710,8 +710,10 @@ fn cmd_verify(args: VerifyArgs) -> Result<ExitCode> {
 /// §S.3): by default, any flag fails; `--flag-is-not-failure` downgrades
 /// that to advisory-only. Kept as a small pure function, separate from
 /// `cmd_verify`'s `ExitCode`/printing, so the actual decision is directly
-/// unit-testable.
-fn flags_fail_the_gate(flagged_count: usize, flag_is_not_failure: bool) -> bool {
+/// unit-testable. `pub(crate)` so `verify.rs`'s own gate test exercises THIS
+/// predicate rather than a hand-inlined copy of it — a copy cannot catch a
+/// regression here, which is exactly what happened before (`EIMP-8` P0).
+pub(crate) fn flags_fail_the_gate(flagged_count: usize, flag_is_not_failure: bool) -> bool {
     flagged_count > 0 && !flag_is_not_failure
 }
 

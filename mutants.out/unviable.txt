@@ -1,0 +1,1 @@
+src/verify.rs:29:5: replace verify_all -> Vec<StampVerification> with vec![Default::default()]
