@@ -2,7 +2,7 @@
 eimp: 7
 title: EinmoCase / EinmoSuite / EinmoDirectory — unify case access behind an EinmoStorage trait
 author: Claude Code (Sonnet 5) <noreply@anthropic.com>
-status: Implementing
+status: complete
 type: Standards
 created: 2026-07-31
 supersedes: []

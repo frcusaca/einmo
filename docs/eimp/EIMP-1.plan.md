@@ -1211,8 +1211,24 @@ apparently used to work and the regression (if any) isn't understood yet.
       `einmo-review-server` bin + 4 `zweimomo` lib + 3 `zweimomo`
       `tests/suites.rs`), 0 failed**, in ~330s. `cargo fmt --check` and
       `cargo clippy --all-targets -- -D warnings` both still clean.
-- [ ] **P1 — the `differing`/`NewOrBroken` flag conflates two different
-      concerns that happen to share one boolean.** `TestRow::differing`
+- [x] **P1 — the `differing`/`NewOrBroken` flag conflates two different
+      concerns that happen to share one boolean.**
+      (2026-07-31 00:00) — **resolved by `EIMP-7`, not in place.** Per
+      this finding's own 2026-07-31 broadened direction below, the fix
+      was spun into its own EIMP (`EIMP-7`: `EinmoCase`/`EinmoSuite`/
+      `EinmoDirectory` behind an `EinmoStorage` trait) rather than
+      patched here. `EIMP-7` reached `complete` 2026-07-31: `einmo
+      test`/`einmo review` now share one comparison core;
+      `review::EinmoReview::items`'s `differing` is scoped to exactly
+      output-vs-checked agreement (`EinmoCase::agreement(&[Output,
+      Checked], _)`), no longer `true` merely because `verified/` is
+      unpopulated — the P1 repro asserted directly in `case::tests` and
+      `review::tests`, and again in `EIMP-7`'s own comprehensive test
+      (`review::tests::comprehensive_suite_wide_consistency_between_test_and_review_consumers`)
+      alongside the second, related defect that finding's own drafting
+      surfaced (P1's third comparison implementation in `compare.rs`).
+      See `EIMP-7.md`/`EIMP-7.plan.md` for the full design and execution
+      record. `TestRow::differing`
       (`src/einmo_suite.rs` `scan_tests`) is `true` if *any* of
       output/checked/verified is absent, OR any two present stages'
       bodies disagree — `bodies.iter().any(Option::is_none) ||

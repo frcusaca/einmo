@@ -22,7 +22,7 @@ ls docs/eimp | rev | sort -V | rev
 | [EIMP-4](EIMP-4.md) | Split einmo into core + einmo-review-server, publish both to crates.io at 0.0.6 | Draft | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-5](EIMP-5.md) | Merkle-tree corpus signing — faster to compute, cheaper to update | Draft | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-6](EIMP-6.md) | Structured JSONL logging, and retiring the crash crumb | Draft | 2026-07-30 | Claude Code (Opus 5) |
-| [EIMP-7](EIMP-7.md) | EinmoCase / EinmoSuite / EinmoDirectory — unify case access behind an EinmoStorage trait | Final | 2026-07-31 | Claude Code (Sonnet 5) |
+| [EIMP-7](EIMP-7.md) | EinmoCase / EinmoSuite / EinmoDirectory — unify case access behind an EinmoStorage trait | complete | 2026-07-31 | Claude Code (Sonnet 5) |
 
 ---
 
@@ -71,6 +71,20 @@ nothing is dropped — both land after `EIMP-1`:
 ---
 
 ## Last Updated
+
+**Date**: 2026-07-31 (3)
+**Updated By**: Claude Code (Sonnet 5)
+**Changes**: `EIMP-7` reached `complete` — all phases (0, A, A2, B, C, D,
+E, F, G) plus the comprehensive test implemented and verified. `einmo
+test` and `einmo review` now share one `EinmoCase`/`EinmoSuite`/
+`EinmoDirectory` core behind an `EinmoStorage` trait; `CorpusSigner` can
+be driven by an `EinmoSuite`'s own scan instead of walking a stage
+directory a fourth, independent time (§S.8). The comprehensive test
+(`review.rs`) proves `EinmoCase::agreement`, `EinmoTestRunner`, and
+`EinmoReview` all agree on a COMMENTS-only-differing case and a tampered
+artifact over the same on-disk corpus. `cargo test --workspace`: 356
+passed, 0 failed. `EIMP-1.plan.md`'s **P1** finding (the whole reason
+`EIMP-7` exists) marked resolved by it.
 
 **Date**: 2026-07-31 (2)
 **Updated By**: Claude Code (Sonnet 5)
