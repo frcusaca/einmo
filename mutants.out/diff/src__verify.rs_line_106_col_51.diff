@@ -1,0 +1,21 @@
+--- src/verify.rs
++++ replace == with != in find_subsequence
+@@ -98,17 +98,17 @@
+     }
+     Ok(&bytes[..prefix_end])
+ }
+ 
+ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+     if needle.is_empty() {
+         return None;
+     }
+-    haystack.windows(needle.len()).position(|w| w == needle)
++    haystack.windows(needle.len()).position(|w| w != /* ~ changed by cargo-mutants ~ */ needle)
+ }
+ 
+ // ---------------------------------------------------------------------------
+ // fs-touching convenience (the only item in this module that reads a file)
+ // ---------------------------------------------------------------------------
+ 
+ impl EinmoFile {
+     /// Read, parse, and **verify all stamps**; refuse a tampered file.

@@ -1,0 +1,24 @@
+--- src/verify.rs
++++ replace find_subsequence -> Option<usize> with Some(1)
+@@ -95,20 +95,17 @@
+                 )));
+             }
+         }
+     }
+     Ok(&bytes[..prefix_end])
+ }
+ 
+ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+-    if needle.is_empty() {
+-        return None;
+-    }
+-    haystack.windows(needle.len()).position(|w| w == needle)
++    Some(1) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ // ---------------------------------------------------------------------------
+ // fs-touching convenience (the only item in this module that reads a file)
+ // ---------------------------------------------------------------------------
+ 
+ impl EinmoFile {
+     /// Read, parse, and **verify all stamps**; refuse a tampered file.

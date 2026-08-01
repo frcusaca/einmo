@@ -439,19 +439,29 @@ mod tests {
             report.files
         );
 
-        // The gate logic: flagged_count > 0 && !flag_is_not_failure → fail.
+        // The gate itself, driven through the PRODUCTION predicate
+        // (`cli::flags_fail_the_gate`) rather than a hand-inlined copy of
+        // its body. An inlined copy asserts against itself and can never
+        // catch a regression in the real function -- and the copy that used
+        // to live here had a hardcoded `!true` operand, making the override
+        // arm a tautology that asserted nothing at all (`EIMP-8` P0).
         let flagged_count = std::fs::read_dir(config.flagged_dir(Stage::Output))
             .map(|rd| rd.count())
             .unwrap_or(0);
         assert!(flagged_count > 0, "flagged directory must have artifacts");
         // Default (flag_is_not_failure=false): any flag fails the gate.
-        let gate_fails_by_default = flagged_count > 0;
-        assert!(gate_fails_by_default, "flags must fail the gate by default");
-        // With --flag-is-not-failure: flags are advisory only.
-        let gate_fails_with_override = flagged_count > 0 && !true; // !flag_is_not_failure
         assert!(
-            !gate_fails_with_override,
+            crate::cli::flags_fail_the_gate(flagged_count, false),
+            "flags must fail the gate by default"
+        );
+        // With --flag-is-not-failure: flags are advisory only.
+        assert!(
+            !crate::cli::flags_fail_the_gate(flagged_count, true),
             "--flag-is-not-failure must downgrade flags to advisory"
         );
+        // And the predicate must not fire when there is nothing flagged --
+        // pinning both operands, so neither can be quietly hardcoded again.
+        assert!(!crate::cli::flags_fail_the_gate(0, false));
+        assert!(!crate::cli::flags_fail_the_gate(0, true));
     }
 }

@@ -23,7 +23,7 @@ ls docs/eimp | rev | sort -V | rev
 | [EIMP-5](EIMP-5.md) | Merkle-tree corpus signing — faster to compute, cheaper to update | Draft | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-6](EIMP-6.md) | Structured JSONL logging, and retiring the crash crumb | Draft | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-7](EIMP-7.md) | EinmoCase / EinmoSuite / EinmoDirectory — unify case access behind an EinmoStorage trait | complete | 2026-07-31 | Claude Code (Sonnet 5) |
-| [EIMP-8](EIMP-8.md) | Code-review findings — einmo library, review server, and zweimomo | Draft | 2026-07-31 | opencode (z-ai/glm-5.2) |
+| [EIMP-8](EIMP-8.md) | Code-review findings — einmo library, review server, and zweimomo | Draft | 2026-07-31 | opencode (z-ai/glm-5.2); Claude Code (Opus 5) |
 
 ---
 
@@ -72,6 +72,39 @@ nothing is dropped — both land after `EIMP-1`:
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-01
+**Updated By**: Claude Code (Opus 5)
+**Changes**: `EIMP-8` P0 closed. Root cause of the disagreement pinned: an
+isolated probe showed neither `overly_complex_bool_expr` nor
+`nonminimal_bool` is deny-by-default on `clippy 0.1.97`, so the repo's
+mandated gate could never have caught `verify.rs:451` — the finding's
+judgment was right, its mechanism wrong. The maintainer added
+`[workspace.lints.clippy]` denying both; both members were wired to it with
+a top-level `[lints]` / `workspace = true` (the workspace table is inert
+without a per-member opt-in, and `lints.workspace = true` written inside
+`[package]` is silently dropped). Clippy then failed at `verify.rs:451` as
+predicted. `flags_fail_the_gate` is now `pub(crate)` and the test drives it
+at all four operand corners instead of hand-inlining a copy with a
+hardcoded `!true`. Gates green: 394 tests, clippy and fmt clean. `EIMP-8`
+remains `Draft`; P26/P27/P28 and the rest are untouched.
+
+**Date**: 2026-07-31 (5)
+**Updated By**: Claude Code (Opus 5)
+**Changes**: `EIMP-8` verified and extended. Ran the toolchain gates and
+three targeted probes, added a **Triage** verdict to each of P0–P25, and
+added sixteen findings (P26–P41). **P0's blocker classification is
+withdrawn** — `cargo clippy --workspace --all-targets -- -D warnings` is
+clean (verified after a forced recheck), so nothing was ever blocked and
+the plan's Phase 0 is void. P1, P16 and P23 rejected as factually false;
+P3, P7, P8 and P14 re-characterized; P9 upgraded. Three new High items:
+**P26** stored XSS in `src/dhtml/review.html:174` via a reviewer-supplied
+flag reason (reached through the exact data flow P14 examined and cleared);
+**P27** `execute` applies decisions cleared between `plan()` and
+`execute()`, contradicting its own comment; **P28** `POST /einmo/sessions`
+opens a session over any filesystem path. Plan rewritten in triaged
+priority order (nine phases, no Phase 0 gate). `status: Draft`,
+`begun: [ ]` — awaiting ordinary maintainer triage.
 
 **Date**: 2026-07-31 (4)
 **Updated By**: opencode (z-ai/glm-5.2)

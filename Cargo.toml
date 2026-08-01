@@ -16,6 +16,9 @@ readme = "README.md"
 keywords = ["testing", "snapshot", "approval-testing", "signing", "ed25519"]
 categories = ["development-tools::testing"]
 
+[lints]
+workspace = true
+
 [dependencies]
 ed25519-dalek = "2"
 argon2 = "0.5"
@@ -89,3 +92,7 @@ path = "src/bin/cargo_einmo_review_server.rs"
 opt-level = 3
 lto = true
 strip = true
+
+[workspace.lints.clippy]
+overly_complex_bool_expr = "deny"
+nonminimal_bool = "deny"

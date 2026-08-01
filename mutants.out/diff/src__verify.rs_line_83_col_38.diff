@@ -1,0 +1,21 @@
+--- src/verify.rs
++++ replace + with - in raw_signed_prefix
+@@ -75,17 +75,17 @@
+ fn raw_signed_prefix<'a>(bytes: &'a [u8], file: &EinmoFile) -> Result<&'a [u8]> {
+     let separator = file.separator().as_bytes();
+     let num_bodies = file.sections().len();
+     // Skip the header line (everything up to and including the first LF).
+     let header_end = bytes
+         .iter()
+         .position(|&b| b == b'\n')
+         .ok_or_else(|| EinmoError::Parse("missing header newline".into()))?;
+-    let mut search_from = header_end + 1;
++    let mut search_from = header_end - /* ~ changed by cargo-mutants ~ */ 1;
+     let mut prefix_end = 0usize;
+     for i in 0..(num_bodies + 1) {
+         match find_subsequence(&bytes[search_from..], separator) {
+             Some(pos) => {
+                 prefix_end = search_from + pos + separator.len();
+                 search_from = prefix_end;
+             }
+             None => {
