@@ -72,6 +72,17 @@ pub struct TestResults {
 /// The escalating validation levels (FOOP-64 §"The escalating validation
 /// levels").
 ///
+/// A **level** is not a **stage** (`crate::stage::Stage`), even though the
+/// two share variant names — `EIMP-7` §S.9 pins the distinction: a stage is
+/// a *place* an artifact lives (the output stage, the checked stage, the
+/// verified stage — three directories, no ordering implied on their own); a
+/// level is `einmo test`'s *policy* for how strict its gate is (three
+/// ordered thresholds: `Output` < `Checked` < `Verified`). `verified/` the
+/// directory exists whether or not anyone demands `ValidationLevel::Verified`
+/// of the suite, and a suite validated at level `Checked` still has a
+/// `verified/` stage directory it simply does not judge. [`Self::stage`]
+/// is the one place that bridges the two, explicitly.
+///
 /// The levels **escalate — they do not replace**: each performs everything the
 /// level below it requires, plus its own. `Verified ⊃ Checked ⊃ Output`.
 ///

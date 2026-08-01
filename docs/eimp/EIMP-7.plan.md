@@ -958,20 +958,79 @@ four-variant `Stage`.
 Not deferrable to "later": the phrasing should land while the types are
 being renamed, so docs and code agree at every commit.
 
-- [ ] Adopt **"the output stage" / "the checked stage" / "the verified
+- [x] Adopt **"the output stage" / "the checked stage" / "the verified
       stage"** as the standard phrasing across `AGENTS.md`, `README.md`,
       and doc comments — in preference to bare "output" (ambiguous with
       an envelope's `OUTPUT` section) and to "the output directory"
       (which names the storage, not the lifecycle step).
-  - [ ] `AGENTS.md` — the stage lifecycle description.
-  - [ ] `README.md` — the four-stage overview becomes three stages plus
+  - [x] `AGENTS.md` — the stage lifecycle description.
+        (2026-07-31 00:00)
+        `AGENTS.md` had no dedicated stage-lifecycle section to begin
+        with — only a single Clarifications bullet mentioning
+        `checked/`/`verified/`. Expanded that bullet into the three-
+        stage vocabulary (output/checked/verified stage, each with its
+        own nested `flagged/` sink) and folded `output/` into the
+        never-hand-edit rule (an omission independent of this EIMP: the
+        original bullet only listed `checked/`/`verified/`, but
+        `output/` `.einmo` files are equally signed and equally wrong to
+        hand-edit).
+  - [x] `README.md` — the four-stage overview becomes three stages plus
         the per-stage flagged sink (§S.2a).
-  - [ ] `src/stage.rs` module + `Stage` doc comments; `einmo_suite.rs`'s
+        (2026-07-31 00:00)
+        "## The Four Stages" → "## The Three Stages"; table drops the
+        `Flagged`/`flagged/` row and gains a paragraph stating `flagged/`
+        is NOT a fourth stage. Every other `flagged/`-describing passage
+        updated to the per-stage-nested phrasing: the "Flagging" section
+        prose, the same-path-twice rule
+        (`flagged/<rel>` → `<stage>/flagged/<rel>`), the CLI subcommand
+        table's `einmo flag` row, and the insta-migration directory tree
+        (dropped the top-level `flagged/` line, annotated each real
+        stage with its own nested sink instead).
+  - [x] `src/stage.rs` module + `Stage` doc comments; `einmo_suite.rs`'s
         `ValidationLevel` docs (state the stage-vs-level distinction
         explicitly, per §S.9's table).
-  - [ ] `cli.rs` help text and any user-facing strings that name stages.
-- [ ] Confirm no doc still describes `flagged/` as a top-level directory
+        (2026-07-31 00:00)
+        `stage.rs`'s module doc already stated the three-stage/§S.2a
+        narrowing from earlier phase work — no further change needed
+        there. Added a new paragraph to `ValidationLevel`'s own doc
+        comment (`einmo_suite.rs`) spelling out the stage-vs-level
+        distinction directly from §S.9's table (place vs. policy,
+        `verified/` the directory existing independent of whether
+        `ValidationLevel::Verified` is demanded), rather than leaving
+        readers to infer it only from `Stage::stage()`'s one-line doc.
+  - [x] `cli.rs` help text and any user-facing strings that name stages.
+        (2026-07-31 00:00)
+        Audited every `output`/`checked`/`verified`/`flagged` occurrence
+        in `cli.rs`'s doc comments and clap help strings. Nearly all of
+        them are literal CLI *values* the user types verbatim (`einmo
+        promote output to checked`, `--stage checked`, transition
+        parsing accepting `output`/`checked`/`verified`) — rewriting
+        those to "the output stage" would misrepresent them as prose
+        when they are exact accepted tokens. Found no narrative,
+        lifecycle-describing prose in `cli.rs` in the ambiguous-with-
+        `OUTPUT`-section sense §S.9 warns about (unlike `README.md`'s
+        overview prose, which was genuinely narrative). No changes
+        made; left as a documented, deliberate no-op rather than
+        force-editing literal argument values.
+- [x] Confirm no doc still describes `flagged/` as a top-level directory
       or as a fourth stage.
+      (2026-07-31 00:00)
+      `grep -rln "flagged/"` across `*.md`/`docs/eimp/`: `AGENTS.md` and
+      `README.md` (this EIMP's own scope, both updated above); `EIMP-7.md`
+      itself (already correct, it specified the nesting); `INDEX.md`
+      (only mentions `flagged/` in EIMP-7's own changelog entries,
+      already correct). `EIMP-1.md`/`EIMP-1.plan.md`/`EIMP-2.md`/
+      `EIMP-2.plan.md` still describe the OLD top-level `flagged/` in
+      their own historical design/execution prose — left as-is per EIMP
+      convention (a spec/plan records the reasoning at the time it was
+      written; `EIMP-2` is `complete` and frozen, and `EIMP-1.plan.md`'s
+      own P1 checkbox above already points to `EIMP-7` as the superseding
+      record). Added one explicit pointer note directly in `EIMP-1.md`
+      §S.3 (still `Implementing`, so still a live read for anyone
+      picking up its remaining work) marking its `flagged/` path
+      references as superseded by `EIMP-7` §S.2a, without rewriting its
+      still-valid design reasoning (plaintext/unsigned/transient/
+      exempt-from-escalation), which `EIMP-7` never touched.
 
 ## Post-EIMP follow-ups (recorded for later)
 

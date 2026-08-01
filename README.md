@@ -18,8 +18,10 @@ reviewer was a human or a machine.
 
 ### What einmo adds
 
-- **Four-stage promotion pipeline**: `output` to `checked` to `flagged` /
-  `verified`. Each stage is a directory; each promotion appends a signed stamp.
+- **Three-stage promotion pipeline**: the output stage, the checked stage,
+  and the verified stage. Each stage is a directory; each promotion appends
+  a signed stamp. Each stage also carries its own nested `flagged/` sink for
+  artifacts set aside pending reviewer action.
 - **Ed25519 + Argon2id signing**: every `.einmo` file carries a tamper-evident
   stamp chain. No surveyed framework signs its snapshots.
 - **Verify-on-inspect**: every read verifies all signatures first. A tampered
@@ -84,19 +86,26 @@ For projects where a signed, auditable promotion chain is not needed, insta
 and expect-test remain excellent choices. Einmo is for when attestation
 matters.
 
-## The Four Stages
+## The Three Stages
 
 | Stage | Directory | What it holds | Who writes it |
 |---|---|---|---|
-| **Output** | `output/` | Generated test results (signed by test runner) | `EinmoSuite::evaluate` |
-| **Checked** | `checked/` | Reviewed outputs (AI or human promoted) | `einmo promote output to checked` |
-| **Flagged** | `flagged/` | Set aside (terminal sink) | `einmo flag <stage>` |
-| **Verified** | `verified/` | Human-signed (passphrase required) | `einmo promote checked to verified` |
+| **The output stage** | `output/` | Generated test results (signed by test runner) | `EinmoSuite::evaluate` |
+| **The checked stage** | `checked/` | Reviewed outputs (AI or human promoted) | `einmo promote output to checked` |
+| **The verified stage** | `verified/` | Human-signed (passphrase required) | `einmo promote checked to verified` |
 
 Each stage directory mirrors the `input/` tree at any depth. An input file
 like `stage1/section3/specific.foo` produces
 `output/stage1/section3/specific.foo.einmo`, and the same relative path is
 used in every other stage directory.
+
+**`flagged/` is not a fourth stage.** Each of the three stages above carries
+its own nested `flagged/` sink (`output/flagged/`, `checked/flagged/`,
+`verified/flagged/`) for artifacts set aside from that stage's ordinary flow
+pending reviewer action (`einmo flag <stage>`). This keeps a flagged
+artifact's origin stage always known, and preserves the intentional
+input/output/checked/verified directory split -- a hand-authored suite stays
+easy to browse and edit in place: type into `input/`, look at `output/`.
 
 ## The `.einmo` File Format
 
@@ -208,20 +217,25 @@ already present in a parsed file. This makes them WASM-targetable.
 
 ## Flagging
 
-Flagging moves a file from any stage (`output`, `checked`, `verified`) into
-`flagged/`. The move appends an unsigned advisory line
-`# flagged: <reason> <timestamp>` after the STAMPS section. No stamp is added
--- flagging is not a promotion. The original file is removed from its source
-stage (move semantics, not copy).
+Flagging moves a file out of its stage's ordinary flow and into that SAME
+stage's own nested `flagged/` sink -- from the output stage into
+`output/flagged/`, from the checked stage into `checked/flagged/`, from the
+verified stage into `verified/flagged/`. A flagged artifact's origin stage is
+therefore always known just from which sink it's in; there is no single
+top-level `flagged/` shared across stages. The move appends an unsigned
+advisory line `# flagged: <reason> <timestamp>` after the STAMPS section. No
+stamp is added -- flagging is not a promotion. The original file is removed
+from its source stage (move semantics, not copy).
 
 The advisory line is outside the signed bytes, so flagging does not
 invalidate the existing stamp chain. A flagged file still verifies normally.
 
-**Flagging the same path twice:** if `flagged/<rel>` already exists when a new
-flag operation targets the same relative path, the new file gets a timestamp
-suffix: `flagged/<base>.<timestamp>.einmo`. The previously flagged file is
-not overwritten -- both coexist, each with its own advisory line recording
-when and why it was flagged. This preserves the history of set-aside files.
+**Flagging the same path twice:** if `<stage>/flagged/<rel>` already exists
+when a new flag operation targets the same relative path in that same stage,
+the new file gets a timestamp suffix: `<stage>/flagged/<base>.<timestamp>.einmo`.
+The previously flagged file is not overwritten -- both coexist, each with its
+own advisory line recording when and why it was flagged. This preserves the
+history of set-aside files.
 
 ## Quick Start
 
@@ -287,7 +301,7 @@ Einmo ships a single CLI app with two binary targets sharing the same parser:
 | Subcommand | What it does |
 |---|---|
 | `einmo promote <from> to <to> <work_dir>` | Append the destination stage's stamp to every matching file. `* to flagged` delegates to `flag`. |
-| `einmo flag <work_dir> <stage>` | Move matching files into `flagged/` with an unsigned advisory line. No stamp. |
+| `einmo flag <work_dir> <stage>` | Move matching files into that stage's own nested `flagged/` sink with an unsigned advisory line. No stamp. |
 | `einmo compare <a> <b> <work_dir>` | Per-section comparison of two stages over the mirrored tree. |
 | `einmo verify <work_dir>` | Verify signature integrity across one stage (`--stage`) or all stages (`--all`). |
 | `einmo confirm-signatures <path> <prefix>` | Report which files carry a stamp whose pubkey starts with the prefix. |
@@ -821,11 +835,14 @@ If your insta snapshots live in `snapshot_tests/input/` and
 ```
 snapshot_tests/
 ├── input/          # existing .foo inputs (unchanged)
-├── output/         # einmo generates here (new)
-├── checked/        # promoted baselines (new, replaces approved/)
-├── flagged/        # set-aside files (new)
-└── verified/       # human-signed (new)
+├── output/         # einmo generates here (new); output/flagged/ holds set-aside files
+├── checked/        # promoted baselines (new, replaces approved/); checked/flagged/ holds set-aside files
+└── verified/       # human-signed (new); verified/flagged/ holds set-aside files
 ```
+
+(`flagged/` is not a top-level directory or a fourth stage -- each of the
+three stages above carries its own nested `flagged/` sink, so a flagged
+artifact's origin stage is always known. See "The Three Stages" above.)
 
 **Step 2: Write the `Evaluator` adapter.**
 
@@ -1281,6 +1298,15 @@ configuration.
 ---
 
 ## Last Updated
+
+**Date**: 2026-07-31 (2)
+**Updated By**: Claude Code (Sonnet 5)
+**Changes**: `EIMP-7`'s documentation follow-up (§S.9): "The Four Stages"
+→ "The Three Stages" — `flagged/` is not a fourth stage, it's a sink
+nested inside each of the three real stages (`output/flagged/`,
+`checked/flagged/`, `verified/flagged/`). Updated the stage table, the
+Flagging section's prose, the same-path-twice rule, the CLI subcommand
+table, and the insta-migration directory tree to match.
 
 **Date**: 2026-07-31
 **Updated By**: Sisyphus (mimo-v2.5-pro)

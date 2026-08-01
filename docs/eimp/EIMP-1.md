@@ -271,6 +271,16 @@ reviewer's note is kept **in full and in context** (they annotate the
 rendered body right where the error is; the whole annotated text is the
 note, not just an added line).
 
+**Location note (superseded by `EIMP-7` §S.2a):** this section's `flagged/`
+path references (`flagged/<test>`, "a fourth stage feel," etc.) describe
+`flagged/` as it stood when this EIMP was drafted — a single top-level
+directory. `EIMP-7` (complete 2026-07-31) nested it **inside each of the
+three real stages** instead (`output/flagged/`, `checked/flagged/`,
+`verified/flagged/`), so a flagged artifact's origin stage is always known
+and `flagged/` is never mistaken for a fourth stage of its own. The design
+reasoning below (plaintext, unsigned, transient, exempt from escalation,
+breaks the test by default) is unaffected — only the on-disk path changed.
+
 **`flagged/` is PLAINTEXT, UNSIGNED, and TRANSIENT — a development-process
 component, not a durable signed record.** This EIMP settles a question the
 corpus had left open: **flagging writes a plaintext message with no

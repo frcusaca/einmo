@@ -90,10 +90,16 @@ Binaries after release: `target/release/einmo` and `target/release/cargo-einmo`.
 
 ## Clarifications
 
-* Never directly edit files matching `checked/`, `verified/`, or any
-  `.einmo` artifact by hand — those are signed envelopes; go through the
-  `einmo` CLI (`einmo promote`, `einmo flag`) so the stamp chain stays
-  valid.
+* A test case moves through three **stages** as it's validated and
+  reviewed: **the output stage**, **the checked stage**, and **the
+  verified stage** (backed by the `output/`, `checked/`, and `verified/`
+  directories respectively). Each stage also carries its own nested
+  `flagged/` sink for artifacts pulled out of that stage's ordinary flow
+  pending reviewer action (`output/flagged/`, `checked/flagged/`,
+  `verified/flagged/` — not a top-level `flagged/`, and not a fourth
+  stage). Never directly edit any `.einmo` artifact in any of these
+  directories by hand — they are signed envelopes; go through the `einmo`
+  CLI (`einmo promote`, `einmo flag`) so the stamp chain stays valid.
 
 ## Documentation
 
@@ -137,6 +143,13 @@ instructions to your self. Dump code snippets in code fences if code or pseudo c
 is more clear.
 
 ## Last Updated
+
+**Date**: 2026-07-31 (2)
+**Updated By**: Claude Code (Sonnet 5)
+**Changes**: `EIMP-7`'s documentation follow-up (§S.9): expanded the
+Clarifications bullet into the three-stage vocabulary (the output stage,
+the checked stage, the verified stage), each with its own nested
+`flagged/` sink — not a top-level `flagged/`, not a fourth stage.
 
 **Date**: 2026-07-31
 **Updated By**: Sisyphus (mimo-v2.5-pro)
