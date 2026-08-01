@@ -1,0 +1,3 @@
+[profile.mutants]
+inherits = "test"
+debug = "none"

@@ -237,6 +237,12 @@ The previously flagged file is not overwritten -- both coexist, each with its
 own advisory line recording when and why it was flagged. This preserves the
 history of set-aside files.
 
+## Development
+
+For setup instructions, `just` recipes, the toolchain pin rationale, and
+troubleshooting, see the **Developer Guide** section in
+[`rust_instructions.md`](rust_instructions.md).
+
 ## Quick Start
 
 ```rust
@@ -1298,6 +1304,11 @@ configuration.
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-01
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Added "Development" section with cross-reference to the
+Developer Guide in `rust_instructions.md`.
 
 **Date**: 2026-07-31 (2)
 **Updated By**: Claude Code (Sonnet 5)

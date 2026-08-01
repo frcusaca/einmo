@@ -77,6 +77,10 @@ small enough that plans execute directly on `jia` with regular commits.
 
 ## Build Commands
 
+For the full developer guide — setup, `just` recipes, machine-readable output,
+toolchain pin rationale, and troubleshooting — see the **Developer Guide**
+section in [`rust_instructions.md`](rust_instructions.md).
+
 ```bash
 cargo check                                      # Quick check (fastest validation)
 cargo build                                      # Build everything
@@ -144,6 +148,11 @@ is more clear.
 
 ## Last Updated
 
+**Date**: 2026-08-01
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Added cross-reference to the Developer Guide section in
+`rust_instructions.md` from the Build Commands section.
+
 **Date**: 2026-07-31 (2)
 **Updated By**: Claude Code (Sonnet 5)
 **Changes**: `EIMP-7`'s documentation follow-up (§S.9): expanded the
@@ -156,4 +165,3 @@ the checked stage, the verified stage), each with its own nested
 **Changes**: Updated primary branch from `main` to `jia` throughout (branch
 name correction per maintainer). Added journal isolation to test modules to
 prevent unbounded log accumulation.
-repository.

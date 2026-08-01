@@ -89,3 +89,7 @@ path = "src/bin/cargo_einmo_review_server.rs"
 opt-level = 3
 lto = true
 strip = true
+
+[workspace.lints.clippy]
+overly_complex_bool_expr = "deny"
+nonminimal_bool = "deny"
