@@ -23,6 +23,7 @@ ls docs/eimp | rev | sort -V | rev
 | [EIMP-5](EIMP-5.md) | Merkle-tree corpus signing — faster to compute, cheaper to update | Draft | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-6](EIMP-6.md) | Structured JSONL logging, and retiring the crash crumb | Draft | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-7](EIMP-7.md) | EinmoCase / EinmoSuite / EinmoDirectory — unify case access behind an EinmoStorage trait | complete | 2026-07-31 | Claude Code (Sonnet 5) |
+| [EIMP-8](EIMP-8.md) | Code-review findings — einmo library, review server, and zweimomo | Draft | 2026-07-31 | opencode (z-ai/glm-5.2) |
 
 ---
 
@@ -71,6 +72,17 @@ nothing is dropped — both land after `EIMP-1`:
 ---
 
 ## Last Updated
+
+**Date**: 2026-07-31 (4)
+**Updated By**: opencode (z-ai/glm-5.2)
+**Changes**: Added `EIMP-8` — a read-only code review of the einmo
+library (`src/review.rs`), the review server (`src/review_server.rs` +
+binary), and `zweimomo`, cataloguing twenty-five findings (P0–P25) with
+locations, severities, and recommended remediations. `status: Draft`,
+`begun: [ ]` — awaiting maintainer triage. P0 (a `verify.rs:451` dead-code
+bug breaking `cargo clippy --all-targets -- -D warnings`) is called out as
+the toolchain-gate blocker that must be fixed before any substantive work
+per AGENTS.md.
 
 **Date**: 2026-07-31 (3)
 **Updated By**: Claude Code (Sonnet 5)
