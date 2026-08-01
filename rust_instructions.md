@@ -54,6 +54,103 @@ and "never `.unwrap()` in production" is a Don't).
 
 ---
 
+## Developer Guide
+
+Workspace: `einmo` (root, v0.0.5) + `zweimomo` (member, v0.0.1).
+
+### Setup
+
+```bash
+git clone <repo> && cd einmo
+rustup show                  # installs the pinned toolchain
+cargo install just           # if you don't have it
+just setup                   # dev tooling: nextest, llvm-cov, mutants
+```
+
+### Commands
+
+```bash
+just                 # fmt + lint + test — the everyday loop
+just test            # tests only
+just test verify     # tests matching "verify"
+just ci-test          # tests + JUnit XML report (CI and AI agents)
+just lint            # clippy
+just pr              # full pre-merge gate (run before opening a PR)
+just coverage        # coverage report
+just mutants --file src/verify.rs    # mutation testing, scoped
+just --list          # show all recipes
+```
+
+`just` accepts unambiguous prefixes, so `just cov`, `just mut`, and `just ci`
+all work.
+
+`just pr` is the one that matters. It runs fmt-check, clippy, the full suite, and
+mutation testing against your diff. Green means the branch is mergeable.
+
+### Machine-readable output
+
+`just ci-test` runs the `ci` nextest profile, which writes a JUnit XML report to
+`target/nextest/ci/junit.xml` (configured in `.config/nextest.toml`). Use it in
+CI, and point AI agents at it rather than having them parse console output.
+
+Nextest disables colors and progress animation automatically when stdout isn't a
+TTY, so piped output is already plain text. To force it:
+
+```bash
+cargo nextest run --workspace --color never --hide-progress-bar
+```
+
+For `cargo mutants`, the useful artifacts are in `mutants.out/` — `missed.txt`,
+`caught.txt`, `timeout.txt`, `outcomes.json` — not stdout.
+
+### Things that will bite you
+
+**Use `just test`, not `cargo test`.** We use nextest. It doesn't run doctests —
+`cargo test --doc` separately if you add any.
+
+**Don't change the toolchain.** `rust-toolchain.toml` pins it. No `rustup update`,
+no `rustup override`, no `cargo +nightly`. Bumping Rust is a deliberate commit,
+not a side effect.
+
+**Don't silence a lint to go green.** No `#[allow]`, no `-A` flags. A clippy
+error is a finding about the code.
+
+**`just mutants` is slow.** It rebuilds and reruns the suite per mutant. Always scope
+it (`--file`, `--in-diff`). `just pr` already scopes to your diff.
+
+### Why the toolchain is pinned
+
+Two machines on Rust 1.95 and 1.97 gave different clippy results on identical
+source. Clippy PR #16761 moved `nonminimal_bool` and `overly_complex_bool_expr`
+into `pedantic` (allow-by-default), so `-D warnings` stopped escalating them.
+
+What went silent was real:
+
+```rust
+let gate_fails_with_override = flagged_count > 0 && !true; // !flag_is_not_failure
+```
+
+Unconditionally `false` — a dead verification gate and a vacuous test. Hence two
+things: the toolchain pin, and `[workspace.lints.clippy]` in `Cargo.toml`, which
+names the lints we enforce so they survive the next upstream regrouping.
+
+### Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Machines disagree on clippy | `cargo clippy --version` (not `rustc`), then `rustup show active-toolchain` |
+| Clippy suspiciously quiet | `cargo clippy --workspace --all-targets -- -W clippy::pedantic` — silence means clippy-driver isn't running |
+| Stale results | `cargo clean -p einmo` |
+| Mutants crawling | Look for `TIMEOUT` in output; scope harder |
+
+Toolchain precedence, highest first: `+toolchain` → `RUSTUP_TOOLCHAIN` env →
+`rustup override` → `rust-toolchain.toml` → `rustup default`. The file is fourth,
+so a stray env var beats it.
+
+Full detail on any of this: see `AGENTS.md`, which is stricter and explains more.
+
+---
+
 ## 1. Priorities
 
 Two prioritizing axes apply. The **optimization order** governs what to optimize
@@ -1013,6 +1110,12 @@ AI-generated code is human-verified before submission. *(c23, c24)*
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-01
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Added Developer Guide section with setup instructions, `just`
+recipes, machine-readable output guidance, toolchain pin rationale, and
+troubleshooting table.
 
 **Date**: 2026-07-29
 **Updated By**: Claude Code (Sonnet 5)

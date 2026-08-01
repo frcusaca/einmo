@@ -1,0 +1,12 @@
+[profile.default]
+fail-fast = true
+slow-timeout = { period = "30s", terminate-after = 4 }
+
+[profile.mutants]
+fail-fast = true
+failure-output = "never"
+status-level = "fail"
+slow-timeout = { period = "10s", terminate-after = 2 }
+
+[profile.ci.junit]
+path = "junit.xml"
