@@ -3136,4 +3136,249 @@ mod tests {
             "journal must contain an ExecuteBatch with c.foo in executed"
         );
     }
+
+    /// A minimal signed envelope's bytes with an explicit COMMENTS body —
+    /// `case.rs`'s own `signed_bytes` test helper, duplicated rather than
+    /// exported, since it exists purely to fixture the comments-only-
+    /// divergence case below by hand, bypassing `evaluate_all` (which has
+    /// no way to make output and checked diverge only in COMMENTS).
+    fn signed_bytes_with_comments(rel: &str, output: &str, comments: &str) -> Vec<u8> {
+        use crate::format::{DEFAULT_SEPARATOR, Metadata, Section, Status};
+        use crate::signature::{Stamps, derive_keypair};
+        let bodies = vec![
+            Section::new("INPUT", "{5;}"),
+            Section::new("OUTPUT", output),
+            Section::new("COMMENTS", comments),
+        ];
+        let meta = Metadata {
+            test: rel.into(),
+            suite: "s".into(),
+            producer: "abc".into(),
+            producer_diff: String::new(),
+            generated: "2026-07-11T07:00:00Z".into(),
+            status: Status::Normal,
+            status_detail: String::new(),
+            reference: String::new(),
+            sections: vec![
+                "INPUT".into(),
+                "OUTPUT".into(),
+                "COMMENTS".into(),
+                "STAMPS".into(),
+            ],
+        };
+        let mut file = EinmoFile::new("utf-8", DEFAULT_SEPARATOR, meta, bodies, Stamps::new());
+        let (configured, _) = derive_keypair("cfg");
+        let (stage, _) = derive_keypair("");
+        file.set_stamps(Stamps::generate(&file.signed_prefix(), &configured, &stage));
+        file.serialize().unwrap()
+    }
+
+    /// `EIMP-7`'s own comprehensive test (`EIMP-7.md` §Test Plan, "Comprehensive
+    /// test"): a single realistic, multi-depth fixture suite, driven through
+    /// BOTH consumers this EIMP was written to stop drifting apart —
+    /// `einmo test`-shaped FAE/FF validation
+    /// (`EinmoTestRunner`/`check_suite_integrity`) and `einmo review`-shaped
+    /// listing (`EinmoReview::items()`) — asserting they agree on every
+    /// case's presence and agreement facts.
+    ///
+    /// Note on "the SAME `EinmoSuite` instance" (as the plan phrases it):
+    /// neither `EinmoTestRunner` (config-driven, delegates to
+    /// `compare::compare`) nor `EinmoReview` (path-driven) accept a
+    /// caller-supplied `EinmoSuite` through their public API — each
+    /// independently re-scans the same on-disk directory instead. What this
+    /// test actually proves is the property that matters: one on-disk
+    /// corpus, three independent readers (`EinmoCase::agreement` directly,
+    /// `EinmoTestRunner`'s `Problem`s, `EinmoReview`'s `ReviewItem`s), and
+    /// all three agree. A literal shared object is an implementation detail
+    /// this EIMP deliberately leaves to each caller's own scan.
+    #[test]
+    fn comprehensive_suite_wide_consistency_between_test_and_review_consumers() {
+        use crate::storage::EinmoStorage as _;
+
+        let ctx = test_context();
+
+        // Two ordinary cases -- one root-level, one multi-depth
+        // (`foop/23/sub_feature/test1`-shaped, per §S.5's directory_tree
+        // fixture shape) -- run through the real FAE/FF evaluate flow and
+        // promoted to checked. This is also the P1 repro's own shape:
+        // output==checked, verified/ stays entirely unpopulated.
+        write_input(ctx.path(), "a.foo", "{1+1;}");
+        write_input(ctx.path(), "foop/23/sub_feature/test1.foo", "{3+3;}");
+        // `input/` cover for the two hand-fixtured cases below, so their
+        // stage artifacts are never flagged as orphaned/extraneous (O1/O5)
+        // -- `check_integrity` only checks that an `input/` file with the
+        // matching id exists, never that its bytes correspond to what's
+        // signed under output/checked.
+        write_input(ctx.path(), "c_comments.foo", "{5;}");
+        write_input(ctx.path(), "d_tampered.foo", "{5;}");
+
+        let config = TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Checked);
+        crate::einmo_suite::EinmoTestRunner::new(config.clone())
+            .evaluate_all(&Echo)
+            .unwrap();
+        promote_output_to_checked(ctx.path());
+
+        let directory = EinmoDirectory::new(config.clone());
+        let c_comments_id =
+            EinmoId::from_input_rel(std::path::Path::new("c_comments.foo")).unwrap();
+        directory
+            .write(
+                &c_comments_id,
+                ArtifactLocation::Stage(Stage::Output),
+                &signed_bytes_with_comments("c_comments.foo", "5", "an output-side note"),
+            )
+            .unwrap();
+        directory
+            .write(
+                &c_comments_id,
+                ArtifactLocation::Stage(Stage::Checked),
+                &signed_bytes_with_comments("c_comments.foo", "5", "a DIFFERENT checked-side note"),
+            )
+            .unwrap();
+
+        let d_tampered_id =
+            EinmoId::from_input_rel(std::path::Path::new("d_tampered.foo")).unwrap();
+        let identical_bytes = signed_bytes_with_comments("d_tampered.foo", "5", "");
+        directory
+            .write(
+                &d_tampered_id,
+                ArtifactLocation::Stage(Stage::Output),
+                &identical_bytes,
+            )
+            .unwrap();
+        directory
+            .write(
+                &d_tampered_id,
+                ArtifactLocation::Stage(Stage::Checked),
+                &identical_bytes,
+            )
+            .unwrap();
+        // Corrupt the checked copy on disk (flip a byte inside INPUT
+        // `{5;}`) -- verify-on-inspect must refuse it, and both consumers
+        // below must report it as TAMPERED, never as an ordinary
+        // "differing" content mismatch.
+        let tampered_path = config
+            .stage_dir(Stage::Checked)
+            .join("d_tampered.foo.einmo");
+        let mut bytes = std::fs::read(&tampered_path).unwrap();
+        let pos = bytes.windows(4).position(|w| w == b"{5;}").unwrap();
+        bytes[pos + 1] = b'8';
+        std::fs::write(&tampered_path, bytes).unwrap();
+
+        // ---- ground truth, straight from EinmoCase::agreement ----
+        let suite = EinmoSuite::scan(EinmoDirectory::new(config.clone()), None).unwrap();
+        let agree_output_checked = |id: &EinmoId, policy: crate::config::MatchSections| {
+            suite
+                .case(id)
+                .unwrap()
+                .agreement(&[Stage::Output, Stage::Checked], policy)
+                .unwrap()
+                .pair(Stage::Output, Stage::Checked)
+                .cloned()
+        };
+        let a_id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
+        let multi_id =
+            EinmoId::from_input_rel(std::path::Path::new("foop/23/sub_feature/test1.foo")).unwrap();
+        assert_eq!(
+            agree_output_checked(&a_id, crate::config::MatchSections::InputOutput),
+            Some(StagePairAgreement::Agree)
+        );
+        assert_eq!(
+            agree_output_checked(&multi_id, crate::config::MatchSections::InputOutput),
+            Some(StagePairAgreement::Agree)
+        );
+        assert_eq!(
+            agree_output_checked(&c_comments_id, crate::config::MatchSections::InputOutput),
+            Some(StagePairAgreement::Agree),
+            "under the default policy a COMMENTS-only divergence must not count as differing"
+        );
+        assert_eq!(
+            agree_output_checked(
+                &c_comments_id,
+                crate::config::MatchSections::InputOutputComments
+            ),
+            Some(StagePairAgreement::Differ {
+                sections: vec!["COMMENTS".to_string()]
+            }),
+            "under the strict policy the SAME case now reads as differing -- proving \
+             the policy, not a hardcoded assumption, controls the answer"
+        );
+        assert!(
+            matches!(
+                agree_output_checked(&d_tampered_id, crate::config::MatchSections::InputOutput),
+                Some(StagePairAgreement::Tampered { .. })
+            ),
+            "a corrupted signature must read as Tampered, never Differ or Agree"
+        );
+
+        // ---- einmo test-shaped consumer: EinmoTestRunner/check_suite_integrity ----
+        let integrity = crate::einmo_suite::check_suite_integrity(
+            &config,
+            crate::einmo_suite::FailurePolicy::FailAtEnd,
+        )
+        .unwrap();
+        assert!(
+            !integrity.problems.iter().any(|p| matches!(
+                p,
+                crate::einmo_suite::Problem::SectionDifference { path, .. }
+                    if path.to_string_lossy().contains("c_comments")
+            )),
+            "the comments-only case must not surface as a SectionDifference under \
+             the suite's default policy: {:?}",
+            integrity.problems
+        );
+        assert!(
+            integrity.problems.iter().any(|p| matches!(
+                p,
+                crate::einmo_suite::Problem::SignatureDoesNotVerify { path, .. }
+                    if path.to_string_lossy().contains("d_tampered")
+            )),
+            "the tampered case must surface as SignatureDoesNotVerify: {:?}",
+            integrity.problems
+        );
+        assert!(
+            !integrity.problems.iter().any(|p| matches!(
+                p,
+                crate::einmo_suite::Problem::SectionDifference { path, .. }
+                    if path.to_string_lossy().contains("d_tampered")
+            )),
+            "a tampered artifact must never ALSO be reported as an ordinary \
+             SectionDifference: {:?}",
+            integrity.problems
+        );
+
+        // ---- einmo review-shaped consumer: EinmoReview::items() ----
+        let review = EinmoReview::open(ctx.path());
+        let items = review.items().unwrap();
+        let item_for = |rel: &str| {
+            items
+                .iter()
+                .find(|i| i.id.as_str() == rel)
+                .unwrap_or_else(|| panic!("{rel} missing from review items: {items:?}"))
+        };
+
+        assert!(!item_for("a.foo").differing);
+        assert!(!item_for("foop/23/sub_feature/test1.foo").differing);
+        assert!(
+            !item_for("c_comments.foo").differing,
+            "review must agree with the test-shaped consumer: a COMMENTS-only \
+             divergence is not \"differing\" under the shared default policy"
+        );
+        let tampered_item = item_for("d_tampered.foo");
+        assert!(
+            tampered_item.differing,
+            "a tampered checked stage cannot read as clean"
+        );
+        let checked_status = tampered_item
+            .stages
+            .iter()
+            .find(|(stage, _)| *stage == Stage::Checked)
+            .and_then(|(_, status)| status.clone());
+        assert_eq!(
+            checked_status.as_deref(),
+            Some("TAMPERED"),
+            "review must report the artifact as TAMPERED, distinguishable from an \
+             ordinary content divergence -- not just folded into differing=true"
+        );
+    }
 }

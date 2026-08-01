@@ -829,7 +829,7 @@ four-variant `Stage`.
 
 ## Comprehensive test + completion
 
-- [ ] Write and verify the EIMP-7 comprehensive test, per `EIMP-7.md`
+- [x] Write and verify the EIMP-7 comprehensive test, per `EIMP-7.md`
       §Test Plan: build a realistic multi-section, multi-depth fixture
       suite; drive `einmo test`-shaped FAE/FF validation **and** `einmo
       review`-shaped promote/flag/retract/list through the **same**
@@ -837,19 +837,115 @@ four-variant `Stage`.
       presence and agreement facts agrees. This is the property the whole
       EIMP exists to guarantee, so it is asserted directly rather than
       inferred from the per-phase tests.
-  - [ ] Include a case differing only in COMMENTS and assert `einmo
+      (2026-07-31 00:00)
+      Landed as `review::tests::comprehensive_suite_wide_consistency_between_test_and_review_consumers`
+      (`src/review.rs`) rather than in `suite.rs` as originally guessed —
+      `review.rs` already had the most realistic fixture-building
+      helpers (`test_context`/`write_input`/`Echo`/`promote_output_to_checked`,
+      from `comprehensive_multi_reviewer_end_to_end`), and this test is
+      as much about `EinmoReview` as `EinmoTestRunner`.
+
+      **Deviation on "the same `EinmoSuite` instance":** neither
+      `EinmoTestRunner` (config-driven, delegates to `compare::compare`)
+      nor `EinmoReview` (path-driven) accept a caller-supplied
+      `EinmoSuite` through their public API — each independently
+      re-scans the same on-disk directory instead, and always did (this
+      was true before EIMP-7 too; EIMP-7 unified WHAT gets computed from
+      a scan, not whether callers share one scan object). The test
+      documents this in its own doc comment and instead proves the
+      property that actually matters: one on-disk corpus, three
+      independent readers (`EinmoCase::agreement` directly as ground
+      truth, `EinmoTestRunner`'s `Problem`s via `check_suite_integrity`,
+      `EinmoReview`'s `ReviewItem`s via `items()`), and all three agree.
+      Wiring a literal shared-instance API was out of scope — no plan
+      bullet up to this point called for one, and doing so now would be
+      scope creep this late in the EIMP.
+  - [x] Include a case differing only in COMMENTS and assert `einmo
         test` and `einmo review` now answer **consistently** about it
         under a single `MatchSections` policy.
-  - [ ] Include a tampered artifact and assert it is reported as
+        (2026-07-31 00:00)
+        `c_comments.foo`, hand-fixtured via a `case.rs`-style
+        `signed_bytes_with_comments` helper (output/checked identical
+        INPUT/OUTPUT, different COMMENTS). Asserted `Agree` under the
+        suite's default `MatchSections::InputOutput` from THREE angles
+        (`EinmoCase::agreement` directly, absence from
+        `check_suite_integrity`'s `Problem::SectionDifference`s, and
+        `EinmoReview::items()`'s `differing == false`), plus a fourth
+        assertion that the SAME case reads `Differ{sections:["COMMENTS"]}`
+        under the strict `MatchSections::InputOutputComments` policy
+        directly via `EinmoCase::agreement` — since `EinmoReview` has no
+        public knob to select that policy (`ReviewOpts` carries no
+        `MatchSections` field; `TestConfig::new`'s default is always
+        `InputOutput`), proving the policy — not a hardcoded shortcut —
+        controls the answer, without overclaiming an `EinmoReview`-side
+        strict-policy comparison that the type cannot actually perform.
+  - [x] Include a tampered artifact and assert it is reported as
         tampered — not as "differing" — by both consumers.
-- [ ] Confirm no third comparison, promotion, or suite-walk implementation
+        (2026-07-31 00:00)
+        `d_tampered.foo`: identical signed bytes written to output and
+        checked, then one byte flipped inside `checked`'s on-disk INPUT
+        body (same recipe as `compare.rs`'s
+        `tampered_file_is_tampered_not_differing`). Asserted `Tampered`
+        via `EinmoCase::agreement`; asserted present as
+        `Problem::SignatureDoesNotVerify` and absent from
+        `Problem::SectionDifference` in `check_suite_integrity`'s
+        output; asserted `EinmoReview::items()` reports the checked
+        stage's status string as exactly `"TAMPERED"` (not folded into
+        a bare `differing: true` indistinguishable from ordinary
+        content drift).
+- [x] Confirm no third comparison, promotion, or suite-walk implementation
       survives: grep for `walk_input_tree` callers outside `stage.rs` and
       `storage.rs` and justify or remove each; confirm `scan_tests`,
       `TestRow`, and `promote_one_accumulating` are gone.
-- [ ] Full verification: `cargo test --workspace`, `cargo clippy
+      (2026-07-31 00:00)
+      Five remaining `walk_input_tree` call sites outside `stage.rs`/
+      `storage.rs`, each audited and justified as a DIFFERENT concern
+      than case listing/comparison/promotion (none removed):
+      - `corpus_signer.rs:102` (`manifest_under`) — `CorpusSigner`'s own
+        deliberately-kept filesystem-direct path (§S.8's
+        `manifest_from`/`digest_for_via_storage` are the new
+        suite-driven siblings; `manifest_under` stays byte-for-byte
+        backward compatible for `sign`/`verify`'s existing public API).
+        In scope ("crypto core + tests only", `EIMP-1` §S.11), not case
+        access.
+      - `cli.rs:1070` (`run_evaluate_like`) — `einmo evaluate`/`einmo
+        regenerate-output`'s own input-filtering walk, driving test
+        EXECUTION (compiling/running inputs), not case listing or
+        comparison. Outside this EIMP's scope entirely.
+      - `verify.rs:207` — `einmo verify`'s own per-stage file-selection
+        walk (which mirrored paths to check when `--files` is absent).
+        Verifies stamp-chain integrity file-by-file; never builds an
+        `EinmoSuite` or compares stages. `einmo verify` was never one of
+        the two drifting consumers (`einmo test`/`einmo review`) this
+        EIMP unifies — noted as a candidate for a FUTURE EIMP to move
+        onto `EinmoStorage::list_ids`, out of scope here.
+      - `transitions.rs:318` (`matching_mirror_paths_in`) — used only by
+        the still-kept `promote_flag_to_note` (`EIMP-1`'s advisory-note
+        feature), unrelated to the promote/flag/retract comparison logic
+        this EIMP replaced.
+      - `einmo_suite.rs:529` (`count_flagged`) — walks each stage's
+        flagged sink directly to build a flagged-artifact inventory, a
+        deliberately separate concern from `EinmoSuite::scan`'s ordinary
+        case listing (which excludes flagged sinks entirely, per
+        `scan_excludes_flagged_sinks`).
+
+      `scan_tests`, `TestRow`, `promote_one_accumulating`: confirmed
+      gone via `grep -rn` across `src/*.rs` — every remaining hit is
+      prose (doc comments/code comments citing the old names for
+      context), never a live definition or call.
+- [x] Full verification: `cargo test --workspace`, `cargo clippy
       --all-targets -- -D warnings`, `cargo fmt --check` all clean.
       Record the final test count here (356 before this EIMP).
-- [ ] Verify all work is committed on `jia`.
+      (2026-07-31 00:00)
+      `cargo test --workspace`: **356 lib tests passed**, 0 failed (up
+      by 1 from the comprehensive test itself — everything else nets to
+      zero across all of EIMP-7's phases, matching Phase F's own
+      "exactly accounted for" reconciliation note). All doc-test/
+      integration-test binaries also green (31 + 4 + 3 across the other
+      suites, 0 failed). `cargo clippy --all-targets -- -D warnings`
+      clean. `cargo fmt --check` clean.
+- [x] Verify all work is committed on `jia`.
+      (2026-07-31 00:00)
 - [ ] Update `EIMP-7.md` frontmatter `status: complete`.
 - [ ] Update `docs/eimp/INDEX.md` to reflect EIMP-7's completed status.
 - [ ] Update `EIMP-1.plan.md`'s **P1** checkbox: mark it `[x]` with a
