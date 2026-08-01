@@ -946,12 +946,15 @@ four-variant `Stage`.
       clean. `cargo fmt --check` clean.
 - [x] Verify all work is committed on `jia`.
       (2026-07-31 00:00)
-- [ ] Update `EIMP-7.md` frontmatter `status: complete`.
-- [ ] Update `docs/eimp/INDEX.md` to reflect EIMP-7's completed status.
-- [ ] Update `EIMP-1.plan.md`'s **P1** checkbox: mark it `[x]` with a
+- [x] Update `EIMP-7.md` frontmatter `status: complete`.
+      (2026-07-31 00:00)
+- [x] Update `docs/eimp/INDEX.md` to reflect EIMP-7's completed status.
+      (2026-07-31 00:00)
+- [x] Update `EIMP-1.plan.md`'s **P1** checkbox: mark it `[x]` with a
       timestamp, noting it was resolved by EIMP-7 rather than in place —
       P1 is the finding this EIMP implements, and leaving it open would
       misreport EIMP-1's own state.
+      (2026-07-31 00:00)
 
 ## Documentation — the stage vocabulary (§S.9)
 
