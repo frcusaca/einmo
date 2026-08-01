@@ -2,6 +2,7 @@
 name = "zweimomo"
 version = "0.0.1"
 edition = "2024"
+rust-version.workspace = true
 description = "Einmo's companion test crate (JavaScript-only slice): a pure-Rust Evaluator impl (boa_engine) exercising einmo's signed-snapshot pipeline against real signed fixtures."
 license = "MIT"
 # Demo/debugging tool, not a library for external use — never published.

@@ -24,6 +24,7 @@ ls docs/eimp | rev | sort -V | rev
 | [EIMP-6](EIMP-6.md) | Structured JSONL logging, and retiring the crash crumb | Draft | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-7](EIMP-7.md) | EinmoCase / EinmoSuite / EinmoDirectory — unify case access behind an EinmoStorage trait | complete | 2026-07-31 | Claude Code (Sonnet 5) |
 | [EIMP-8](EIMP-8.md) | Code-review findings — einmo library, review server, and zweimomo | Draft | 2026-07-31 | opencode (z-ai/glm-5.2); Claude Code (Opus 5) |
+| [EIMP-9](EIMP-9.md) | The test-tooling contract — one reliable way to run einmo's tests and read the results | Implementing | 2026-08-01 | Claude Code (Opus 5) |
 
 ---
 
