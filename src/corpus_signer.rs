@@ -114,6 +114,23 @@ impl CorpusSigner {
         })
     }
 
+    /// As [`Self::manifest_under`], but from an already-known id list
+    /// (`EinmoSuite`'s own scan, `EIMP-7` §S.8) rather than walking the
+    /// stage directory independently.
+    pub(crate) fn manifest_from(
+        &self,
+        stage: Stage,
+        collation: Collation,
+        mut ids: Vec<EinmoId>,
+    ) -> Result<SectionManifest> {
+        collation.sort(&mut ids)?;
+        Ok(SectionManifest {
+            stage,
+            collation,
+            ids,
+        })
+    }
+
     /// Manifest + sequential streaming read + hash → the message digest to
     /// sign or verify.
     ///
@@ -162,6 +179,37 @@ impl CorpusSigner {
         })
     }
 
+    /// As [`Self::digest_for`], but reading each artifact's bytes through
+    /// an [`crate::storage::EinmoStorage`] instead of a raw filesystem
+    /// path (`EIMP-7` §S.8) — what lets a non-filesystem backend be
+    /// signable. No `check_read_len` race is possible here:
+    /// [`crate::storage::EinmoStorage::read`] returns a byte vector
+    /// atomically, there is no separate stat-then-read to disagree with
+    /// itself. The digest is byte-identical to [`Self::digest_for`]'s for
+    /// the same manifest and bytes: SHA-256 over one contiguous update
+    /// call is the same hash as the same bytes fed in 64KB chunks.
+    pub(crate) fn digest_for_via_storage<S: crate::storage::EinmoStorage>(
+        &self,
+        manifest: &SectionManifest,
+        storage: &S,
+    ) -> Result<SectionDigest> {
+        let mut hasher = Sha256::new();
+        hasher.update(manifest.header_bytes());
+        for id in &manifest.ids {
+            let bytes = storage
+                .read(id, crate::storage::ArtifactLocation::Stage(manifest.stage))?
+                .ok_or_else(|| {
+                    EinmoError::CorpusSignature(format!("{id}: artifact disappeared mid-sign"))
+                })?;
+            hasher.update(&bytes);
+        }
+        Ok(SectionDigest {
+            stage: manifest.stage,
+            collation: manifest.collation,
+            bytes: hasher.finalize().into(),
+        })
+    }
+
     /// (Re)sign `stage`'s section: derive the SLH-DSA key from `key`'s
     /// passphrase, sign the digest, and write `.section.sig` into the stage
     /// directory (dot-named, so einmo's walkers — and this module's own
@@ -177,6 +225,38 @@ impl CorpusSigner {
     /// [`EinmoError::Io`] if `.section.sig` cannot be written.
     pub fn sign(&self, stage: Stage, key: &KeySource) -> Result<SectionSig> {
         let digest = self.digest(stage)?;
+        self.sign_digest(stage, key, digest)
+    }
+
+    /// As [`Self::sign`], but building the manifest from `ids` and reading
+    /// bytes through `storage` (`EIMP-7` §S.8) — what
+    /// [`crate::suite::EinmoSuite::update_corpus_signature`] drives.
+    /// `.section.sig` itself is still written directly to the filesystem:
+    /// it is stage-level metadata, not an id-addressable artifact
+    /// [`crate::storage::EinmoStorage`] has a slot for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EinmoError::CorpusSignature`] if signing fails, or
+    /// [`EinmoError::Io`] if `.section.sig` cannot be written.
+    pub(crate) fn sign_via_storage<S: crate::storage::EinmoStorage>(
+        &self,
+        stage: Stage,
+        key: &KeySource,
+        ids: Vec<EinmoId>,
+        storage: &S,
+    ) -> Result<SectionSig> {
+        let manifest = self.manifest_from(stage, self.collation, ids)?;
+        let digest = self.digest_for_via_storage(&manifest, storage)?;
+        self.sign_digest(stage, key, digest)
+    }
+
+    fn sign_digest(
+        &self,
+        stage: Stage,
+        key: &KeySource,
+        digest: SectionDigest,
+    ) -> Result<SectionSig> {
         let (sk, pk) = derive_slh_keypair(key.passphrase());
         let sig_bytes = sk
             .try_sign_with_rng(&mut OsRng, &digest.bytes, b"", false)
@@ -209,6 +289,38 @@ impl CorpusSigner {
     /// malformed, names an unrecognized collation or parameter set, or the
     /// signature does not verify against the recomputed digest.
     pub fn verify(&self, stage: Stage) -> Result<()> {
+        let (sig, collation) = self.read_section_sig(stage)?;
+        let manifest = self.manifest_under(stage, collation)?;
+        let digest = self.digest_for(&manifest)?;
+        check_signature(stage, &sig, &digest)
+    }
+
+    /// As [`Self::verify`], but reading section bytes through `storage`
+    /// instead of `self.suite_root` directly (`EIMP-7` §S.8) — used by
+    /// [`crate::suite::EinmoSuite::update_corpus_signature`] to check
+    /// currency without assuming its `EinmoStorage` is a filesystem at
+    /// all, let alone this one's `suite_root`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::verify`].
+    pub(crate) fn verify_via_storage<S: crate::storage::EinmoStorage>(
+        &self,
+        stage: Stage,
+        storage: &S,
+    ) -> Result<()> {
+        let (sig, collation) = self.read_section_sig(stage)?;
+        let ids = storage.list_ids(crate::storage::ArtifactLocation::Stage(stage))?;
+        let manifest = self.manifest_from(stage, collation, ids)?;
+        let digest = self.digest_for_via_storage(&manifest, storage)?;
+        check_signature(stage, &sig, &digest)
+    }
+
+    /// Read and parse `stage`'s `.section.sig`, checking the parameter set
+    /// and recovering the collation it was recorded under — the common
+    /// prefix [`Self::verify`]/[`Self::verify_via_storage`] both need
+    /// before they diverge on how they recompute the digest.
+    fn read_section_sig(&self, stage: Stage) -> Result<(SectionSig, Collation)> {
         let path = self.section_sig_path(stage);
         let content = std::fs::read_to_string(&path).map_err(|e| EinmoError::io(&path, e))?;
         let sig = SectionSig::parse(content.trim())?;
@@ -222,37 +334,46 @@ impl CorpusSigner {
         // An unrecognized collation identifier fails as *that* — never as a
         // generic signature mismatch indistinguishable from tampering.
         let collation = Collation::parse(&sig.collation_id)?;
+        Ok((sig, collation))
+    }
 
-        let manifest = self.manifest_under(stage, collation)?;
-        let digest = self.digest_for(&manifest)?;
-
-        let pk_bytes: [u8; PK_LEN] = hex::decode(&sig.pubkey_hex)
-            .ok()
-            .and_then(|v| v.try_into().ok())
-            .ok_or_else(|| {
-                EinmoError::CorpusSignature(format!("malformed pubkey hex {:?}", sig.pubkey_hex))
-            })?;
-        let pk = slh_dsa_sha2_256s::PublicKey::try_from_bytes(&pk_bytes)
-            .map_err(|e| EinmoError::CorpusSignature(format!("malformed pubkey: {e}")))?;
-        let sig_bytes: [u8; SIG_LEN] = B64
-            .decode(&sig.signature_b64)
-            .ok()
-            .and_then(|v| v.try_into().ok())
-            .ok_or_else(|| {
-                EinmoError::CorpusSignature("malformed section signature bytes".to_string())
-            })?;
-
-        if pk.verify(&digest.bytes, &sig_bytes, b"") {
-            Ok(())
-        } else {
-            Err(EinmoError::CorpusSignature(format!(
-                "section signature for stage {stage} does not verify"
-            )))
-        }
+    /// Whether `stage`'s `.section.sig` exists at all — no more than a
+    /// stat, used by [`crate::suite::EinmoSuite::update_corpus_signature`]
+    /// to report `Created` vs `Updated` (`EIMP-7` §S.8).
+    pub(crate) fn section_sig_exists(&self, stage: Stage) -> bool {
+        self.section_sig_path(stage).exists()
     }
 
     fn section_sig_path(&self, stage: Stage) -> PathBuf {
         self.suite_root.join(stage.dir_name()).join(".section.sig")
+    }
+}
+
+/// The pubkey/signature-bytes decode-and-check shared by
+/// [`CorpusSigner::verify`] and [`CorpusSigner::verify_via_storage`].
+fn check_signature(stage: Stage, sig: &SectionSig, digest: &SectionDigest) -> Result<()> {
+    let pk_bytes: [u8; PK_LEN] = hex::decode(&sig.pubkey_hex)
+        .ok()
+        .and_then(|v| v.try_into().ok())
+        .ok_or_else(|| {
+            EinmoError::CorpusSignature(format!("malformed pubkey hex {:?}", sig.pubkey_hex))
+        })?;
+    let pk = slh_dsa_sha2_256s::PublicKey::try_from_bytes(&pk_bytes)
+        .map_err(|e| EinmoError::CorpusSignature(format!("malformed pubkey: {e}")))?;
+    let sig_bytes: [u8; SIG_LEN] = B64
+        .decode(&sig.signature_b64)
+        .ok()
+        .and_then(|v| v.try_into().ok())
+        .ok_or_else(|| {
+            EinmoError::CorpusSignature("malformed section signature bytes".to_string())
+        })?;
+
+    if pk.verify(&digest.bytes, &sig_bytes, b"") {
+        Ok(())
+    } else {
+        Err(EinmoError::CorpusSignature(format!(
+            "section signature for stage {stage} does not verify"
+        )))
     }
 }
 

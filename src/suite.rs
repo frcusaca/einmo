@@ -8,11 +8,32 @@ use std::path::Path;
 
 use crate::case::{EinmoCase, PromoteOutcome};
 use crate::config::KeySource;
+use crate::corpus_signer::CorpusSigner;
 use crate::error::{EinmoError, Result};
 use crate::signature::StageKeypair;
 use crate::stage::{EinmoId, Stage, mirror_input_path};
 use crate::storage::{ArtifactLocation, EinmoStorage};
 use crate::transitions::{FlagReport, Promoted, PromotionReport, RetractReport};
+
+/// What [`EinmoSuite::update_corpus_signature`] did to `stage`'s
+/// `.section.sig` (`EIMP-7` §S.8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CorpusSignatureUpdate {
+    /// No signature existed for this stage; one was written.
+    Created {
+        /// Number of ids in the manifest that was signed.
+        manifest_len: usize,
+    },
+    /// A signature existed but no longer verified against the current
+    /// corpus state, so it was re-signed.
+    Updated {
+        /// Number of ids in the manifest that was signed.
+        manifest_len: usize,
+    },
+    /// A signature already existed and still verifies; nothing was
+    /// written.
+    AlreadyCurrent,
+}
 
 /// An in-memory snapshot of one suite: every [`EinmoId`] with something at
 /// `input/` or any stage, built by one scan.
@@ -210,6 +231,51 @@ impl<S: EinmoStorage> EinmoSuite<S> {
         Ok(report)
     }
 
+    /// Bring `stage`'s section signature up to date (`EIMP-7` §S.8).
+    /// Builds the manifest from ids this suite's own storage already
+    /// knows about — no fourth independent directory walk — constructs
+    /// the digest by reading each artifact's bytes through
+    /// [`EinmoStorage`], and (re)signs `signer`'s `.section.sig` only
+    /// where it is absent or stale.
+    ///
+    /// `signer` is passed in rather than constructed here:
+    /// [`CorpusSigner`]'s own construction (`suite_root`, `Collation`) is
+    /// a filesystem/`TestConfig` concern this generic-over-storage type
+    /// has no business owning — the suite DRIVES an existing signer, it
+    /// does not decide how one gets built.
+    ///
+    /// Currency is checked via [`CorpusSigner::verify_via_storage`]: if
+    /// the CURRENT corpus state (through this suite's own storage) still
+    /// satisfies whatever `.section.sig` already records, nothing is
+    /// written — this is what makes routine re-signing affordable rather
+    /// than a full re-read-and-resign every time.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EinmoError::CorpusSignature`] on an unrecognized
+    /// collation or a manifest/digest inconsistency, or propagates any
+    /// [`EinmoStorage`] I/O failure.
+    pub fn update_corpus_signature(
+        &self,
+        signer: &CorpusSigner,
+        stage: Stage,
+        key: &KeySource,
+    ) -> Result<CorpusSignatureUpdate> {
+        let existed = signer.section_sig_exists(stage);
+        if existed && signer.verify_via_storage(stage, &self.storage).is_ok() {
+            return Ok(CorpusSignatureUpdate::AlreadyCurrent);
+        }
+
+        let ids = self.storage.list_ids(ArtifactLocation::Stage(stage))?;
+        let manifest_len = ids.len();
+        signer.sign_via_storage(stage, key, ids, &self.storage)?;
+        Ok(if existed {
+            CorpusSignatureUpdate::Updated { manifest_len }
+        } else {
+            CorpusSignatureUpdate::Created { manifest_len }
+        })
+    }
+
     /// Group this suite's cases by their [`EinmoId`]'s path components —
     /// `foop/23/sub_feature/test1` nests under `foop` → `foop/23` →
     /// `foop/23/sub_feature`. Pure and on-demand: no separate tree state
@@ -267,6 +333,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    use crate::collation::Collation;
     use crate::config::TestConfig;
     use crate::einmo_suite::ValidationLevel;
     use crate::storage::{EinmoDirectory, InMemoryStorage};
@@ -742,5 +809,142 @@ mod tests {
                 .is_some(),
             "b.foo did not match the filter and must survive"
         );
+    }
+
+    // ---- update_corpus_signature() ----
+    //
+    // `EinmoSuite` drives `CorpusSigner` through the `EinmoStorage`-backed
+    // methods (`EIMP-7` §S.8) instead of `CorpusSigner` walking a
+    // filesystem stage directory independently. These tests fixture a real
+    // `EinmoDirectory` (not `InMemoryStorage`) because `CorpusSigner`
+    // itself is still filesystem-rooted for `.section.sig` -- the digest
+    // it signs over is what now comes from the suite's storage.
+
+    fn corpus_signer_for(dir: &EinmoDirectory) -> CorpusSigner {
+        CorpusSigner::new(dir.config().work_dir(), Collation::DEFAULT)
+    }
+
+    #[test]
+    fn update_corpus_signature_creates_when_none_exists() {
+        let (_tmp, dir) = directory_fixture();
+        dir.write(&id("a.foo"), ArtifactLocation::Stage(Stage::Output), b"x")
+            .unwrap();
+        dir.write(&id("b.foo"), ArtifactLocation::Stage(Stage::Output), b"y")
+            .unwrap();
+        let signer = corpus_signer_for(&dir);
+        let suite = EinmoSuite::scan(dir, None).unwrap();
+        let key = KeySource::from_passphrase("a-corpus-signing-passphrase");
+
+        assert!(!signer.section_sig_exists(Stage::Output));
+        let outcome = suite
+            .update_corpus_signature(&signer, Stage::Output, &key)
+            .unwrap();
+        assert_eq!(outcome, CorpusSignatureUpdate::Created { manifest_len: 2 });
+        assert!(signer.section_sig_exists(Stage::Output));
+        assert!(
+            signer.verify(Stage::Output).is_ok(),
+            "a signature written via the storage-backed path must also \
+             verify through CorpusSigner's own plain filesystem verify() \
+             -- proof the two paths agree on the same bytes"
+        );
+    }
+
+    #[test]
+    fn update_corpus_signature_is_a_no_op_when_already_current() {
+        let (_tmp, dir) = directory_fixture();
+        dir.write(&id("a.foo"), ArtifactLocation::Stage(Stage::Output), b"x")
+            .unwrap();
+        let signer = corpus_signer_for(&dir);
+        let key = KeySource::from_passphrase("a-corpus-signing-passphrase");
+        let suite = EinmoSuite::scan(dir, None).unwrap();
+        suite
+            .update_corpus_signature(&signer, Stage::Output, &key)
+            .unwrap();
+
+        let sig_path = suite
+            .storage()
+            .config()
+            .work_dir()
+            .join(Stage::Output.dir_name())
+            .join(".section.sig");
+        let before = std::fs::read(&sig_path).unwrap();
+
+        let outcome = suite
+            .update_corpus_signature(&signer, Stage::Output, &key)
+            .unwrap();
+        assert_eq!(outcome, CorpusSignatureUpdate::AlreadyCurrent);
+
+        let after = std::fs::read(&sig_path).unwrap();
+        assert_eq!(
+            before, after,
+            "AlreadyCurrent must not rewrite .section.sig -- SLH-DSA \
+             signing is randomized, so any re-sign would change these \
+             bytes even over the same digest"
+        );
+    }
+
+    #[test]
+    fn update_corpus_signature_re_signs_when_stale() {
+        let (_tmp, dir) = directory_fixture();
+        dir.write(&id("a.foo"), ArtifactLocation::Stage(Stage::Output), b"x")
+            .unwrap();
+        let signer = corpus_signer_for(&dir);
+        let key = KeySource::from_passphrase("a-corpus-signing-passphrase");
+        let suite = EinmoSuite::scan(dir, None).unwrap();
+        suite
+            .update_corpus_signature(&signer, Stage::Output, &key)
+            .unwrap();
+
+        // Mutate the corpus after signing -- the recorded signature no
+        // longer verifies, so the next update must re-sign, not skip.
+        suite
+            .storage()
+            .write(&id("b.foo"), ArtifactLocation::Stage(Stage::Output), b"y")
+            .unwrap();
+        assert!(
+            signer.verify(Stage::Output).is_err(),
+            "sanity: the mutation above must actually invalidate the \
+             existing signature"
+        );
+
+        let outcome = suite
+            .update_corpus_signature(&signer, Stage::Output, &key)
+            .unwrap();
+        assert_eq!(outcome, CorpusSignatureUpdate::Updated { manifest_len: 2 });
+        assert!(signer.verify(Stage::Output).is_ok());
+    }
+
+    #[test]
+    fn digest_via_storage_matches_corpus_signers_own_direct_digest() {
+        // Baseline parity check (`EIMP-7` §S.8): the digest the suite
+        // drives `CorpusSigner` to sign over through `EinmoStorage` must
+        // be byte-identical to what `CorpusSigner` computes walking the
+        // filesystem directly -- the refactor must not have changed what
+        // gets hashed, only how the bytes are read.
+        let (_tmp, dir) = directory_fixture();
+        for rel in ["a.foo", "b.foo", "sub/c.foo"] {
+            dir.write(
+                &id(rel),
+                ArtifactLocation::Stage(Stage::Output),
+                b"same-bytes",
+            )
+            .unwrap();
+        }
+        let signer = corpus_signer_for(&dir);
+        let direct_digest = signer.digest(Stage::Output).unwrap();
+
+        let suite = EinmoSuite::scan(dir, None).unwrap();
+        let ids = suite
+            .storage()
+            .list_ids(ArtifactLocation::Stage(Stage::Output))
+            .unwrap();
+        let manifest = signer
+            .manifest_from(Stage::Output, Collation::DEFAULT, ids)
+            .unwrap();
+        let via_storage_digest = signer
+            .digest_for_via_storage(&manifest, suite.storage())
+            .unwrap();
+
+        assert_eq!(direct_digest.as_bytes(), via_storage_digest.as_bytes());
     }
 }

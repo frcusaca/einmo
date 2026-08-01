@@ -728,31 +728,104 @@ four-variant `Stage`.
 
 ## Phase G — `EinmoSuite` drives `CorpusSigner` (§S.8)
 
-- [ ] Read §S.8 of `EIMP-7.md`.
-- [ ] Baseline first: record the current section digest for a fixture
+- [x] Read §S.8 of `EIMP-7.md`.
+      (2026-07-31 00:00)
+- [x] Baseline first: record the current section digest for a fixture
       corpus. It **must not change** — this phase moves where the
       manifest's ids and bytes come from, never what the manifest
       contains.
-- [ ] Write tests first for all three `CorpusSignatureUpdate` outcomes:
+      (2026-07-31 00:00)
+      Confirmed via `corpus_signer::tests::digest_via_storage_matches_corpus_signers_own_direct_digest`,
+      which builds the SAME manifest two ways — `CorpusSigner::digest`
+      walking the filesystem directly vs. `digest_for_via_storage` fed
+      the suite's own scanned ids and `EinmoStorage::read` — and asserts
+      `SectionDigest::as_bytes()` is identical. No separate "recorded
+      baseline" fixture file was needed since the two code paths run
+      side-by-side in the same test against the same corpus.
+- [x] Write tests first for all three `CorpusSignatureUpdate` outcomes:
       `Created` (no `.section.sig` yet), `Updated` (corpus changed since
       signing), `AlreadyCurrent` (signature matches — **asserting
       nothing was written**, e.g. by mtime or by a storage-write
       counter). The `AlreadyCurrent` arm is the one that makes routine
       re-signing affordable, so it is asserted, not assumed.
-- [ ] Implement `EinmoSuite::update_corpus_signature(stage, key)` +
+      (2026-07-31 00:00)
+      `AlreadyCurrent`'s "nothing was written" assertion reads the raw
+      `.section.sig` bytes before and after a second `update_corpus_signature`
+      call and asserts byte-equality — stronger than an mtime check, and
+      exploits that SLH-DSA signing is itself randomized
+      (`try_sign_with_rng`/`OsRng`), so ANY actual re-sign would produce
+      different bytes even over an identical digest. Byte-equality is
+      therefore proof-of-no-write, not just proof-of-same-content.
+- [x] Implement `EinmoSuite::update_corpus_signature(stage, key)` +
       `CorpusSignatureUpdate`: build the manifest from the cases already
       scanned into the suite (no fourth walk), construct the
       `CorpusSigner` over it, read artifact bytes through
       `EinmoStorage`, and write only where absent or stale.
-- [ ] Change `CorpusSigner::manifest_under` (`src/corpus_signer.rs:100`)
+      (2026-07-31 00:00)
+      Deviation from the sketch: `CorpusSigner` is a constructor
+      argument (`signer: &CorpusSigner`), not constructed inside
+      `update_corpus_signature`. `CorpusSigner::new` needs a `suite_root`
+      PathBuf and a `Collation` — both `TestConfig`/filesystem concerns
+      this generic-over-`EinmoStorage` method has no business deciding.
+      The suite DRIVES an existing signer (tells it which ids/bytes to
+      use); it does not own how one gets built. This mirrors the
+      `EinmoCase`/`EinmoSuite` "the suite is told, the suite tells the
+      cases" ownership already documented in §S.10.
+- [x] Change `CorpusSigner::manifest_under` (`src/corpus_signer.rs:100`)
       to accept the suite's case list instead of walking independently;
       route `digest_for`'s per-artifact reads through `EinmoStorage` so a
       non-filesystem backend is signable (§S.8 consequence 2).
-- [ ] Migrate `cli.rs`'s corpus-signing call site onto
+      (2026-07-31 00:00)
+      Deviation: `manifest_under` itself is untouched (still the plain
+      filesystem-walking path `sign`/`verify`'s existing public
+      signatures rely on — those stay byte-for-byte backward compatible,
+      proven by all 17 pre-existing `corpus_signer::` tests passing
+      unedited). Added SIBLING methods instead: `manifest_from(stage,
+      collation, ids)` (skips the walk, takes ids directly) and
+      `digest_for_via_storage(manifest, storage)` (reads bytes via
+      `EinmoStorage::read` instead of `std::fs::read`). `sign`/`verify`
+      each split into a public unchanged entry point plus a shared
+      private tail (`sign_digest`/`read_section_sig`+`check_signature`)
+      and a new `pub(crate)` `_via_storage` twin
+      (`sign_via_storage`/`verify_via_storage`) built on the new
+      sibling methods. `section_sig_exists(&self, stage) -> bool`
+      (`pub(crate)`) added so `update_corpus_signature` can tell
+      `Created` from `Updated` without parsing `.section.sig` first.
+      `.section.sig` itself stays a direct filesystem write/read
+      (`self.suite_root.join(...)`) — it is stage-level metadata, not
+      an id-addressable artifact `EinmoStorage` has a slot for.
+- [x] Migrate `cli.rs`'s corpus-signing call site onto
       `update_corpus_signature`; the caller no longer assembles a signer
       or decides staleness.
-- [ ] Assert the digest is **byte-identical** to the recorded baseline.
-- [ ] Phase G tests green; `clippy`/`fmt` clean; commit.
+      (2026-07-31 00:00)
+      **N/A** — confirmed via
+      `grep -n "CorpusSigner\|cmd_.*sign" src/cli.rs` returning nothing.
+      No such call site exists yet; `CorpusSigner` is still, as its own
+      module doc states, "crypto core + tests only" (`EIMP-1` §S.11's
+      documented scope boundary) — it is not held by `EinmoReview` or
+      called from the live promotion flow. `update_corpus_signature` is
+      ready for that integration whenever it happens, but wiring a new
+      CLI command/flag is out of EIMP-7's scope (unifying the
+      case-access layer), not a migration of an existing call site.
+- [x] Assert the digest is **byte-identical** to the recorded baseline.
+      (2026-07-31 00:00)
+      Same test as the earlier baseline checkbox
+      (`digest_via_storage_matches_corpus_signers_own_direct_digest`) —
+      asserts equality directly rather than against a separately
+      recorded/serialized baseline, since both digests are computed
+      live from the same fixture corpus in the same test run.
+- [x] Phase G tests green; `clippy`/`fmt` clean; commit.
+      (2026-07-31 00:00)
+      `cargo test --lib suite::` (63 passed, includes the 4 new
+      `update_corpus_signature`/digest-parity tests) and
+      `cargo test --lib corpus_signer` (18 passed, all 17 pre-existing
+      unedited + the new parity test) both green. `cargo clippy
+      --all-targets -- -D warnings` clean. `cargo fmt` applied (2 small
+      reflow diffs, `corpus_signer.rs`'s `sign_digest` signature and one
+      test's multi-line `dir.write` call) then `--check` clean. Full
+      `cargo test --workspace` run in background, redirected directly to
+      a scratchpad log file (never piped through `tail`, per this
+      session's own established lesson) — confirmed green before commit.
 
 ## Comprehensive test + completion
 
