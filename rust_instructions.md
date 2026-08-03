@@ -62,10 +62,38 @@ Workspace: `einmo` (root, v0.0.5) + `zweimomo` (member, v0.0.1).
 
 ```bash
 git clone <repo> && cd einmo
-rustup show                  # installs the pinned toolchain
-cargo install just           # if you don't have it
+cargo install just           # `just setup` cannot install just itself
 just setup                   # dev tooling: nextest, llvm-cov, mutants
 ```
+
+Nothing below works until both are on `PATH` — `just` is not a dependency
+cargo will fetch for you, and `cargo nextest` does not exist until it is
+installed.
+
+### The two tiers
+
+| Tier | When | Command | Cost |
+|---|---|---|---|
+| Inner loop | every edit | `just test <filter>` | seconds |
+| Phase gate | before each commit | `just` (fmt + lint + full suite) | ~6 min |
+| Merge gate | before an EIMP is marked complete | `just pr`, plus the mutation/coverage checkboxes the plan schedules | tens of minutes |
+
+Develop against the inner loop. `just test <substring>` filters by test name
+and skips the rest, so a focused run is seconds rather than minutes:
+
+```bash
+just test crash_crumb_survives_stack_overflow   # 2 tests, ~12s (392 skipped)
+```
+
+The expensive gates (`just mutants`, `just coverage`) are not part of the
+everyday loop. They are scheduled as their own checkboxes in an EIMP plan and
+run once, after the feature is complete — see `eimp.md`.
+
+### What the suite costs
+
+394 tests, ~345s wall-clock for the full workspace, 18 of them flagged SLOW,
+three over 60 seconds. The cost is Argon2id key derivation — these are real
+signatures, not stubs. A six-minute `just test` is normal, not a hang.
 
 ### Commands
 
@@ -81,17 +109,46 @@ just mutants --file src/verify.rs    # mutation testing, scoped
 just --list          # show all recipes
 ```
 
-`just` accepts unambiguous prefixes, so `just cov`, `just mut`, and `just ci`
-all work.
+Recipe names are exact — `just` does not match prefixes.
 
-`just pr` is the one that matters. It runs fmt-check, clippy, the full suite, and
-mutation testing against your diff. Green means the branch is mergeable.
+`just pr` is the one that matters. It runs fmt-check, clippy, and the full
+suite. Its mutation stage scopes to `git diff main...HEAD`, which on this
+repository is wrong twice over: `jia` is the primary branch, and EIMP work
+commits directly to it, so there is no branch diff to scope by. Treat the
+mutation gate as something you invoke deliberately (`just mutants --file
+<path>`) and record in the plan — not as something `just pr` does for you.
+Tracked as `EIMP-9` T1/T2.
 
 ### Machine-readable output
 
 `just ci-test` runs the `ci` nextest profile, which writes a JUnit XML report to
 `target/nextest/ci/junit.xml` (configured in `.config/nextest.toml`). Use it in
 CI, and point AI agents at it rather than having them parse console output.
+
+**Read the counts before you read the failures.** The profile is fail-fast, so
+a failing run produces a well-formed XML file describing only the tests that
+were attempted — `tests="55"` when the workspace has 394, with nothing in the
+file marking it as truncated. The console prints
+`warning: N tests were not run due to test failure`; the XML does not. And
+`just ci-test` currently omits `--workspace`, so it reports `einmo` only, not
+`zweimomo`. Both tracked as `EIMP-9` T3/T4.
+
+**`<failure>` carries no message.** nextest emits an empty
+`<failure type="test failure"/>`; the panic text is in the sibling
+`<system-err>`. Reading `failure/@message`, the JUnit convention, gets you
+nothing:
+
+```bash
+python3 - <<'EOF'
+import xml.etree.ElementTree as ET
+r = ET.parse('target/nextest/ci/junit.xml').getroot()
+print(f"{r.get('tests')} run, {r.get('failures')} failed")   # expect 394 run
+for tc in r.iter('testcase'):
+    if tc.find('failure') is not None:
+        print(f"\n=== {tc.get('classname')}::{tc.get('name')}")
+        print(tc.findtext('system-err', '').strip())
+EOF
+```
 
 Nextest disables colors and progress animation automatically when stdout isn't a
 TTY, so piped output is already plain text. To force it:
@@ -105,20 +162,57 @@ For `cargo mutants`, the useful artifacts are in `mutants.out/` — `missed.txt`
 
 ### Things that will bite you
 
-**Use `just test`, not `cargo test`.** We use nextest. It doesn't run doctests —
-`cargo test --doc` separately if you add any.
+**When results look impossible, they are.** `CARGO_TARGET_DIR` is shared
+between checkouts in some environments, and `cargo install` honours it too —
+so two `cargo` commands running at once will corrupt each other's build. This
+suite has reported **158 signature-verification failures on source that is
+green**, with a panic (`stamp(s) failed: stage:output`) plausible enough to
+look like a real regression. Before you believe a surprising failure: re-run
+it alone with `just test <name>`. If that disagrees with the full run, or two
+full runs disagree with each other, `cargo clean -p einmo` and re-run before
+reporting anything. Never run two `cargo` commands in parallel.
 
-**Don't change the toolchain.** `rust-toolchain.toml` pins it. No `rustup update`,
-no `rustup override`, no `cargo +nightly`. Bumping Rust is a deliberate commit,
-not a side effect.
+**Use `just test`, not `cargo test`** — and the reason is correctness, not
+taste. nextest runs each test in its own process. `cargo test` shares one
+process per binary, so a panic while a test holds a shared mutex (this suite
+has several `ENV_LOCK`s taken with `.lock().unwrap()`) poisons it for every
+test that follows. In the run above, **96 of the 158 failures were
+`PoisonError`** — cascade, not defects, and the real count was unrecoverable
+from the output. nextest cannot cascade that way. Note it doesn't run
+doctests — `cargo test --doc` separately if you add any.
+
+**Don't change the toolchain.** No `rustup update`, no `rustup override`, no
+`cargo +nightly`. Bumping Rust is a deliberate commit, not a side effect.
+
+There are three separate things here and it is worth keeping them apart:
+
+| Mechanism | Where | What it does |
+|---|---|---|
+| MSRV floor | `[workspace.package] rust-version = "1.88"` | Too-old toolchain fails with a clear error, not syntax noise |
+| Lint set | `[workspace.lints.clippy]` | Same lints denied on every machine, whatever clippy regrouped this month |
+| Toolchain pin | *(absent — no `rust-toolchain.toml`)* | Would make clippy output byte-identical across machines |
+
+The floor is **1.88**, and it is not the edition requirement (edition 2024
+needs only 1.85). It is the highest `rust-version` in the resolved graph —
+`time 0.3.54`, a direct dependency, plus the `boa_*` crates. Recompute it
+when bumping dependencies; the one-liner is commented in `Cargo.toml`.
+
+A floor is not a pin. Rust's stability guarantee means any *newer* toolchain
+keeps compiling this tree, so `rust-version` says "at least this" and nothing
+more. The thing that genuinely varies across versions is clippy, and the lint
+table is the durable defence against that — a toolchain pin would only choose
+*when* you find out about the next regrouping. Whether to add one anyway is
+`EIMP-9` T6.
 
 **Don't silence a lint to go green.** No `#[allow]`, no `-A` flags. A clippy
 error is a finding about the code.
 
-**`just mutants` is slow.** It rebuilds and reruns the suite per mutant. Always scope
-it (`--file`, `--in-diff`). `just pr` already scopes to your diff.
+**`just mutants` is slow.** It rebuilds and reruns the suite per mutant, and
+the baseline suite is ~345s. Always scope it (`--file`, `--in-diff`); an
+unscoped run is never useful here. Do not rely on `just pr` to scope it for
+you — see above.
 
-### Why the toolchain is pinned
+### Why the toolchain matters
 
 Two machines on Rust 1.95 and 1.97 gave different clippy results on identical
 source. Clippy PR #16761 moved `nonminimal_bool` and `overly_complex_bool_expr`
@@ -130,22 +224,32 @@ What went silent was real:
 let gate_fails_with_override = flagged_count > 0 && !true; // !flag_is_not_failure
 ```
 
-Unconditionally `false` — a dead verification gate and a vacuous test. Hence two
-things: the toolchain pin, and `[workspace.lints.clippy]` in `Cargo.toml`, which
-names the lints we enforce so they survive the next upstream regrouping.
+Unconditionally `false` — a dead verification gate and a vacuous test. The
+remediation was meant to be two things: a toolchain pin, and
+`[workspace.lints.clippy]` in `Cargo.toml`, which names the lints we enforce
+so they survive the next upstream regrouping. Only the second landed. Until
+`rust-toolchain.toml` exists, the lint table is the whole defence — which is
+why the rule above is "don't silence a lint," and why removing an entry from
+that table is not a formatting change.
 
 ### Troubleshooting
 
 | Symptom | Check |
 |---|---|
 | Machines disagree on clippy | `cargo clippy --version` (not `rustc`), then `rustup show active-toolchain` |
+| `rustc X is not supported by the following packages` | Your toolchain is below the 1.88 MSRV floor. Update Rust — do not lower `rust-version` |
 | Clippy suspiciously quiet | `cargo clippy --workspace --all-targets -- -W clippy::pedantic` — silence means clippy-driver isn't running |
 | Stale results | `cargo clean -p einmo` |
+| Failures you can't explain | Re-run the one test alone; if it disagrees with the full run, the build is stale — `cargo clean -p einmo` |
+| Two runs disagree with each other | Something else wrote `CARGO_TARGET_DIR`. Stop all other cargo processes, clean, re-run |
+| A test dies at ~120s | `slow-timeout` in `.config/nextest.toml` (`terminate-after = 4` × 30s). The slowest legitimate test measures 116s |
 | Mutants crawling | Look for `TIMEOUT` in output; scope harder |
 
 Toolchain precedence, highest first: `+toolchain` → `RUSTUP_TOOLCHAIN` env →
-`rustup override` → `rust-toolchain.toml` → `rustup default`. The file is fourth,
-so a stray env var beats it.
+`rustup override` → `rust-toolchain.toml` → `rustup default`. This repository
+has no `rust-toolchain.toml`, so resolution falls through to `rustup default`
+— check it with `rustup show active-toolchain` before trusting a clippy
+result from another machine.
 
 Full detail on any of this: see `AGENTS.md`, which is stricter and explains more.
 
@@ -1110,6 +1214,19 @@ AI-generated code is human-verified before submission. *(c23, c24)*
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-01 (2)
+**Updated By**: Claude Code (Opus 5)
+**Changes**: `EIMP-9` Phase A — corrected the Developer Guide against the
+tree. Removed the false `just` prefix-matching claim (T7); corrected the
+`rust-toolchain.toml` pin claim, which describes a file this repository does
+not have (T6); gave "use `just test`, not `cargo test`" its real reason,
+mutex-poison cascade (T9); added the shared-`CARGO_TARGET_DIR`
+non-reproducibility rule (T8); documented that the JUnit report is fail-fast
+truncated, `einmo`-only, and carries failure detail in `<system-err>` rather
+than `<failure>` (T3, T4, T10); added the two-tier fast-loop/merge-gate table
+and the suite's real cost (394 tests, ~345s). Remaining findings T1–T5, T11,
+T12 are tooling repairs tracked in `docs/eimp/EIMP-9.plan.md`.
 
 **Date**: 2026-08-01
 **Updated By**: Sisyphus (mimo-v2.5-pro)

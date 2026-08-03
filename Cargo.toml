@@ -2,6 +2,24 @@
 members = [".", "zweimomo"]
 resolver = "2"
 
+# The minimum supported Rust version, inherited by both members via
+# `rust-version.workspace = true`. This is a *floor*, not a pin: Rust's
+# stability guarantee means a newer toolchain keeps compiling this tree, and
+# there is deliberately no `rust-toolchain.toml` (see `rust_instructions.md`
+# §Why the toolchain matters — the reproducibility that actually matters here
+# is the clippy lint set, pinned in `[workspace.lints.clippy]` below).
+#
+# 1.88 is not the edition floor (edition 2024 needs only 1.85). It is the
+# highest `rust-version` declared anywhere in the resolved dependency graph:
+# `time 0.3.54` (a direct einmo dependency) and the `boa_*` crates zweimomo
+# evaluates JavaScript with. Recompute rather than guess when bumping deps:
+#
+#   cargo metadata --format-version 1 | python3 -c "import json,sys; \
+#     print(max((p['rust_version'] for p in json.load(sys.stdin)['packages'] \
+#       if p.get('rust_version')), key=lambda v: tuple(map(int, v.split('.')))))"
+[workspace.package]
+rust-version = "1.88"
+
 # Only `einmo` (this root package) is published to crates.io. `zweimomo` is
 # a demo/debugging tool exercising einmo against real fixtures — never
 # published (EIMP-2 §8).
@@ -9,6 +27,12 @@ resolver = "2"
 name = "einmo"
 version = "0.0.5"
 edition = "2024"
+# Note the form: `rust-version` is a real `[package]` field, so
+# `rust-version.workspace = true` belongs *inside* `[package]`. This is the
+# opposite of `lints`, which is a top-level table -- writing
+# `lints.workspace = true` inside `[package]` silently does nothing
+# (`unused manifest key: package.lints`; see `EIMP-8` §S.0).
+rust-version.workspace = true
 description = "Directory-based, cryptographically signed snapshot testing with a staged promotion pipeline."
 license = "MIT"
 repository = "https://github.com/frcusaca/einmo"
