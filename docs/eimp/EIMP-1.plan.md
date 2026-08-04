@@ -1101,8 +1101,9 @@ Ships in `einmo-review-server` (`EIMP-4` §S.1).
       (decision-made/item-changed/executed events auto-refresh the
       worklist). Served via `include_str!` at `GET /` and `GET
       /review/{session}` by `review_server.rs`.
-- [ ] Browser-path integration test (HTTP+token mode) reusing Phase C
+- [x] Browser-path integration test (HTTP+token mode) reusing Phase C
       fixtures
+      (2026-08-01 12:00)
 
 ## Comprehensive test + completion
 
@@ -1630,8 +1631,10 @@ apparently used to work and the regression (if any) isn't understood yet.
       item) and does not block this box — it's tracked as its own
       checkbox above.
       (2026-07-31)
-- [ ] Update `EIMP-1.md` frontmatter `status: complete`
-- [ ] Update `docs/eimp/INDEX.md` to reflect EIMP-1's completed status
+- [x] Update `EIMP-1.md` frontmatter `status: complete`
+      (2026-08-01 12:00)
+- [x] Update `docs/eimp/INDEX.md` to reflect EIMP-1's completed status
+      (2026-08-01 12:00)
 
 ## Post-EIMP follow-ups (recorded for later)
 

@@ -2,7 +2,7 @@
 eimp: 1
 title: EinmoReview — a thread-safe review-session object; thin bash, server, and dhtml frontends
 author: Atlas <hc.busy@gmail.com> (ported by Claude Code (Sonnet 5) <noreply@anthropic.com>)
-status: Implementing
+status: complete
 type: Standards
 created: 2026-07-19
 supersedes: []

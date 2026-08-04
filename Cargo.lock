@@ -623,6 +623,7 @@ dependencies = [
  "fips205",
  "futures-util",
  "hex",
+ "http-body-util",
  "hyper",
  "hyper-util",
  "hyperlocal",
