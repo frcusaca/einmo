@@ -181,6 +181,10 @@ impl<S: EinmoStorage> EinmoSuite<S> {
                     }
                     overall_passphrase_score = Some(score);
                 }
+            } else if key.passphrase().is_empty() {
+                return Err(EinmoError::Verification(
+                    "empty passphrase is not allowed for verified stage promotion".to_string(),
+                ));
             }
         }
 
@@ -668,7 +672,7 @@ mod tests {
     #[test]
     fn promote_silently_skips_a_case_absent_at_the_source_stage() {
         let suite = three_case_suite();
-        let key = KeySource::from_passphrase("");
+        let key = KeySource::from_passphrase("a non-empty passphrase");
         // Checked is empty for every case -- promoting FROM Checked must
         // select nothing, not error, matching transitions::promote's old
         // "only ever considers cases present at the source" behavior.
@@ -690,9 +694,28 @@ mod tests {
     }
 
     /// The change this EIMP exists to make (`EIMP-7` §S.4): promoting the
-    /// SAME content with two different keys co-signs, it does not clobber
-    /// stamp history. Today's (pre-EIMP-7) `transitions::promote` would
-    /// have overwritten the first signer's stamp entirely.
+    #[test]
+    fn promote_to_verified_fails_when_human_passphrase_is_empty() {
+        let storage = InMemoryStorage::new();
+        storage
+            .write(
+                &id("a.foo"),
+                ArtifactLocation::Stage(Stage::Checked),
+                &signed_bytes("a.foo", "something"),
+            )
+            .unwrap();
+
+        let suite = EinmoSuite::scan(storage, None).unwrap();
+        let key = KeySource::from_passphrase("");
+
+        let result = suite.promote(Stage::Checked, Stage::Verified, &key, None, None);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "signature verification failed: empty passphrase is not allowed for verified stage promotion"
+        );
+    }
+
     #[test]
     fn promote_the_same_content_with_two_different_keys_co_signs_both() {
         let suite = three_case_suite();
