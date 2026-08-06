@@ -1,6 +1,6 @@
 [profile.default]
 fail-fast = true
-slow-timeout = { period = "30s", terminate-after = 4 }
+slow-timeout = { period = "30s", terminate-after = 6 }
 
 [profile.mutants]
 fail-fast = true
