@@ -976,14 +976,14 @@ impl EinmoReview {
                 match case.promote(from, to, &keypair) {
                     Ok(outcome) => {
                         let (detail, non_human) = match outcome {
-                            PromoteOutcome::Promoted { non_human } => {
+                            PromoteOutcome::Promoted { non_human, .. } => {
                                 (format!("promoted {from} to {to}"), non_human)
                             }
-                            PromoteOutcome::CoSigned { non_human } => (
+                            PromoteOutcome::CoSigned { non_human, .. } => (
                                 format!("{from} to {to}: co-signed by a new signer"),
                                 non_human,
                             ),
-                            PromoteOutcome::AlreadySigned { non_human } => (
+                            PromoteOutcome::AlreadySigned { non_human, .. } => (
                                 format!("{from} to {to}: already signed, unchanged"),
                                 non_human,
                             ),

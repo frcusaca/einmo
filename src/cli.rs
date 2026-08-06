@@ -476,13 +476,16 @@ fn cmd_promote(args: PromoteArgs) -> Result<ExitCode> {
     let suite = EinmoSuite::scan(EinmoDirectory::new(config), None)?;
     let report = suite.promote(from, to, &key, args.filter.as_deref(), ids.as_deref())?;
 
-    // Warn on any non-human verified attestation.
+    // Warn on any non-human verified attestation and print passphrase score if available.
     for promoted in &report.promoted {
         if promoted.non_human {
             eprintln!(
                 "einmo: warning: {} verified under a well-known computer key (non-human attestation)",
                 promoted.rel_path.display()
             );
+        }
+        if let Some(score) = promoted.passphrase_score {
+            println!("passphrase score: {:.4}", score);
         }
     }
     if args.json {

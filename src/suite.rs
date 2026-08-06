@@ -153,20 +153,54 @@ impl<S: EinmoStorage> EinmoSuite<S> {
         }
         let keypair = StageKeypair::derive(key.passphrase());
         let mut report = PromotionReport::default();
+
+        let mut verified_files_concat = Vec::new();
+        let mut overall_passphrase_score = None;
+
+        if to == Stage::Verified {
+            let is_human = !crate::signature::is_computer_key(&keypair.pubkey_hex());
+            if is_human {
+                for case in self.cases() {
+                    if let Ok(Some(bytes)) = self
+                        .storage
+                        .read(case.id(), ArtifactLocation::Stage(Stage::Verified))
+                    {
+                        verified_files_concat.extend_from_slice(&bytes);
+                    }
+                }
+
+                if let Ok(score) = einmo_tools::calculate_passphrase_score(
+                    &verified_files_concat,
+                    key.passphrase(),
+                ) {
+                    if score <= 0.0 {
+                        return Err(EinmoError::Verification(format!(
+                            "passphrase effectiveness score is {}, must be > 0",
+                            score
+                        )));
+                    }
+                    overall_passphrase_score = Some(score);
+                }
+            }
+        }
+
         for case in self.select(filter, ids) {
             if case.read(ArtifactLocation::Stage(from))?.is_none() {
                 continue;
             }
             let outcome = case.promote(from, to, &keypair)?;
+
             let non_human = match outcome {
-                PromoteOutcome::Promoted { non_human }
-                | PromoteOutcome::CoSigned { non_human }
-                | PromoteOutcome::AlreadySigned { non_human } => non_human,
+                PromoteOutcome::Promoted { non_human, .. } => non_human,
+                PromoteOutcome::CoSigned { non_human, .. } => non_human,
+                PromoteOutcome::AlreadySigned { non_human, .. } => non_human,
             };
+
             report.promoted.push(Promoted {
                 rel_path: mirror_input_path(Path::new(case.id().as_str())),
                 stamp_pubkey: keypair.pubkey_hex(),
                 non_human,
+                passphrase_score: overall_passphrase_score,
             });
         }
         Ok(report)

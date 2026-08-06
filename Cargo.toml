@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "zweimomo"]
+members = [".", "einmo-tools", "zweimomo"]
 resolver = "2"
 
 # The minimum supported Rust version, inherited by both members via
@@ -81,6 +81,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net
 # than only consuming axum's re-exported types.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+einmo-tools = { version = "0.1.0", path = "einmo-tools" }
 
 [dev-dependencies]
 tempfile = "3"
