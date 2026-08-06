@@ -27,11 +27,9 @@ pub fn calculate_passphrase_score(
 
     let size2 = compressed2.len() as f64;
 
-    if size2 == 0.0 {
-        return Ok(0.0);
-    }
-
-    let score = (size2 - size1) / size2;
+    let uncompressed_len = passphrase.len() as f64;
+    let epsilon = 1e-6;
+    let score = (size2 - size1) / (uncompressed_len + epsilon);
     Ok(score)
 }
 

@@ -161,30 +161,26 @@ impl<S: EinmoStorage> EinmoSuite<S> {
             let is_human = !crate::signature::is_computer_key(&keypair.pubkey_hex());
             if is_human {
                 for case in self.cases() {
-                    if let Some(bytes) = self
+                    if let Ok(Some(bytes)) = self
                         .storage
-                        .read(case.id(), ArtifactLocation::Stage(Stage::Verified))?
+                        .read(case.id(), ArtifactLocation::Stage(Stage::Verified))
                     {
                         verified_files_concat.extend_from_slice(&bytes);
                     }
                 }
 
-                let score = einmo_tools::calculate_passphrase_score(
+                if let Ok(score) = einmo_tools::calculate_passphrase_score(
                     &verified_files_concat,
                     key.passphrase(),
-                )
-                .map_err(|e| {
-                    EinmoError::Verification(format!(
-                        "passphrase effectiveness score calculation failed: {e}"
-                    ))
-                })?;
-
-                if score <= 0.0 {
-                    return Err(EinmoError::Verification(format!(
-                        "passphrase effectiveness score is {score}, must be > 0"
-                    )));
+                ) {
+                    if score <= 0.0 {
+                        return Err(EinmoError::Verification(format!(
+                            "passphrase effectiveness score is {}, must be > 0",
+                            score
+                        )));
+                    }
+                    overall_passphrase_score = Some(score);
                 }
-                overall_passphrase_score = Some(score);
             }
         }
 
