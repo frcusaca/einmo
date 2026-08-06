@@ -1,3 +1,6 @@
 /target
 mutants.out.*
 mcp.*
+einmo-py/__pycache__/
+einmo-py/venv
+venv
