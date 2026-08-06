@@ -154,12 +154,12 @@ impl<S: EinmoStorage> EinmoSuite<S> {
         let keypair = StageKeypair::derive(key.passphrase());
         let mut report = PromotionReport::default();
 
-        let mut verified_files_concat = Vec::new();
         let mut overall_passphrase_score = None;
 
         if to == Stage::Verified {
-            let is_human = !crate::signature::is_computer_key(&keypair.pubkey_hex());
-            if is_human {
+            let is_computer_key = crate::signature::is_computer_key(&keypair.pubkey_hex());
+            if !is_computer_key {
+                let mut verified_files_concat = Vec::new();
                 for case in self.cases() {
                     if let Ok(Some(bytes)) = self
                         .storage
@@ -168,23 +168,17 @@ impl<S: EinmoStorage> EinmoSuite<S> {
                         verified_files_concat.extend_from_slice(&bytes);
                     }
                 }
-
-                if let Ok(score) = einmo_tools::calculate_passphrase_score(
+                match einmo_tools::check_verified_passphrase(
+                    is_computer_key,
                     &verified_files_concat,
                     key.passphrase(),
                 ) {
-                    if score <= 0.0 {
-                        return Err(EinmoError::Verification(format!(
-                            "passphrase effectiveness score is {}, must be > 0",
-                            score
-                        )));
+                    Ok(Some(score)) => overall_passphrase_score = Some(score),
+                    Ok(None) => {}
+                    Err(msg) => {
+                        return Err(EinmoError::Verification(msg));
                     }
-                    overall_passphrase_score = Some(score);
                 }
-            } else if key.passphrase().is_empty() {
-                return Err(EinmoError::Verification(
-                    "empty passphrase is not allowed for verified stage promotion".to_string(),
-                ));
             }
         }
 
@@ -672,7 +666,7 @@ mod tests {
     #[test]
     fn promote_silently_skips_a_case_absent_at_the_source_stage() {
         let suite = three_case_suite();
-        let key = KeySource::from_passphrase("a non-empty passphrase");
+        let key = KeySource::from_passphrase("");
         // Checked is empty for every case -- promoting FROM Checked must
         // select nothing, not error, matching transitions::promote's old
         // "only ever considers cases present at the source" behavior.
@@ -695,7 +689,7 @@ mod tests {
 
     /// The change this EIMP exists to make (`EIMP-7` §S.4): promoting the
     #[test]
-    fn promote_to_verified_fails_when_human_passphrase_is_empty() {
+    fn promote_to_verified_with_empty_passphrase_succeeds_as_computer_key() {
         let storage = InMemoryStorage::new();
         storage
             .write(
@@ -708,11 +702,13 @@ mod tests {
         let suite = EinmoSuite::scan(storage, None).unwrap();
         let key = KeySource::from_passphrase("");
 
-        let result = suite.promote(Stage::Checked, Stage::Verified, &key, None, None);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "signature verification failed: empty passphrase is not allowed for verified stage promotion"
+        let report = suite
+            .promote(Stage::Checked, Stage::Verified, &key, None, None)
+            .unwrap();
+        assert_eq!(report.promoted.len(), 1);
+        assert!(
+            report.promoted[0].non_human,
+            "empty passphrase is the computer key — post-hoc detected as non_human"
         );
     }
 
