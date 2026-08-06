@@ -2222,6 +2222,68 @@ mod tests {
     /// bind on an OS-assigned port (`:0`), request with a plain HTTP client,
     /// confirm both the bearer-token gate and a normal response.
     #[tokio::test]
+    async fn browser_path_integration_test_http_token_mode() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router_tcp(state, "s3cr3t-token".to_string(), false);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let shutdown = async move {
+            let _ = shutdown_rx.await;
+        };
+        let serve_handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown)
+                .await
+        });
+
+        let client: hyper_util::client::legacy::Client<_, axum::body::Body> =
+            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+                .build_http();
+
+        // The browser path `/review/{session}` should be accessible with the bearer token
+        let uri: hyper::Uri = format!("http://{addr}/review/{session}").parse().unwrap();
+        let unauthorized = client.get(uri.clone()).await.unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let req = hyper::Request::builder()
+            .uri(uri)
+            .header("authorization", "Bearer s3cr3t-token")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let authorized = client.request(req).await.unwrap();
+        assert_eq!(authorized.status(), StatusCode::OK);
+
+        // Root path `/` should also be accessible with the bearer token
+        let root_uri: hyper::Uri = format!("http://{addr}/").parse().unwrap();
+
+        let req_root = hyper::Request::builder()
+            .uri(root_uri)
+            .header("authorization", "Bearer s3cr3t-token")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let authorized_root = client.request(req_root).await.unwrap();
+        assert_eq!(authorized_root.status(), StatusCode::OK);
+
+        use http_body_util::BodyExt;
+        let body_bytes = authorized_root
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let body_str = std::str::from_utf8(&body_bytes).unwrap();
+
+        assert!(body_str.contains("<html"));
+
+        shutdown_tx.send(()).unwrap();
+        serve_handle.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn serve_tcp_end_to_end_enforces_the_bearer_token() {
         let tmp = seeded_suite();
         let state = Arc::new(AppState::default());

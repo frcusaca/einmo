@@ -243,6 +243,16 @@ For setup instructions, `just` recipes, the toolchain pin rationale, and
 troubleshooting, see the **Developer Guide** section in
 [`rust_instructions.md`](rust_instructions.md).
 
+## Integrating einmo in a new project
+
+1. Add `einmo` to your `Cargo.toml` dependencies.
+2. Create a test suite directory structure (e.g., `tests/suite/input`).
+3. Create your `.foo` or equivalent input test cases in the `input/` folder.
+4. Create a test runner utilizing `EinmoSuite::evaluate_all` (see the Quick Start example below).
+5. On the first run, it will generate output artifacts in the `tests/suite/output` directory.
+6. Use the `einmo promote output to checked` command or the TUI review server to manually review and accept the baselines.
+7. Subsequent test runs will enforce that newly generated output matches the checked baseline.
+
 ## Quick Start
 
 ```rust
@@ -1304,6 +1314,10 @@ configuration.
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-01 (2)
+**Updated By**: Jules (AI)
+**Changes**: Added "Integrating einmo in a new project" to the README per user request.
 
 **Date**: 2026-08-01
 **Updated By**: Sisyphus (mimo-v2.5-pro)

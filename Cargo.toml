@@ -91,6 +91,7 @@ hyper = { version = "1", features = ["http1", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1"] }
 hyperlocal = "0.9"
 tower = "0.5"
+http-body-util = "0.1.4"
 
 # The single CLI app. `cargo install einmo` yields two binary targets sharing
 # the same clap parser: `einmo` (canonical) and `cargo-einmo` (the

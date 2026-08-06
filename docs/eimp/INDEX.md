@@ -16,7 +16,7 @@ ls docs/eimp | rev | sort -V | rev
 | EIMP | Title | Status | Created | Author |
 |------|-------|--------|---------|--------|
 | [EIMP-0](EIMP-0.md) | EIMP Purpose, Process, and Format | Final | 2026-07-29 | Claude Code (Sonnet 5) |
-| [EIMP-1](EIMP-1.md) | EinmoReview — a thread-safe review-session object; thin bash, server, and dhtml frontends | Implementing | 2026-07-19 | Atlas (ported by Claude Code (Sonnet 5)) |
+| [EIMP-1](EIMP-1.md) | EinmoReview — a thread-safe review-session object; thin bash, server, and dhtml frontends | complete | 2026-07-19 | Atlas (ported by Claude Code (Sonnet 5)) |
 | [EIMP-2](EIMP-2.md) | einmo-review-server — a minimal HTTP prototype of the review/sign/promote/flag loop | complete | 2026-07-29 | Claude Code (Sonnet 5) |
 | [EIMP-3](EIMP-3.md) | Output-stage drift fails the run; explicit regenerate; multi-signer output stamps | complete | 2026-07-30 | Claude Code (Sonnet 5) |
 | [EIMP-4](EIMP-4.md) | Split einmo into core + einmo-review-server, publish both to crates.io at 0.0.6 | Draft | 2026-07-30 | Claude Code (Opus 5) |
@@ -36,7 +36,7 @@ copy at `/yolo/src/einmo`.
 
 The sprint's EIMPs, in execution order:
 
-1. **`EIMP-1`** (Implementing) — finish the review loop: the remaining
+1. **`EIMP-1`** (complete) — finish the review loop: the remaining
    `EinmoReview` surface, `ReviewMode`, multi-signer promote, flag
    semantics, the journal, the TUI-owned private server, the dhtml
    frontend, and `CorpusSigner` using the **existing** byte-join
