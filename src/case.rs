@@ -37,7 +37,7 @@ enum StageRead {
 /// `(String, bool)` tuple `review.rs`'s `promote_one_accumulating`
 /// returned with a named enum, per this crate's state/status/error-is-an-
 /// enum convention.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PromoteOutcome {
     /// A fresh baseline was written (absent, corrupt, or genuinely
     /// different content at the destination).
@@ -45,12 +45,16 @@ pub enum PromoteOutcome {
         /// `true` if the appended `verified` stamp used a well-known
         /// computer key (a non-human attestation).
         non_human: bool,
+        /// Passphrase score if applicable.
+        passphrase_score: Option<f64>,
     },
     /// Content at the destination matched; this signer's stamp was
     /// appended onto the existing file, preserving prior signers'.
     CoSigned {
         /// As [`PromoteOutcome::Promoted::non_human`].
         non_human: bool,
+        /// Passphrase score if applicable.
+        passphrase_score: Option<f64>,
     },
     /// The destination already carried this exact content, already signed
     /// by this exact key. Nothing written.
@@ -61,6 +65,8 @@ pub enum PromoteOutcome {
         /// that the resulting state is non-human-attested, even though
         /// nothing new was written this call.
         non_human: bool,
+        /// Passphrase score if applicable.
+        passphrase_score: Option<f64>,
     },
 }
 
@@ -339,7 +345,10 @@ impl<'s, S: EinmoStorage> EinmoCase<'s, S> {
                 {
                     // True no-op: destination already reflects this exact
                     // content, already signed by this exact key.
-                    return Ok(PromoteOutcome::AlreadySigned { non_human });
+                    return Ok(PromoteOutcome::AlreadySigned {
+                        non_human,
+                        passphrase_score: None,
+                    });
                 }
                 // Content matches, new signer: append onto the EXISTING
                 // file, preserving every prior stamp.
@@ -348,7 +357,10 @@ impl<'s, S: EinmoStorage> EinmoCase<'s, S> {
                 let bytes = appended.serialize()?;
                 self.storage
                     .write(&self.id, ArtifactLocation::Stage(to), &bytes)?;
-                return Ok(PromoteOutcome::CoSigned { non_human });
+                return Ok(PromoteOutcome::CoSigned {
+                    non_human,
+                    passphrase_score: None,
+                });
             }
         }
 
@@ -360,7 +372,10 @@ impl<'s, S: EinmoStorage> EinmoCase<'s, S> {
         let bytes = file.serialize()?;
         self.storage
             .write(&self.id, ArtifactLocation::Stage(to), &bytes)?;
-        Ok(PromoteOutcome::Promoted { non_human })
+        Ok(PromoteOutcome::Promoted {
+            non_human,
+            passphrase_score: None,
+        })
     }
 
     /// Move this case's `stage` artifact into `stage`'s nested flagged
@@ -743,7 +758,13 @@ mod tests {
         let outcome = case
             .promote(Stage::Output, Stage::Checked, &derive(""))
             .unwrap();
-        assert_eq!(outcome, PromoteOutcome::Promoted { non_human: false });
+        assert_eq!(
+            outcome,
+            PromoteOutcome::Promoted {
+                non_human: false,
+                passphrase_score: None
+            }
+        );
 
         let checked = case
             .read(ArtifactLocation::Stage(Stage::Checked))
@@ -782,7 +803,13 @@ mod tests {
         let outcome = case
             .promote(Stage::Output, Stage::Checked, &derive("signer-two"))
             .unwrap();
-        assert_eq!(outcome, PromoteOutcome::CoSigned { non_human: false });
+        assert_eq!(
+            outcome,
+            PromoteOutcome::CoSigned {
+                non_human: false,
+                passphrase_score: None
+            }
+        );
 
         let checked = case
             .read(ArtifactLocation::Stage(Stage::Checked))
@@ -822,7 +849,13 @@ mod tests {
         // Re-promote identical content with the SAME key: must be a true
         // no-op, byte-for-byte.
         let outcome = case.promote(Stage::Output, Stage::Checked, &key).unwrap();
-        assert_eq!(outcome, PromoteOutcome::AlreadySigned { non_human: false });
+        assert_eq!(
+            outcome,
+            PromoteOutcome::AlreadySigned {
+                non_human: false,
+                passphrase_score: None
+            }
+        );
         let bytes_after = storage
             .read(case.id(), ArtifactLocation::Stage(Stage::Checked))
             .unwrap()
@@ -855,7 +888,13 @@ mod tests {
         let outcome = case
             .promote(Stage::Output, Stage::Checked, &derive(""))
             .unwrap();
-        assert_eq!(outcome, PromoteOutcome::Promoted { non_human: false });
+        assert_eq!(
+            outcome,
+            PromoteOutcome::Promoted {
+                non_human: false,
+                passphrase_score: None
+            }
+        );
         let checked = case
             .read(ArtifactLocation::Stage(Stage::Checked))
             .unwrap()
@@ -904,7 +943,10 @@ mod tests {
             .unwrap();
         assert_eq!(
             outcome,
-            PromoteOutcome::Promoted { non_human: false },
+            PromoteOutcome::Promoted {
+                non_human: false,
+                passphrase_score: None
+            },
             "a COMMENTS-only difference must still count as genuinely different content for promote"
         );
         let checked = case
@@ -934,7 +976,13 @@ mod tests {
         let outcome = case
             .promote(Stage::Output, Stage::Verified, &derive(""))
             .unwrap();
-        assert_eq!(outcome, PromoteOutcome::Promoted { non_human: true });
+        assert_eq!(
+            outcome,
+            PromoteOutcome::Promoted {
+                non_human: true,
+                passphrase_score: None
+            }
+        );
     }
 
     #[test]

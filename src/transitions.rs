@@ -20,7 +20,7 @@ use crate::signature::{Stamps, derive_keypair, now_iso8601};
 use crate::stage::{Stage, ensure_parent_dir, mirror_input_path, walk_input_tree};
 
 /// One promoted file's outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Promoted {
     /// The mirror-relative path.
     pub rel_path: PathBuf,
@@ -29,10 +29,12 @@ pub struct Promoted {
     /// `true` if the appended verified stamp used a well-known computer key
     /// (a non-human attestation — post-hoc detectable, §B.4).
     pub non_human: bool,
+    /// The calculated passphrase effectiveness score.
+    pub passphrase_score: Option<f64>,
 }
 
 /// The result of a promotion over a filter set.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct PromotionReport {
     /// The files promoted.
     pub promoted: Vec<Promoted>,

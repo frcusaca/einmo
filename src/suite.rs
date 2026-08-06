@@ -153,20 +153,52 @@ impl<S: EinmoStorage> EinmoSuite<S> {
         }
         let keypair = StageKeypair::derive(key.passphrase());
         let mut report = PromotionReport::default();
+
+        let mut overall_passphrase_score = None;
+
+        if to == Stage::Verified {
+            let is_computer_key = crate::signature::is_computer_key(&keypair.pubkey_hex());
+            if !is_computer_key {
+                let mut verified_files_concat = Vec::new();
+                for case in self.cases() {
+                    if let Ok(Some(bytes)) = self
+                        .storage
+                        .read(case.id(), ArtifactLocation::Stage(Stage::Verified))
+                    {
+                        verified_files_concat.extend_from_slice(&bytes);
+                    }
+                }
+                match einmo_tools::check_verified_passphrase(
+                    is_computer_key,
+                    &verified_files_concat,
+                    key.passphrase(),
+                ) {
+                    Ok(Some(score)) => overall_passphrase_score = Some(score),
+                    Ok(None) => {}
+                    Err(msg) => {
+                        return Err(EinmoError::Verification(msg));
+                    }
+                }
+            }
+        }
+
         for case in self.select(filter, ids) {
             if case.read(ArtifactLocation::Stage(from))?.is_none() {
                 continue;
             }
             let outcome = case.promote(from, to, &keypair)?;
+
             let non_human = match outcome {
-                PromoteOutcome::Promoted { non_human }
-                | PromoteOutcome::CoSigned { non_human }
-                | PromoteOutcome::AlreadySigned { non_human } => non_human,
+                PromoteOutcome::Promoted { non_human, .. } => non_human,
+                PromoteOutcome::CoSigned { non_human, .. } => non_human,
+                PromoteOutcome::AlreadySigned { non_human, .. } => non_human,
             };
+
             report.promoted.push(Promoted {
                 rel_path: mirror_input_path(Path::new(case.id().as_str())),
                 stamp_pubkey: keypair.pubkey_hex(),
                 non_human,
+                passphrase_score: overall_passphrase_score,
             });
         }
         Ok(report)
@@ -656,9 +688,30 @@ mod tests {
     }
 
     /// The change this EIMP exists to make (`EIMP-7` §S.4): promoting the
-    /// SAME content with two different keys co-signs, it does not clobber
-    /// stamp history. Today's (pre-EIMP-7) `transitions::promote` would
-    /// have overwritten the first signer's stamp entirely.
+    #[test]
+    fn promote_to_verified_with_empty_passphrase_succeeds_as_computer_key() {
+        let storage = InMemoryStorage::new();
+        storage
+            .write(
+                &id("a.foo"),
+                ArtifactLocation::Stage(Stage::Checked),
+                &signed_bytes("a.foo", "something"),
+            )
+            .unwrap();
+
+        let suite = EinmoSuite::scan(storage, None).unwrap();
+        let key = KeySource::from_passphrase("");
+
+        let report = suite
+            .promote(Stage::Checked, Stage::Verified, &key, None, None)
+            .unwrap();
+        assert_eq!(report.promoted.len(), 1);
+        assert!(
+            report.promoted[0].non_human,
+            "empty passphrase is the computer key — post-hoc detected as non_human"
+        );
+    }
+
     #[test]
     fn promote_the_same_content_with_two_different_keys_co_signs_both() {
         let suite = three_case_suite();

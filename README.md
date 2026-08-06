@@ -187,6 +187,7 @@ through to an interactive prompt. An AI that pipes `--passphrase ""` instead
 gets the well-known computer key. Einmo detects this post-hoc: the promotion
 report flags `non_human: true` whenever a `stage:verified` stamp is produced
 by the empty-passphrase key, and the CLI prints a warning.
+Additionally, when a human attests to a promotion to `verified`, a passphrase quality check is performed. The effectiveness of the passphrase is scored relative to the existing verified corpus, ensuring a minimum level of uniqueness.
 
 Keys are derived deterministically from a passphrase via Argon2id. The
 Argon2id parameters are pinned constants (m=19456 KiB, t=2, p=1, matching the

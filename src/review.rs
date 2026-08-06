@@ -19,7 +19,7 @@ use crate::format::EinmoFile;
 use crate::signature::StageKeypair;
 use crate::stage::EinmoId;
 use crate::stage::Stage;
-use crate::storage::{ArtifactLocation, EinmoDirectory};
+use crate::storage::{ArtifactLocation, EinmoDirectory, EinmoStorage};
 use crate::suite::EinmoSuite;
 
 /// A reviewer's decision about one case. Replace-not-stack: a later
@@ -964,6 +964,7 @@ impl EinmoReview {
         // whole batch -- it holds no mutable state of its own, just a
         // TestConfig clone.
         let directory = EinmoDirectory::new(self.config.clone());
+        let scan_suite = EinmoSuite::scan(EinmoDirectory::new(self.config.clone()), None)?;
         for (from, to, ids, key) in resolved_groups {
             // Derive the stage key ONCE per (from, to) group (the same
             // discipline `transitions::promote` uses): Argon2id derivation
@@ -971,19 +972,45 @@ impl EinmoReview {
             // multi-case batch promotion unusable
             // (`execute_derives_stage_key_once_per_batch_not_per_case`).
             let keypair = StageKeypair::derive(key.passphrase());
+
+            if to == Stage::Verified {
+                let is_computer_key = crate::signature::is_computer_key(&keypair.pubkey_hex());
+                if !is_computer_key {
+                    let mut verified_files_concat = Vec::new();
+                    for case in scan_suite.cases() {
+                        if let Ok(Some(bytes)) = scan_suite
+                            .storage()
+                            .read(case.id(), ArtifactLocation::Stage(Stage::Verified))
+                        {
+                            verified_files_concat.extend_from_slice(&bytes);
+                        }
+                    }
+                    match einmo_tools::check_verified_passphrase(
+                        is_computer_key,
+                        &verified_files_concat,
+                        key.passphrase(),
+                    ) {
+                        Ok(_) => {}
+                        Err(msg) => {
+                            return Err(EinmoError::Verification(msg));
+                        }
+                    }
+                }
+            }
+
             for id in ids {
                 let case = EinmoCase::new(id.clone(), &directory);
                 match case.promote(from, to, &keypair) {
                     Ok(outcome) => {
                         let (detail, non_human) = match outcome {
-                            PromoteOutcome::Promoted { non_human } => {
+                            PromoteOutcome::Promoted { non_human, .. } => {
                                 (format!("promoted {from} to {to}"), non_human)
                             }
-                            PromoteOutcome::CoSigned { non_human } => (
+                            PromoteOutcome::CoSigned { non_human, .. } => (
                                 format!("{from} to {to}: co-signed by a new signer"),
                                 non_human,
                             ),
-                            PromoteOutcome::AlreadySigned { non_human } => (
+                            PromoteOutcome::AlreadySigned { non_human, .. } => (
                                 format!("{from} to {to}: already signed, unchanged"),
                                 non_human,
                             ),

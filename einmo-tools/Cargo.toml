@@ -1,0 +1,11 @@
+[package]
+name = "einmo-tools"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+
+[dependencies]
+zstd = "0.13.3"
+
+[lints]
+workspace = true
