@@ -485,7 +485,7 @@ fn cmd_promote(args: PromoteArgs) -> Result<ExitCode> {
             );
         }
         if let Some(score) = promoted.passphrase_score {
-            println!("passphrase score: {:.4}", score);
+            println!("passphrase score: {score:.4}");
         }
     }
     if args.json {
