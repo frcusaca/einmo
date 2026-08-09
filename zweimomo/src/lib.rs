@@ -1,13 +1,11 @@
-//! Zweimomo (JavaScript-only slice) — einmo's real-fixture test crate
-//! (EIMP-2 §8; ported from `foolish-rust`'s three-language `zweimomo`,
-//! FOOP-92 §Use Case D).
+//! Zweimomo — einmo's companion test crate (EIMP-2 §8; ported from
+//! `foolish-rust`'s three-language `zweimomo`, FOOP-92 §Use Case D).
 //!
-//! Embeds a **pure-Rust** JavaScript interpreter (`boa_engine`) as an
-//! [`einmo::Evaluator`] impl, exercising einmo's signed-snapshot pipeline
-//! against real, previously-reviewed test fixtures
-//! (`suites/javascript/`) — the test data `einmo-review-server`'s
-//! integration tests are pointed at.
+//! Embeds **pure-Rust** interpreters — JavaScript (`boa_engine`) and
+//! Python (system Python via `pyo3`) — as [`einmo::Evaluator`] impls,
+//! exercising einmo's signed-snapshot pipeline against real, previously-
+//! reviewed test fixtures.
 
 pub mod evaluators;
 
-pub use evaluators::BoaEvaluator;
+pub use evaluators::{BoaEvaluator, Pyo3Evaluator};

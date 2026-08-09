@@ -1,15 +1,54 @@
-# zweimomo (JavaScript-only slice)
+# zweimomo
 
-Einmo's companion test/demo crate: a pure-Rust JavaScript interpreter
-(`boa_engine`) wrapped as an [`einmo::Evaluator`], exercising einmo's
+Einmo's companion test/demo crate: pure-Rust evaluator impls for JavaScript
+(`boa_engine`) and Python (system Python via `pyo3`), exercising einmo's
 signed-snapshot pipeline against real, previously-reviewed test fixtures.
 
 This is a **demo and debugging tool**, not a library for external use —
 `publish = false` in `Cargo.toml`. Ported from `foolish-rust`'s original
 three-language `zweimomo` crate (Foolish/Python/JavaScript); see
 `docs/eimp/EIMP-2.md` §8 in the repo root for the full port rationale.
-Unlike its origin crate, this slice has no `foolish-ubca`/`foolish-core`
-dependency (no cross-repo coupling) and no `rustpython-vm`.
+
+## Prerequisites
+
+### System Python (required for Python evaluator)
+
+The Python evaluator uses `pyo3` which requires a system Python installation
+with shared libraries.
+
+**Ubuntu/Debian:**
+```bash
+sudo apt install python3-dev
+```
+
+**macOS:**
+```bash
+# Python 3 from Homebrew includes shared libraries by default
+brew install python3
+```
+
+**Verify installation:**
+```bash
+python3 --version
+python3-config --ldflags  # Should show -L... -lpython3.X
+```
+
+### Rust toolchain
+
+Standard Rust toolchain via `rustup`. No special configuration needed.
+
+## Running tests
+
+```bash
+# Run all tests (JavaScript + Python suites):
+cargo test
+
+# Run only JavaScript tier tests:
+cargo test javascript_tiers_generate_and_verify
+
+# Run only Python suite tests:
+cargo test python_suite_generates_and_verifies
+```
 
 ## Progressive-difficulty tiers
 
@@ -113,6 +152,13 @@ table.
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-09
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Added Python evaluator (pyo3) alongside JavaScript (boa_engine).
+Updated title and description. Added Prerequisites section documenting
+system Python requirement. Added Running tests section with test commands
+for both JavaScript and Python suites.
 
 **Date**: 2026-07-31
 **Updated By**: Sisyphus (mimo-v2.5-pro)

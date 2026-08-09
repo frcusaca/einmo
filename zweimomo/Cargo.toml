@@ -3,7 +3,7 @@ name = "zweimomo"
 version = "0.0.1"
 edition = "2024"
 rust-version.workspace = true
-description = "Einmo's companion test crate (JavaScript-only slice): a pure-Rust Evaluator impl (boa_engine) exercising einmo's signed-snapshot pipeline against real signed fixtures."
+description = "Einmo's companion test crate: pure-Rust Evaluator impls (JavaScript/Python) exercising einmo's signed-snapshot pipeline against real signed fixtures."
 license = "MIT"
 # Demo/debugging tool, not a library for external use — never published.
 publish = false
@@ -11,16 +11,14 @@ publish = false
 [lints]
 workspace = true
 
-# Zweimomo depends on einmo (the framework under test) and boa_engine (the
-# evaluator). Unlike the original three-language zweimomo in the foolish-rust
-# workspace, this JavaScript-only slice has no foolish-ubca/foolish-core
-# dependency (no cross-repo path dependency) and no rustpython-vm (EIMP-2
-# §8, Rejected Alternative G).
 [dependencies]
 einmo = { path = ".." }
 # Exact pin: interpreter output text is part of the signed baselines, so a
 # version bump implies a corpus re-review.
 boa_engine = "=0.21.1"
+# pyo3 requires a system Python installation with shared libraries.
+# Install python3-dev on Ubuntu/Debian: sudo apt install python3-dev
+pyo3 = { version = "0.29", features = ["auto-initialize"] }
 
 [dev-dependencies]
 tempfile = "3"

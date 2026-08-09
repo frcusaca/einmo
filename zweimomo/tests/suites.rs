@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 
 use einmo::{EinmoFile, EinmoTestRunner, Evaluator, TestConfig, ValidationLevel};
-use zweimomo::BoaEvaluator;
+use zweimomo::{BoaEvaluator, Pyo3Evaluator};
 
 /// The tiers, oldest (easiest) first. Directory name doubles as the
 /// suite name suffix.
@@ -30,6 +30,13 @@ fn tier_dir(tier: &str) -> PathBuf {
         .join("suites")
         .join("javascript")
         .join(tier)
+}
+
+/// The absolute path to the Python suite's work directory.
+fn python_suite_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("suites")
+        .join("python")
 }
 
 #[test]
@@ -49,6 +56,16 @@ fn javascript_tiers_generate_and_verify() {
         exercised > 0,
         "at least one JavaScript tier must have content (day.1 at minimum)"
     );
+}
+
+#[test]
+fn python_suite_generates_and_verifies() {
+    let dir = python_suite_dir();
+    if !dir.join("input").is_dir() {
+        // Python suite not yet populated — skip, don't fail.
+        return;
+    }
+    run_suite("python", &dir, &Pyo3Evaluator);
 }
 
 /// Evaluate + verify one tier's suite.
@@ -73,6 +90,30 @@ fn run_tier(tier: &str, dir: &Path) {
         assert!(
             file.written_and_verified,
             "{tier}: {} was not written+verified ({:?})",
+            file.rel_path.display(),
+            file.detail
+        );
+    }
+}
+
+/// Evaluate + verify a language suite.
+fn run_suite(lang: &str, dir: &Path, evaluator: &dyn Evaluator) {
+    let config = TestConfig::new(dir, ValidationLevel::Checked)
+        .with_suite_name(format!("zweimomo/suites/{lang}"));
+
+    let suite = EinmoTestRunner::new(config);
+    let results = suite
+        .evaluate_all(evaluator)
+        .unwrap_or_else(|e| panic!("{lang}: evaluate_all should not fail at the fs level: {e}"));
+
+    assert!(
+        !results.files.is_empty(),
+        "{lang}: suite must discover at least one input"
+    );
+    for file in &results.files {
+        assert!(
+            file.written_and_verified,
+            "{lang}: {} was not written+verified ({:?})",
             file.rel_path.display(),
             file.detail
         );

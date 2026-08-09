@@ -1,0 +1,16 @@
+#einmo 1 encoding=utf-8 separator=①\n
+test: data_structures.py
+suite: zweimomo/suites/python
+producer: d785adc
+producer-diff: sha256:b5aa1f1e8823d433e9f2b522dd01ee32e55a480ce05f502fb488b6dd5340c620
+generated: 2026-08-09T19:37:22.000000000Z
+status: normal
+status-detail: 
+sections: INPUT, OUTPUT, COMMENTS, STAMPS①
+{"a": 10, "b": 20, "n": {"inner": 30}}["n"]["inner"]
+①
+30①
+①
+{"key":"compiled","pubkey":"a5e456f9286268d2c0ab99878bfff84c7a24e14ad14bf51e696d2f5ddf37a6fa","signs":"pubkey:configured","signature":"aNqg5JP11ZPMotuOeo3+mRViOjJJb5QR1ppoMEK93peEbc3xOBz4V12CTF0iRZlvPeis9dshg+6O1xSCSomxDQ==","produced_by":"einmo 0.0.5 sha256:bca7ad0d3057cc3076219c59f85d4a2a6d21256eb0c6a13d4b01aecf73cee0f2","timestamp":"2026-08-09T19:37:23.000000000Z"}
+{"key":"configured","pubkey":"5b846599cda83acb9a67774f4d6970a396e0efb72cb508e544ef3c94c90e4853","signs":"pubkey:stage:output","signature":"M3aNLgUg1ksoQWATcmgfOA13Wg2dfPdQj+qQJj6msspFMVayFVyKGCiqyPLI9YLCbRh4lAel1MzjNQWBdmzhDw==","produced_by":"einmo 0.0.5 sha256:bca7ad0d3057cc3076219c59f85d4a2a6d21256eb0c6a13d4b01aecf73cee0f2","timestamp":"2026-08-09T19:37:23.000000000Z"}
+{"key":"stage:output","pubkey":"5b846599cda83acb9a67774f4d6970a396e0efb72cb508e544ef3c94c90e4853","signs":"prior-bytes","signature":"hlfe9UctPCP2bdXiv/RMcuMbS29xtYlnRevU8XV4TtI4KaefAD0znE5WwGaj1bfuNwx+L74mhWiw1YoOxLKrBw==","produced_by":"einmo 0.0.5 sha256:bca7ad0d3057cc3076219c59f85d4a2a6d21256eb0c6a13d4b01aecf73cee0f2","timestamp":"2026-08-09T19:37:23.000000000Z"}
