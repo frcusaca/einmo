@@ -1,0 +1,9 @@
+{
+  "id": "T-1691804d-bcbe-405b-bdc9-beebc0845265",
+  "subject": "Update AGENTS.md with new skills",
+  "description": "Update the Skills table in einmo/AGENTS.md to include the newly imported skills (ast_grep, repo-context, rust-debugging). Update Last Updated section.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_017dce9abffe0NghN8TbwrocoB"
+}

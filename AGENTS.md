@@ -74,6 +74,9 @@ small enough that plans execute directly on `jia` with regular commits.
 |-------|-------|------------|
 | `eimp-write-plan` | Creating and planning EIMPs. Little-endian numbering, `eimp_check.py`, the spec template, plan construction rules, checkbox format, sub-tasks. | Creating a new EIMP, writing a specification, or constructing a plan (`EIMP-#.plan.md`). |
 | `eimp-use-maintain` | Using and maintaining existing EIMPs. Listing/finding EIMPs, the status lifecycle, plan execution flow, checkbox lifecycle (complete with timestamp, backburnering, cancel/deprecate), comprehensive test verification, human communication protocol. | Finding, executing, resuming, backburnering, cancelling, or maintaining an existing EIMP. |
+| `ast_grep` | Structural code search and refactoring with `ast_grep_engine`. Finding call sites, signatures, and code shapes by AST pattern rather than text. Metavariables, search/rewrite/scan actions, relational YAML rules. | Finding all calls to a function, refactoring across a crate, matching code patterns, structural code search. |
+| `repo-context` | Loading one cargo crate's full source as a single payload via `bundle_repo_ctx`. Listing workspace crates, scoping structural queries. | Understanding a whole crate, exploring the repo structure, loading context for broad code exploration. |
+| `rust-debugging` | Debugging Rust programs with GDB — stepping through code, inspecting values, setting breakpoints, diagnosing panics, wrong values, state machine bugs. | Debugging Rust code, setting breakpoints, stepping through code, inspecting values, diagnosing runtime issues. |
 
 ## Build Commands
 
@@ -147,6 +150,12 @@ instructions to your self. Dump code snippets in code fences if code or pseudo c
 is more clear.
 
 ## Last Updated
+
+**Date**: 2026-08-09
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Imported skills and tools from foolish workspace: added `ast_grep`,
+`repo-context`, and `rust-debugging` skills to Skills table. Copied
+`ast_grep_engine.js` and `bundle_repo_ctx.ts` tools to `.opencode/tools/`.
 
 **Date**: 2026-08-01
 **Updated By**: Sisyphus (mimo-v2.5-pro)

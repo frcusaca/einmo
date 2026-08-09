@@ -1,0 +1,10 @@
+{
+  "id": "T-bd988713-eb53-4582-a4a0-210783e155a7",
+  "subject": "Add PyO3-based Python evaluator to zweimomo",
+  "description": "Replace rustpython-vm with pyo3 for the Python evaluator, add Python suite tests, and verify compilation.",
+  "status": "completed",
+  "activeForm": "Adding PyO3 Python evaluator",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_018195a71ffeEqKmtrgh5IpAwX"
+}

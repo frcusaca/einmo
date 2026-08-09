@@ -1,0 +1,9 @@
+{
+  "id": "T-1b864104-ef12-4a15-a1dc-6d6a492e7854",
+  "subject": "Copy .opencode/tools from foolish to einmo",
+  "description": "Copy ast_grep_engine.js and bundle_repo_ctx.ts to einmo's .opencode/tools/ directory. These are generic tools that work for any Rust workspace.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_017dce9abffe0NghN8TbwrocoB"
+}

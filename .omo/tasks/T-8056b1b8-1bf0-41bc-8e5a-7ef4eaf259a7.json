@@ -1,0 +1,9 @@
+{
+  "id": "T-8056b1b8-1bf0-41bc-8e5a-7ef4eaf259a7",
+  "subject": "Verify tools work in einmo context",
+  "description": "Verify the copied tools (ast_grep_engine.js, bundle_repo_ctx.ts) work correctly in the einmo workspace context. Check that bun/node is available and tools can be invoked.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_017dce9abffe0NghN8TbwrocoB"
+}

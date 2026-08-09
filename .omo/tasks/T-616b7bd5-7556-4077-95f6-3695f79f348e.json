@@ -1,0 +1,9 @@
+{
+  "id": "T-616b7bd5-7556-4077-95f6-3695f79f348e",
+  "subject": "Import skills from foolish to einmo",
+  "description": "Import ast_grep, repo-context, and rust-debugging SKILL.md files from foolish/.claude/skills/ to einmo/.claude/skills/. The foolish-debugging skill is Foolish-specific and should NOT be imported.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_017dce9abffe0NghN8TbwrocoB"
+}

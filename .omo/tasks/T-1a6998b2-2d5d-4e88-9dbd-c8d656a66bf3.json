@@ -1,0 +1,10 @@
+{
+  "id": "T-1a6998b2-2d5d-4e88-9dbd-c8d656a66bf3",
+  "subject": "Add Python evaluator and tests to einmo/zweimomo",
+  "description": "Port the Python evaluator (RustPythonEvaluator) from foolish/zweimomo to einmo/zweimomo, create python suite directory structure, copy input files, and update tests.",
+  "status": "completed",
+  "activeForm": "Adding Python evaluator and tests",
+  "blocks": [],
+  "blockedBy": [],
+  "threadID": "ses_018195a71ffeEqKmtrgh5IpAwX"
+}
