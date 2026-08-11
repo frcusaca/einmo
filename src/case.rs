@@ -436,10 +436,17 @@ impl<'s, S: EinmoStorage> EinmoCase<'s, S> {
         let cascade: &[Stage] = match stage {
             Stage::Verified => &[Stage::Verified],
             Stage::Checked => &[Stage::Verified, Stage::Checked],
-            Stage::Output => {
-                return Err(EinmoError::Config(
-                    "cannot retract from output/: it is regenerated every run".into(),
-                ));
+            // `EIMP-01` §S.6 inverts this pair: `generated/` becomes the
+            // un-retractable one (it IS regenerated every run) and `output/`
+            // becomes retractable with a cascade. Only the `Generated` half
+            // has landed here — adding the variant made this match
+            // non-exhaustive, and refusing it is already the final answer.
+            // Flipping `Output` is Phase 5's job and needs the cascade,
+            // `EinmoSuite::retract`, and the CLI doc comment changed with it.
+            Stage::Generated | Stage::Output => {
+                return Err(EinmoError::Config(format!(
+                    "cannot retract from {stage}/: it is regenerated every run"
+                )));
             }
         };
         let mut retracted = Vec::new();

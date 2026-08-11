@@ -2,11 +2,11 @@
 eimp: D10
 title: A separate generation phase writing an uncommitted generated/ stage, and validation levels that compare only against their predecessor
 author: Claude Code (Opus 5) <noreply@anthropic.com>
-status: Draft
+status: Implementing
 type: Standards
 created: 2026-08-11
 supersedes: [EIMP-3]
-begun: [ ]
+begun: [x]
 ---
 
 # EIMP-01: A separate generation phase writing an uncommitted `generated/` stage, and validation levels that compare only against their predecessor
@@ -264,7 +264,16 @@ impl Stage {
   `Stage`'s ordinal; `Stage`'s `Deserialize` already routes through
   `Stage::parse`, which is by name.
 - `StageDirs` gains a `generated: String` field defaulting to `"generated"`,
-  configurable from `einmo.toml` exactly as the other three are.
+  validated by the same `[A-Za-z0-9_-]+` rule as the other three.
+  **Correction, recorded during implementation**: an earlier draft of this
+  section said the name is "configurable from `einmo.toml` exactly as the
+  other three are." That is false — **no** stage directory name is settable
+  from `einmo.toml` today; `TestConfig` always constructs
+  `StageDirs::default()`. This EIMP does not add that plumbing. The claim is
+  corrected rather than implemented, because nothing here needs it.
+- `StagePassphrases` gains a `generated` field, fed by `[signing] generated`
+  in `einmo.toml`. Stage *passphrases* genuinely are per-stage configurable,
+  so this one really is "exactly as the other three are."
 
 `Generated` is a stage in the full sense: it has outputs, it has signatures,
 its artifacts are `.einmo` files. **The only respects in which it differs from
@@ -282,9 +291,12 @@ and verified by `einmo verify`.
 generated/
 ```
 
-This also ignores any `input/` subdirectory literally named `generated`. A
-suite that needs such an input directory renames its generation stage in
-`einmo.toml`; the collision is noted here rather than guarded against in code.
+This also ignores any `input/` subdirectory literally named `generated`. The
+collision is noted rather than guarded against in code, and — since stage
+directory names are not `einmo.toml`-settable (above) — a suite that hits it
+has no configuration escape today. It would need either that plumbing or a
+narrower ignore pattern. Accepted as a known, recorded limitation; no suite
+in this repository has such an input directory.
 
 ### S.2 — The generation phase: `einmo generate`
 
@@ -569,10 +581,21 @@ point of S.2 — without being separately *gated on*.
 
 ## Open Questions
 
-- Does the review server present `generated/` as a reviewable stage in its UI,
-  or hide it? S.1 makes it a peer stage, so it appears by default. Whether it
-  needs a visual marker distinguishing "uncommitted work file" from the three
-  committed stages is a UI question to settle during implementation.
+- **Does `generated/` appear in the review worklist?** S.1 makes it a peer
+  stage, so it appears by default. Against: a reviewer promoting
+  `output → checked` has no business in an uncommitted work file. For: it is a
+  full stage with signed artifacts, and `einmo compare generated output` is
+  exactly a review activity.
+
+  **Scheduled for resolution in `EIMP-01.plan.md` §Phase 6**, before that
+  phase's implementation and recorded back into §S.1. It is deliberately left
+  open while `status: Implementing`, contrary to the usual "design frozen"
+  rule, because **it does not block Phases 1–5**: the stage enum, the
+  generation phase, the CLI verb, the gates, and the promotion rules are all
+  settled and none of them depend on the answer. Freezing it early would mean
+  guessing at a review-surface question best answered with the review surface
+  in front of us. The dhtml frontend is out of scope either way
+  (`EIMP-1.md` §S.9, backburnered).
 
 ## References
 

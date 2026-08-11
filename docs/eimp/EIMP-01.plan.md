@@ -13,39 +13,121 @@ commits — there is no worktree stage.
 
 ## Phase 0 — Preconditions
 
-- [ ] Confirm the suite is green before changing anything:
+- [x] Confirm the suite is green before changing anything:
       `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`.
       Record the passing test count here. **Never start substantive work when
       tests are broken.**
-- [ ] Begin work: commit `EIMP-01.md` and `EIMP-01.plan.md`, check
+      (2026-08-11 16:17)
+      **Baseline: 401 tests, 0 failed, exit 0** (`cargo test --workspace` at
+      `c261179`; count from `cargo test --workspace -- --list`). For
+      comparison, `EIMP-9` §S.0 measured 394 at `ac873c3`. `zweimomo` 4/4
+      including `eimp3_output_drift_comprehensive` — the test Phase 7 must
+      **rewrite, not delete**. `einmo-tools` 8/8.
+      Clippy and fmt: deferred to the first phase that changes code; nothing
+      had changed at this point but documentation.
+- [x] Begin work: commit `EIMP-01.md` and `EIMP-01.plan.md`, check
       `begun: [x]` in the `EIMP-01.md` frontmatter
-- [ ] Add `generated/` to `.gitignore` (read §S.1 of EIMP-01.md for the
+      (2026-08-11 16:18)
+      Committed as `c261179` and pushed to `origin/jia`. Frontmatter set to
+      `begun: [x]`, `status: Draft` → `Implementing`. The one Open Question
+      (does `generated/` appear in the review worklist) is deliberately left
+      open — it is scheduled for Phase 6 and blocks none of Phases 1–5; the
+      reasoning is recorded in EIMP-01.md §Open Questions rather than left
+      implicit.
+- [x] Add `generated/` to `.gitignore` (read §S.1 of EIMP-01.md for the
       input-directory-name collision caveat, which is accepted, not guarded)
+      (2026-08-11 16:18)
+      Added with a comment naming EIMP-01 and stating the collision caveat
+      inline, so the next reader of `.gitignore` does not have to find §S.1
+      to know it was a considered trade.
 
 ---
 
 ## Phase 1 — `Stage::Generated`
 
-- [ ] Read §S.1 of EIMP-01.md
-- [ ] Write the tests first (`src/stage.rs`): `Stage::ALL` has four entries in
+- [x] Read §S.1 of EIMP-01.md
+      (2026-08-11 16:20)
+- [x] Write the tests first (`src/stage.rs`): `Stage::ALL` has four entries in
       lifecycle order; `Stage::parse("generated")`; `dir_name` / `stamp_key`;
       `Generated < Output < Checked < Verified`; `EinmoId::to_stage_path`
       round-trips through `Generated`
-- [ ] Add the `Generated` variant to `src/stage.rs`, declared **first** so the
+      (2026-08-11 16:22)
+      Four new tests, confirmed RED first (`E0599: no variant ... named
+      Generated`) before any implementation. `ALL` is asserted as an exact
+      array equality rather than a length check, and
+      `stage_ordering_follows_the_lifecycle` exists because a stage declared
+      in the wrong position would still compile and still round-trip by name —
+      nothing else would catch it. `einmo_id_round_trips_through_stage_path`
+      already loops `Stage::ALL`, so it covers `Generated` unmodified.
+- [x] Add the `Generated` variant to `src/stage.rs`, declared **first** so the
       derived `Ord` keeps lifecycle order
-- [ ] Confirm no code path persists or transmits a `Stage`'s **ordinal** (the
+      (2026-08-11 16:25)
+- [x] Confirm no code path persists or transmits a `Stage`'s **ordinal** (the
       `Deserialize` impl is by name via `Stage::parse`; check `journal.rs`,
       `review_server.rs`, and `corpus_signer.rs` wire formats). If one does,
       fix it to be by name and note it here.
-- [ ] Write the tests first (`src/config.rs`): `StageDirs::default` includes
+      (2026-08-11 16:39)
+      **Verified clean, no fix needed.** There is no `Serialize` impl for
+      `Stage` at all; every wire format stores `stage: String` and recovers it
+      through `Stage::parse` (`journal.rs:60,150,159`,
+      `corpus_signer.rs:527,549`, `review_server.rs:580`). No `stage as usize`
+      or equivalent ordinal cast exists anywhere in `src/` or `src/bin/`, and
+      nothing compares or sorts `Stage` values, so the derived `Ord` is used
+      only by the new test that pins it. Reordering the variants therefore
+      cannot corrupt persisted data.
+- [x] Write the tests first (`src/config.rs`): `StageDirs::default` includes
       `generated`; `validate` and `ensure_stage_dirs` cover all four; the
       generation stage is renameable from `einmo.toml`
-- [ ] Add the `generated` field to `StageDirs` and its `einmo.toml` plumbing
-- [ ] Fix every `Stage::ALL` consumer that no longer compiles or whose test
+      (2026-08-11 16:30)
+      Four new tests. **The third clause of this checkbox was wrong and the
+      spec was corrected instead**: stage directory names are not
+      `einmo.toml`-settable for *any* stage — `TestConfig` always builds
+      `StageDirs::default()`. EIMP-01.md §S.1 claimed otherwise; it now
+      records the correction, and the `.gitignore` comment that inherited the
+      same false claim (telling a reader to rename the stage in `einmo.toml`)
+      was fixed too. Stage *passphrases* genuinely are per-stage configurable,
+      so `[signing] generated` is real plumbing and is tested.
+      One test was written too strong and weakened deliberately:
+      `ensure_stage_dirs_creates_the_generation_stage_too` also asserted each
+      stage's flagged sink exists. It failed correctly — sinks are created
+      lazily on first flag, which was already true of all three pre-existing
+      stages. The reasoning is written into the test's doc comment rather than
+      left in a chat log.
+- [x] Add the `generated` field to `StageDirs` and its `einmo.toml` plumbing
+      (2026-08-11 16:32)
+      `StageDirs.generated` (default `"generated"`), `StagePassphrases.generated`,
+      `SigningConfig.generated`, and the `[signing] generated` key in
+      `parse_toml_content`. Unset follows the `output`/`checked` deployment
+      convention — present and empty, i.e. the computer key — not `verified`'s
+      absent.
+- [x] Fix every `Stage::ALL` consumer that no longer compiles or whose test
       expectations assumed three stages (`src/case.rs`, `src/verify.rs`,
       `src/storage.rs`, `src/suite.rs`, `src/transitions.rs`,
       `src/einmo_suite.rs`, `src/config.rs`)
-- [ ] Run all tests — old and new — and make sure they all pass correctly
+      (2026-08-11 16:35)
+      **Four sites, not the seven anticipated.** `Stage::ALL` *iterations*
+      absorb a new variant silently and correctly; only `match stage { … }`
+      sites break. The four: `case.rs:436` (`retract`'s cascade),
+      `config.rs:43` (`StageDirs::name`), `config.rs:175`
+      (`StagePassphrases::get`), and `bin/einmo_review_server.rs:673`
+      (`parse_decidable_stage` — missed by `cargo build --lib`, caught by
+      `--all-targets`).
+      Two of the four already have their final EIMP-01 answer rather than a
+      placeholder: `retract` refuses `Generated` (§S.6 — it is regenerated
+      every run; flipping `Output` to *allowed* is Phase 5's job and is
+      commented as such), and `parse_decidable_stage` refuses `Generated`
+      (§S.3 — `promote generated to output` is a CLI act, never a reviewer's
+      decision). The latter deliberately does not prejudge Phase 6's open
+      question: a stage can be inspectable without being decidable, which is
+      already true of `output`.
+- [x] Run all tests — old and new — and make sure they all pass correctly
+      (2026-08-11 16:38)
+      **409 tests, 0 failed** (`cargo test --workspace`), against the Phase 0
+      baseline of 401 — exactly the 8 added. `cargo fmt --check` clean;
+      `cargo clippy --workspace --all-targets -- -D warnings` clean.
+      zweimomo 4/4, including `eimp3_output_drift_comprehensive`, which is
+      still green because nothing about drift has changed yet — Phase 2
+      removes it and Phase 7 rewrites that test.
 - [ ] Commit
 
 ---

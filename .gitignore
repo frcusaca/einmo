@@ -1,3 +1,9 @@
 /target
 mutants.out.*
 mcp.*
+
+# EIMP-01: the generation stage is a work file, never committed.
+# Known limitation: this also ignores an input/ subdirectory literally named
+# `generated`. Stage directory names are not einmo.toml-settable, so such a
+# suite has no escape today -- see EIMP-01.md S.1. No suite here has one.
+generated/

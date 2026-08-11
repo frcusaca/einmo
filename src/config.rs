@@ -19,6 +19,7 @@ use crate::stage::{DEFAULT_FLAGGED_DIR_NAME, Stage, validate_stage_name};
 /// plus `flagged`; a suite may override them (validated `[A-Za-z0-9_-]+`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StageDirs {
+    generated: String,
     output: String,
     checked: String,
     verified: String,
@@ -28,6 +29,7 @@ pub struct StageDirs {
 impl Default for StageDirs {
     fn default() -> Self {
         StageDirs {
+            generated: "generated".into(),
             output: "output".into(),
             checked: "checked".into(),
             verified: "verified".into(),
@@ -41,6 +43,7 @@ impl StageDirs {
     #[must_use]
     pub fn name(&self, stage: Stage) -> &str {
         match stage {
+            Stage::Generated => &self.generated,
             Stage::Output => &self.output,
             Stage::Checked => &self.checked,
             Stage::Verified => &self.verified,
@@ -165,6 +168,7 @@ pub struct TestConfig {
 /// `Some("")` means the well-known empty-passphrase key.
 #[derive(Debug, Clone, Default)]
 struct StagePassphrases {
+    generated: Option<String>,
     output: Option<String>,
     checked: Option<String>,
     verified: Option<String>,
@@ -173,6 +177,7 @@ struct StagePassphrases {
 impl StagePassphrases {
     fn get(&self, stage: Stage) -> Option<&str> {
         match stage {
+            Stage::Generated => self.generated.as_deref(),
             Stage::Output => self.output.as_deref(),
             Stage::Checked => self.checked.as_deref(),
             Stage::Verified => self.verified.as_deref(),
@@ -210,9 +215,10 @@ impl TestConfig {
             dependent_separator: "++".into(),
             diff_limit: 2000,
             suite_name,
-            // Deployment convention: output/checked empty, verified unset.
-            // `[signing]` in einmo.toml overrides per stage.
+            // Deployment convention: generated/output/checked empty, verified
+            // unset. `[signing]` in einmo.toml overrides per stage.
             stage_passphrases: StagePassphrases {
+                generated: Some(toml.signing.generated.clone().unwrap_or_default()),
                 output: Some(toml.signing.output.clone().unwrap_or_default()),
                 checked: Some(toml.signing.checked.clone().unwrap_or_default()),
                 verified: toml.signing.verified.clone(),
@@ -697,6 +703,7 @@ pub struct EinmoTomlConfig {
 
 #[derive(Debug, Clone, Default)]
 pub struct SigningConfig {
+    pub generated: Option<String>,
     pub output: Option<String>,
     pub checked: Option<String>,
     pub verified: Option<String>,
@@ -801,6 +808,9 @@ fn parse_toml_content(content: &str) -> Result<EinmoTomlConfig> {
     if let Some(signing) = value.get("signing").and_then(|v| v.as_table()) {
         if let Some(v) = signing.get("reviewer_key_prefix").and_then(|v| v.as_str()) {
             config.signing.reviewer_key_prefix = Some(v.to_string());
+        }
+        if let Some(v) = signing.get("generated").and_then(|v| v.as_str()) {
+            config.signing.generated = Some(v.to_string());
         }
         if let Some(v) = signing.get("output").and_then(|v| v.as_str()) {
             config.signing.output = Some(v.to_string());
@@ -958,6 +968,75 @@ mod tests {
     fn collation_defaults_to_path_bytes_when_unset() {
         let c = cfg();
         assert_eq!(c.collation().unwrap(), Collation::PathBytes);
+    }
+
+    // ── EIMP-01 §S.1: the generation stage is uniform with the other three ──
+
+    /// The default name, and — by iterating `Stage::ALL` rather than naming
+    /// three stages — proof that `StageDirs` answers for every stage there is.
+    /// A stage added without a `StageDirs` field fails here.
+    #[test]
+    fn stage_dirs_answer_for_every_stage_including_generated() {
+        let dirs = StageDirs::default();
+        assert_eq!(dirs.name(Stage::Generated), "generated");
+        for stage in Stage::ALL {
+            assert_eq!(
+                dirs.name(stage),
+                stage.dir_name(),
+                "StageDirs default must agree with Stage::dir_name for {stage:?}"
+            );
+        }
+        assert!(dirs.validate().is_ok());
+    }
+
+    /// `ensure_stage_dirs` creates all four, not the three it used to.
+    ///
+    /// Deliberately asserts only the stage directories. A first draft of this
+    /// test also required each stage's nested flagged sink to exist, and it
+    /// failed — correctly. Flagged sinks are created lazily, when something is
+    /// first flagged into them (`ensure_parent_dir` on write), and that was
+    /// true of all three pre-existing stages too. The assertion encoded an
+    /// assumption about `ensure_stage_dirs`, not a requirement of it, so it
+    /// was removed rather than the behavior changed. Recorded here because
+    /// "the new test failed, so weaken the test" is a move that deserves its
+    /// reasoning written down.
+    #[test]
+    fn ensure_stage_dirs_creates_the_generation_stage_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        c.ensure_stage_dirs().unwrap();
+        for stage in Stage::ALL {
+            assert!(
+                c.stage_dir(stage).is_dir(),
+                "{stage:?} directory not created"
+            );
+        }
+    }
+
+    /// Stage *passphrases* really are per-stage configurable (unlike stage
+    /// directory *names* — see EIMP-01.md §S.1), so `[signing] generated`
+    /// must work exactly as `[signing] output` does.
+    #[test]
+    fn generated_stage_passphrase_reads_from_einmo_toml() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("einmo.toml"),
+            "[signing]\ngenerated = \"gen-pass\"\noutput = \"out-pass\"\n",
+        )
+        .unwrap();
+        let c = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        assert_eq!(c.stage_passphrase(Stage::Generated), Some("gen-pass"));
+        assert_eq!(c.stage_passphrase(Stage::Output), Some("out-pass"));
+    }
+
+    /// Unset `[signing] generated` follows the same deployment convention as
+    /// `output`/`checked`: present, empty — i.e. the computer key — rather
+    /// than absent like `verified`.
+    #[test]
+    fn generated_stage_passphrase_defaults_to_the_computer_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
+        assert_eq!(c.stage_passphrase(Stage::Generated), Some(""));
     }
 
     #[test]

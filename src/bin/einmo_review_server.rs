@@ -672,7 +672,16 @@ fn parse_decision(tokens: &[String]) -> Result<Decision> {
 fn parse_decidable_stage(s: &str) -> Result<Stage> {
     match Stage::parse(s)? {
         stage @ (Stage::Checked | Stage::Verified) => Ok(stage),
-        Stage::Output => Err(EinmoError::Config(format!(
+        // `EIMP-01`: `generated` joins `output` as a non-decidable stage, for
+        // the same reason and one stronger. It is upstream of `output`, so it
+        // is the source the sources start from; and `promote generated to
+        // output` is a CLI act (§S.3), never a reviewer's decision.
+        //
+        // This does NOT prejudge the still-open question of whether
+        // `generated/` appears in the review *worklist* (EIMP-01.md §Open
+        // Questions, scheduled for plan Phase 6) — a stage can be inspectable
+        // without being decidable, which is already true of `output`.
+        Stage::Generated | Stage::Output => Err(EinmoError::Config(format!(
             "decision stage must be checked or verified, not {s:?}"
         ))),
     }
