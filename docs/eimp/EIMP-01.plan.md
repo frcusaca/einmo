@@ -128,7 +128,9 @@ commits — there is no worktree stage.
       zweimomo 4/4, including `eimp3_output_drift_comprehensive`, which is
       still green because nothing about drift has changed yet — Phase 2
       removes it and Phase 7 rewrites that test.
-- [ ] Commit
+- [x] Commit
+      (2026-08-11 16:41)
+      `03f9cac` — "EIMP-01 Phase 1: Stage::Generated, the fourth stage".
 
 ---
 
