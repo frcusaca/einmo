@@ -21,10 +21,11 @@ ls docs/eimp | rev | sort -V | rev
 | [EIMP-3](EIMP-3.md) | Output-stage drift fails the run; explicit regenerate; multi-signer output stamps | complete | 2026-07-30 | Claude Code (Sonnet 5) |
 | [EIMP-4](EIMP-4.md) | Split einmo into core + einmo-review-server, publish both to crates.io at 0.0.6 | Draft | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-5](EIMP-5.md) | Merkle-tree corpus signing — faster to compute, cheaper to update | Draft | 2026-07-30 | Claude Code (Opus 5) |
-| [EIMP-6](EIMP-6.md) | Structured JSONL logging, and retiring the crash crumb | Draft | 2026-07-30 | Claude Code (Opus 5) |
+| [EIMP-6](EIMP-6.md) | Add structured JSONL logging to the test-run path | Brewing | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-7](EIMP-7.md) | EinmoCase / EinmoSuite / EinmoDirectory — unify case access behind an EinmoStorage trait | complete | 2026-07-31 | Claude Code (Sonnet 5) |
 | [EIMP-8](EIMP-8.md) | Code-review findings — einmo library, review server, and zweimomo | Draft | 2026-07-31 | opencode (z-ai/glm-5.2); Claude Code (Opus 5) |
-| [EIMP-9](EIMP-9.md) | The test-tooling contract — one reliable way to run einmo's tests and read the results | Implementing | 2026-08-01 | Claude Code (Opus 5) |
+| [EIMP-9](EIMP-9.md) | The test-tooling contract — one reliable way to run einmo's tests and read the results | Implementing (paused) | 2026-08-01 | Claude Code (Opus 5) |
+| [EIMP-01](EIMP-01.md) | A separate generation phase writing an uncommitted `generated/` stage, and validation levels that compare only against their predecessor | Draft | 2026-08-11 | Claude Code (Opus 5) |
 
 ---
 
@@ -32,28 +33,94 @@ ls docs/eimp | rev | sort -V | rev
 
 **Goal**: a functioning einmo library and review system, ready for foolish to
 depend on it as a normal crates.io dependency instead of the stale vendored
-copy at `/yolo/src/einmo`.
+copy at `/yolo/src/einmo`. **The sprint is still running** — what follows is a
+rescope, not a wind-down.
+
+### Rescoped 2026-08-11 — traded breadth for a fourth stage
+
+`EIMP-01` adds a stage to a model that had three. That is foundational work:
+it touches `Stage`, `ValidationLevel`, `TestConfig`, the promotion and
+retraction rules, every surface that enumerates stages, and the integration
+suite that exercises all of it. Absorbing it inside the sprint means giving
+something up rather than letting the sprint grow, so **breadth was traded for
+depth**:
+
+- **Out**: the dhtml frontend. Backburnered, not cancelled — the shipped page
+  keeps working and is knowingly left stale when the stage model changes.
+- **Out for now**: `EIMP-9`, paused mid-flight; `EIMP-5` and `EIMP-8` stay
+  where they were.
+- **In**: `EIMP-01` end to end — library, tests, CLI promotion, the server,
+  the TUI, and the `zweimomo` upgrade that proves it against real evaluators.
+
+The trade is deliberate. A stage model that is right is worth more than a
+frontend, and getting it right *before* `EIMP-4` publishes is the whole
+reason it is worth doing now rather than after.
 
 The sprint's EIMPs, in execution order:
 
-1. **`EIMP-1`** (Implementing) — finish the review loop: the remaining
-   `EinmoReview` surface, `ReviewMode`, multi-signer promote, flag
-   semantics, the journal, the TUI-owned private server, the dhtml
-   frontend, and `CorpusSigner` using the **existing** byte-join
-   construction (§S.11) with the new configurable collation (§S.11a).
-2. **maintainer performance-verifies the review loop** — an explicit STOP
-   in `EIMP-1.plan.md`, and `EIMP-4`'s first gate. **Done 2026-07-31**;
-   it found thirteen defects (P0–P12), twelve of them fixed and merged to
-   `jia`. The thirteenth, **P1**, was architectural and became `EIMP-7`.
-3. **`EIMP-7`** (Final, ready to implement) — the layered core: `EinmoCase`/`EinmoSuite`/
-   `EinmoDirectory` behind an `EinmoStorage` trait, so `einmo test` and
-   `einmo review` stop maintaining parallel scanning, comparison, and
-   promotion implementations. Carries `EIMP-1`'s P1 fix plus a second
-   inconsistency found while drafting it (`einmo test` and `einmo review`
-   answering differently about the same case).
-4. **`EIMP-4`** (Draft) — split into `einmo` + `einmo-review-server`,
-   publish both at `0.0.6`, repoint `foolish-ubca` and `/yolo/src/zweimomo`
+**Nothing has been published yet.** The sprint targets `0.0.7` directly, and
+API breakage before that point costs nothing — there is no consumer of a
+published einmo to keep compatible. Sequencing is therefore driven by what
+makes the *work* cheaper, not by release compatibility.
+
+### Now
+
+**Sprint scope: library, its tests, CLI promotion, the server, and the TUI
+client. No GUI.** The dhtml frontend is **backburnered** as of 2026-08-11
+(`EIMP-1.md` §S.9, `EIMP-1.plan.md` §Phase E) — the page that shipped
+2026-07-31 keeps working, but no further dhtml work happens this sprint, and
+it is knowingly left stale when the stage model changes.
+
+1. **`EIMP-1`** (Implementing) — **the current focus, and effectively done**:
+   77 of 84 plan checkboxes complete. Backburnering Phase E cleared its last
+   substantive open item, so what remains is the maintainer-deferred
+   `\d`/server-diff vim issue, the `status: complete` flip, and three
+   post-EIMP follow-ups. Delivered: the `EinmoReview` surface, `ReviewMode`,
+   multi-signer promote, flag semantics, the journal, the TUI-owned private
+   server, and `CorpusSigner` on the **existing** byte-join construction
+   (§S.11) with the new configurable collation (§S.11a).
+
+### Urgently after `EIMP-1`
+
+2. **`EIMP-8`** (Draft) — code-review findings across the einmo library, the
+   review server, and `zweimomo`. 41 tracked findings.
+3. **`EIMP-9`** (Implementing, **paused**) — the test-tooling contract.
+   **Paused as of 2026-08-11, not deprioritized.** Its purpose is
+   load-bearing and easy to mistake for hygiene: einmo's mutation gate has
+   **never run to completion** (T1, T2), and mutation testing is the only
+   mechanism einmo has for catching a test that *cannot fail*
+   (`assert test_results() || True`). That failure mode has occurred in this
+   repository, was detected once, and detection was then lost. See
+   `EIMP-9.md` §Motivation, first subsection. Ten of forty-two plan
+   checkboxes are done.
+
+### Then
+
+4. **`EIMP-01`** (Draft) — a separate `einmo generate` phase writing the
+   uncommitted `generated/` stage, `output/` as a committed baseline reached
+   by an explicitly weak promotion, and gates that each compare only against
+   their immediate predecessor. Supersedes `EIMP-3`. Changes `Stage`,
+   `ValidationLevel`, and `TestConfig` — three of the five symbols `EIMP-4`
+   publishes — so it lands before the split. Its Phase 6 updates the server
+   and TUI for the fourth stage (**not** the dhtml page, which stays
+   backburnered); its Phase 7 upgrades **`zweimomo`**, the integration
+   testbed where einmo runs end-to-end against real Boa and pyo3 evaluators.
+5. **`EIMP-4`** (Draft) — split into `einmo` + `einmo-review-server`,
+   publish both at `0.0.7`, repoint `foolish-ubca` and `/yolo/src/zweimomo`
    at the published crate, delete the vendored copy.
+
+### Completed sprint milestones
+
+- **maintainer performance-verifies the review loop** — an explicit STOP
+  in `EIMP-1.plan.md`, and `EIMP-4`'s first gate. **Done 2026-07-31**;
+  it found thirteen defects (P0–P12), twelve of them fixed and merged to
+  `jia`. The thirteenth, **P1**, was architectural and became `EIMP-7`.
+- **`EIMP-7`** (complete) — the layered core: `EinmoCase`/`EinmoSuite`/
+  `EinmoDirectory` behind an `EinmoStorage` trait, so `einmo test` and
+  `einmo review` stopped maintaining parallel scanning, comparison, and
+  promotion implementations. Carried `EIMP-1`'s P1 fix plus a second
+  inconsistency found while drafting it (`einmo test` and `einmo review`
+  answering differently about the same case).
 
 Explicitly **outside** the sprint, each with its own specification so
 nothing is dropped — both land after `EIMP-1`:
@@ -65,14 +132,73 @@ nothing is dropped — both land after `EIMP-1`:
   the collation conformance harness (§S.1a) — stable-sort an alphabet,
   stable-sort its reverse, assert they agree — normative for every present
   and future `Collation`.
-- **`EIMP-6`** — structured JSONL logging, and retiring the crash crumb.
-  Per its §S.3, **crash-crumb work is frozen as of 2026-07-30**: the
-  mechanism keeps working untouched but gains no new features or consumers
-  while scheduled for removal.
+- **`EIMP-6`** (Brewing) — add structured JSONL logging to the test-run path.
+  **Rescoped 2026-08-11**: the crash crumb is no longer retired and is now an
+  explicit non-goal. `EIMP-01` moves crumb creation into the uncommitted
+  `generated/` stage, dissolving the output-tree-pollution argument for
+  removal; and a journal is weaker crash evidence unless it also flushes
+  before every evaluation, at which point deleting a working crumb buys
+  nothing. The prior §S.3 crumb-work freeze is lifted.
 
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-11 (4)
+**Updated By**: Claude Code (Opus 5)
+**Changes**: Recorded the sprint's rescope explicitly — **the jia-sprint is
+still running**, and adding a fourth stage (`EIMP-01`) is foundational enough
+that breadth was traded for depth rather than letting the sprint grow: the
+dhtml frontend backburnered, `EIMP-9` paused, `EIMP-01` taken end to end
+including the `zweimomo` upgrade. Rationale stated: a stage model that is
+right is worth more than a frontend, and it must be right before `EIMP-4`
+publishes.
+
+**Date**: 2026-08-11 (3)
+**Updated By**: Claude Code (Opus 5)
+**Changes**: Recorded the sprint's **scope boundary** — library, tests, CLI
+promotion, server, TUI; **no GUI**. The dhtml frontend is backburnered
+(`EIMP-1.md` §S.9, `EIMP-1.plan.md` §Phase E); the shipped page keeps working
+and is knowingly left stale when the stage model changes. That cleared
+`EIMP-1`'s last substantive open checkbox, so it is now noted as effectively
+done at 77/84. `EIMP-01`'s entry updated to name its two new phases: the
+review surface (server + TUI only) and the `zweimomo` upgrade.
+
+**Date**: 2026-08-11 (2)
+**Updated By**: Claude Code (Opus 5)
+**Changes**: Re-sequenced §The jia-sprint on maintainer direction. **`EIMP-1`
+is the current focus**, with `EIMP-8` and `EIMP-9` urgent follow-ups, then
+`EIMP-01`, then `EIMP-4`. Recorded that nothing has been published and the
+sprint targets `0.0.7` directly, so sequencing is driven by what makes the
+work cheaper rather than by release compatibility (`EIMP-4` updated from
+`0.0.6` in the sprint narrative; its own spec still says `0.0.6` and needs
+updating when picked up). `EIMP-9` marked **paused, not deprioritized**, with
+its load-bearing purpose surfaced into the sprint text: the mutation gate has
+never run to completion, and mutation testing is einmo's only detector for a
+test that cannot fail — a failure mode that occurred here and whose detection
+was lost. `EIMP-7` and the maintainer performance-verification moved into a
+"Completed sprint milestones" block (`EIMP-7` was still listed as "Final,
+ready to implement" while `complete`). `EIMP-6` rescoped — see below.
+
+**Date**: 2026-08-11 (1)
+**Updated By**: Claude Code (Opus 5)
+**Changes**: Rescoped `EIMP-6` to **add** structured JSONL logging to the
+test-run path only; the crash crumb is no longer retired and is now an
+explicit non-goal, with the retirement moved to a Rejected Alternative.
+`status` `Draft` → `Brewing`, title updated. Added `EIMP-01` — separates
+generation from gating. A new
+`einmo generate` phase writes the gitignored `generated/` stage (a full
+stage: outputs, signatures, `.einmo` files; it differs only in not being
+committed and in existing to be compared against `output/`), so an agent or
+human can materialize fresh results for direct inspection without disturbing
+committed `output/`. `output/` becomes a committed baseline reached by an
+explicitly weak `promote generated to output`, and the three gates stop
+escalating — each compares only against its immediate predecessor, verifying
+signatures on both sides. Gating stays on `output`/`checked`/`verified`
+because `output` depends on generation and fails if it fails. Supersedes
+`EIMP-3`, whose drift verdict moves into the `output` gate's comparison and
+whose `regenerate-output` verb becomes the promotion. Adapted from the
+Foolish project's `FOOP-06`.
 
 **Date**: 2026-08-01
 **Updated By**: Claude Code (Opus 5)

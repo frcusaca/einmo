@@ -1091,6 +1091,16 @@ than by edit.
 
 Ships in `einmo-review-server` (`EIMP-4` §S.1).
 
+- [x] backburnered — **no GUI work for the remainder of the jia-sprint**, by
+      maintainer direction. The sprint's scope is the **library, its tests,
+      CLI promotion, the server, and the TUI client**; the dhtml frontend is
+      not part of it. The page below already exists and keeps working as
+      shipped — this marker delays *further* dhtml work, it does not retract
+      what landed. Revive by removing this marker and its timestamp line.
+      Consequence to hold in mind: when a stage is added to the model
+      (`EIMP-01`'s `generated/`), the server and TUI are updated and the
+      4-pane page is **knowingly left stale** until this is revived.
+      (2026-08-11 15:47)
 - [x] Single embedded page: 4-pane view, server diff hunks, verb buttons,
       notes→Flag, plan view with typed-PROMOTE gate, SSE refresh
       (2026-07-31) — `src/dhtml/review.html` (self-contained, ~400 lines):
@@ -1101,8 +1111,14 @@ Ships in `einmo-review-server` (`EIMP-4` §S.1).
       (decision-made/item-changed/executed events auto-refresh the
       worklist). Served via `include_str!` at `GET /` and `GET
       /review/{session}` by `review_server.rs`.
-- [ ] Browser-path integration test (HTTP+token mode) reusing Phase C
-      fixtures
+- [x] backburnered — browser-path integration test (HTTP+token mode) reusing
+      Phase C fixtures. Backburnered with the rest of Phase E: it exercises
+      the dhtml page, which is out of sprint scope. **This was EIMP-1's last
+      substantive open checkbox**, so backburnering it is what lets EIMP-1
+      reach `complete` on library + tests + CLI + server + TUI alone. The
+      server's HTTP+token path itself is covered by Phase C's own tests; what
+      is deferred is the browser end of it.
+      (2026-08-11 15:47)
 
 ## Comprehensive test + completion
 
@@ -1647,3 +1663,17 @@ apparently used to work and the regression (if any) isn't understood yet.
       `einmo-review-server list` (the library already supports it via
       `ReviewOpts { mode: ReviewMode::Random }` — only the CLI flag is
       missing).
+
+---
+
+## Last Updated
+
+**Date**: 2026-08-11
+**Updated By**: Claude Code (Opus 5)
+**Changes**: Phase E **backburnered** by maintainer direction — no GUI work
+for the remainder of the jia-sprint. Both of its checkboxes carry the marker:
+the shipped dhtml page (delaying *further* work, not retracting what landed)
+and the browser-path integration test. That test was EIMP-1's last
+substantive open checkbox, so EIMP-1 can now reach `complete` on library +
+tests + CLI promotion + server + TUI alone. The server's own HTTP+token path
+stays covered by Phase C's tests; only the browser end is deferred.

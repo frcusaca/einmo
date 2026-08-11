@@ -107,6 +107,193 @@ artifact's origin stage always known, and preserves the intentional
 input/output/checked/verified directory split -- a hand-authored suite stays
 easy to browse and edit in place: type into `input/`, look at `output/`.
 
+## What Passing Means
+
+> **Status: describes the stage model introduced by `docs/eimp/EIMP-01.md`,
+> which is specified but not yet implemented.** Until that lands, evaluation
+> writes `output/` directly, there is no `generated/` stage, and the levels
+> escalate rather than each checking one link. This section describes the
+> model as designed; the sections above it describe einmo as it ships today.
+
+**Your suite passes when all three gates pass.** That's the whole claim, and
+it is worth understanding what it is built out of, because a red gate tells
+you not just *that* something is wrong but *where*.
+
+Results move through four stages, one step at a time:
+
+```
+generated  ──▶  output  ──▶  checked  ──▶  verified
+  it ran       reasonable      reviewed      attested
+```
+
+Each arrow is a promotion, and each promotion adds a signature. Each gate
+checks exactly one arrow:
+
+| Gate | Checks | What a green gate tells you |
+|---|---|---|
+| `--level output` | `generated` ↔ `output` | the code still produces the baseline you committed |
+| `--level checked` | `output` ↔ `checked` | that baseline is what somebody reviewed |
+| `--level verified` | `checked` ↔ `verified` | what they reviewed is what a human signed |
+
+Three gates instead of one, for two reasons. A red gate **names the link that
+broke** — "the code changed" and "the review is stale" are different problems
+with different fixes. And only the first gate needs to run your code at all;
+the other two are file comparisons, so you can verify a signed release against
+its reviewed baseline with nothing but the files and the keys.
+
+### Generate passes when your code ran
+
+```bash
+einmo generate my_suite --command ./my-evaluator
+```
+
+Generation runs your evaluator over every input and writes the results to
+`generated/`. It passes when:
+
+- every input's evaluator returned **without an error**, and
+- every file einmo wrote is a valid `.einmo` that **verifies against its own
+  signatures**.
+
+That is all. **Generation compares against nothing.** If what it produced
+differs from your committed `output/`, that is *not* a generation failure — it
+is the normal result of changing your code, and deciding what to do about it
+belongs to the next gate.
+
+`generated/` is gitignored. Generating never touches your committed baseline,
+which is what makes it safe to run any time you want to look at fresh results.
+
+### Output passes when the code still produces your baseline
+
+```bash
+einmo verify my_suite --level output
+```
+
+This is the only gate that runs your code. It generates first, then compares.
+It passes when **all** of the following hold:
+
+1. **Generation passed** — everything above is true.
+
+2. **The two stages line up.** Every case in `generated/` has a counterpart in
+   `output/`, and every case in `output/` has one in `generated/`. Neither side
+   holds a case the other lacks.
+
+3. **Every signature on both sides verifies.** Each artifact carries a chain of
+   signatures, and all of them are checked:
+
+   | Signature | What it attests |
+   |---|---|
+   | `compiled` | which einmo binary produced this artifact — signed with einmo's own built-in key |
+   | `configured` | the suite configuration in force — signed with your suite's key |
+   | `stage:generated` | this content came out of a generation run |
+   | `stage:output` | someone accepted it as the baseline (present on the `output/` side only) |
+
+   A file whose signature does not check out is **refused, not compared**.
+   Einmo will never tell you "these match" about bytes it could not verify.
+
+4. **Every compared section is byte-identical.** The sections compared are:
+
+   - `INPUT` — the source that was evaluated
+   - `OUTPUT`, or `OUTPUT[0]`, `OUTPUT[1]`, … when a case produces several
+   - `DIFF` — on cases that reference another case
+   - `COMMENTS` — only if your suite is configured to require it
+
+5. **Nothing is orphaned.** No file sits in `output/` whose `input/` file you
+   deleted.
+
+#### What is deliberately not compared
+
+Two artifacts can match while differing in bytes, and this is intentional:
+
+- **The `STAMPS` section itself.** The `output/` side legitimately carries a
+  `stage:output` signature its `generated/` twin does not — that is what
+  promotion *is*. Comparing signature blocks would make every promotion look
+  like a change.
+- **The metadata header** — the suite path, the producing commit, the einmo
+  binary's hash, and the timestamp of the run.
+
+So **two runs an hour apart produce different timestamps and still match.**
+Einmo compares what your code produced, not when it produced it. This is the
+single most common surprise, and it is the point: a baseline that churned on
+every run would be worthless as a baseline.
+
+### Checked passes when your baseline is what was reviewed
+
+```bash
+einmo verify my_suite --level checked
+```
+
+The same conjunction, one link along: `output/` ↔ `checked/`. The two stages
+must line up, every signature on both sides must verify (now including
+`stage:checked`), every compared section must be byte-identical, and nothing in
+`checked/` may be orphaned. The same exclusions apply — stamps and metadata are
+not compared.
+
+**This gate runs nothing.** No evaluator, no build of the system under test, no
+runner command at all. It reads two directories.
+
+It also **does not re-check** the generated↔output link. That is the output
+gate's job, and duplicating it here would only tell you twice about the same
+failure.
+
+### Verified passes when a human signed it
+
+```bash
+einmo verify my_suite --level verified
+```
+
+Again the same conjunction, for `checked/` ↔ `verified/`, with signatures now
+including `stage:verified`. It runs nothing and writes nothing.
+
+It adds two checks about **who** signed, not just whether the signature is
+valid:
+
+- The `stage:verified` signature must carry your **configured reviewer's key**.
+  A perfectly valid signature from the wrong person fails.
+- It must **not** carry the well-known empty-passphrase key.
+
+That second check exists because an automated agent that pipes an empty
+passphrase produces a predictable, well-known key. Einmo derives that key
+itself and looks for it, so an agent cannot quietly stand in for the human
+whose attestation the verified stage exists to record.
+
+### When a gate goes red
+
+| Red gate | What it means | What to do |
+|---|---|---|
+| generate | your evaluator errored, or produced an unsound artifact | fix the runner — nothing downstream can be trusted yet |
+| `--level output` | your code no longer produces the committed baseline | either fix the code, or accept the new results: `einmo promote generated to output` |
+| `--level checked` | the baseline moved past what was reviewed | review the difference, then `einmo promote output to checked` |
+| `--level verified` | the reviewed content moved past what was attested, or the wrong key signed | `einmo promote checked to verified --interactive` |
+
+The two promotions are **not** the same kind of act, and the difference
+matters:
+
+- `promote generated to output` is a **weak** claim: the run completed and the
+  output looks reasonable. A sanity check — explicitly *not* a semantic or
+  stylistic review.
+- `promote output to checked` is the **real review**: the results are correct
+  against the specification, justified statement by statement.
+
+Retraction runs the chain backwards. You cannot retract from `generated/` — it
+is rebuilt every run. Retracting from `output/`, `checked/`, or `verified/`
+removes that artifact and cascades forward, so withdrawing a baseline you no
+longer trust also withdraws everything promoted from it.
+
+### Looking at results without committing anything
+
+Because `generated/` holds ordinary signed `.einmo` files, every tool works on
+it:
+
+```bash
+einmo generate my_suite --command ./my-evaluator   # produce fresh results
+einmo compare generated output --root-cause        # what changed, and why
+einmo show   generated/my_case.foo.einmo           # summary + signature chain
+einmo body   generated/my_case.foo.einmo           # the signed sections
+```
+
+None of that touches your committed baseline. Generate, read, decide, and only
+then promote.
+
 ## The `.einmo` File Format
 
 A `.einmo` file is a header line, followed by sections separated by a
@@ -1305,6 +1492,20 @@ configuration.
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-11
+**Updated By**: Claude Code (Opus 5)
+**Changes**: Added the end-user "What Passing Means" section — a cascading
+explanation of what a passing suite asserts, from "all three gates pass" down
+to the named signatures (`compiled`, `configured`, `stage:*`) and named
+sections (`INPUT`, `OUTPUT[i]`, `DIFF`, `COMMENTS`) each gate compares, plus
+what is deliberately excluded (the `STAMPS` block and the metadata header, so
+two runs an hour apart still match). Also covers the remedy per red gate, the
+weak-versus-real distinction between the two promotions, retraction's cascade,
+and inspecting `generated/` without touching the baseline. **The section
+carries a status marker: it describes the model specified in
+`docs/eimp/EIMP-01.md`, which is not yet implemented.** The marker is removed,
+and "The Three Stages" updated to four, as part of that EIMP's Phase 7.
 
 **Date**: 2026-08-01
 **Updated By**: Sisyphus (mimo-v2.5-pro)

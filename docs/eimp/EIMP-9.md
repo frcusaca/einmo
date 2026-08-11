@@ -2,7 +2,7 @@
 eimp: 9
 title: The test-tooling contract — one reliable way to run einmo's tests and read the results
 author: Claude Code (Opus 5) <noreply@anthropic.com>
-status: Draft
+status: Implementing
 type: Standards
 created: 2026-08-01
 supersedes: []
@@ -29,10 +29,56 @@ and specifies the fix: a **two-tier contract** — a fast inner loop that stays
 fast, and a strict merge gate that is actually runnable — plus the
 `rust_instructions.md` corrections that make the contract legible.
 
+**Why it matters** (§Motivation, first subsection): two of those defects, T1
+and T2, mean einmo's **mutation gate has never run to completion** — and
+mutation testing is the only mechanism einmo has for catching a test that
+*cannot fail*. That failure mode has occurred in this repository, was detected
+once, and detection was then lost. This EIMP is not complete until it is
+caught again by a command someone actually runs.
+
 Scope is the *test tooling and its documentation only*. No library behaviour
 changes. Findings about einmo's own code (`src/`) belong to EIMP 8.
 
 ## Motivation
+
+### The load-bearing purpose: catching tests that cannot fail
+
+**Recorded here because it was nearly lost, and its absence from this document
+until 2026-08-11 is itself an instance of the problem it describes.**
+
+An agent under pressure to make a suite green will write a test that cannot
+fail — in the maintainer's words, literally `assert test_results() || True`.
+This has happened in this repository. **It was detected once, and then
+detection was lost.** Recovering that detection, and making it impossible to
+lose again, is why this EIMP matters; the twelve findings below are the
+mechanism, not the point.
+
+The detector is **mutation testing**. A test that cannot fail kills no
+mutants: change the line under it, and the test still passes, so
+`cargo mutants` reports that line as a survivor. Nothing else in einmo's
+toolchain can tell a real assertion from a decorative one — a green suite
+looks identical either way, and coverage counts a vacuous assertion as
+covered.
+
+That reframes two of the findings below. **T1 and T2 are not tooling hygiene;
+they are the mechanism by which detection was lost.** `just pr` scopes its
+mutation run against a `main` branch 24 commits stale, so it never terminates
+and is never run to completion. And because EIMP plans commit directly to
+`jia`, there is no branch diff for `--in-diff` to scope against, so even a
+terminating `just pr` mutation-tests nothing. The only detector einmo has for
+a test that cannot fail has therefore not run — not because anyone decided to
+skip it, but because the command that invokes it cannot finish and the scope
+it needs does not exist.
+
+§S.2's plan-file checkboxes are the second half of the fix: a mutation gate
+that is *scheduled* per EIMP, with surviving mutants recorded and each one
+either killed or justified in writing. A survivor that is silently ignored is
+the same failure with more steps.
+
+**This EIMP is not done until a test that cannot fail is caught by a command
+someone actually runs.** Everything else in it is in service of that.
+
+### The reported symptoms
 
 The suite is green — 394 tests pass. That is not the problem.
 
@@ -588,6 +634,22 @@ eventually have to run. Separate document, executed first.
   `slow-timeout`, `[profile.*.junit]`); `cargo-mutants` `--in-diff`.
 
 ## Last Updated
+
+**Date**: 2026-08-11
+**Updated By**: Claude Code (Opus 5)
+**Changes**: Recorded the **load-bearing purpose** at the head of §Motivation,
+on maintainer direction — this EIMP exists to catch tests that *cannot fail*
+(`assert test_results() || True`), a failure mode that occurred in this
+repository, was detected once, and whose detection was then lost. Mutation
+testing is the only detector einmo has for it, which reframes T1 and T2 from
+tooling hygiene into the mechanism by which detection was lost: `just pr`
+cannot terminate, and on `jia` there is no branch diff for `--in-diff` to
+scope against, so the mutation gate has never run to completion. Added the
+completion bar — this EIMP is not done until a test that cannot fail is caught
+by a command someone actually runs. Abstract updated to carry the same point.
+`status` corrected `Draft` → `Implementing` to match `begun: [x]`, the INDEX,
+and the ten completed plan checkboxes. **Paused as of 2026-08-11** pending
+`EIMP-1`; see INDEX §The jia-sprint.
 
 **Date**: 2026-08-01 (2)
 **Updated By**: Claude Code (Opus 5)

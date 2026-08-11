@@ -607,6 +607,15 @@ state:
 
 ### S.9 The dhtml frontend
 
+> **Backburnered 2026-08-11 — no GUI work for the remainder of the
+> jia-sprint.** The sprint's scope is the library, its tests, CLI promotion,
+> the server, and the TUI client. The page specified below shipped
+> 2026-07-31 and keeps working as it is; what is deferred is *further* dhtml
+> work, including its browser-path integration test. See
+> `EIMP-1.plan.md` §Phase E. **Consequence**: when `EIMP-01` adds the
+> `generated/` stage, the server and TUI are updated and this 4-pane page is
+> knowingly left stale until the backburner marker is removed.
+
 A single self-contained page embedded in the binary (`include_str!`),
 served by the same server: the 4-pane layout with server-computed diff
 hunks (one diff implementation — `compare.rs` — everywhere), verb buttons, a
@@ -1021,3 +1030,15 @@ All resolved at begun-time (2026-07-30) — design is frozen:
   into its own repository.
 - Code: `src/{einmo_suite,transitions,signature,verify,format,compare}.rs`;
   `scripts/experimental_reviewer.sh`.
+
+## Last Updated
+
+**Date**: 2026-08-11
+**Updated By**: Claude Code (Opus 5)
+**Changes**: §S.9 (the dhtml frontend) **backburnered** by maintainer
+direction — no GUI work for the remainder of the jia-sprint, whose scope is
+the library, its tests, CLI promotion, the server, and the TUI client. The
+page that shipped 2026-07-31 keeps working; further dhtml work and its
+browser-path integration test are deferred. Recorded consequence: when
+`EIMP-01` adds the `generated/` stage, the server and TUI are updated and the
+4-pane page is knowingly left stale until the marker is removed.
