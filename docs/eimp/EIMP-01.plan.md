@@ -136,45 +136,172 @@ commits — there is no worktree stage.
 
 ## Phase 2 — The generation phase writes `generated/`
 
-- [ ] Read §S.2 and §S.5 of EIMP-01.md
-- [ ] Write the tests first: generation writes only `generated/` and leaves
+- [x] Read §S.2 and §S.5 of EIMP-01.md
+      (2026-08-12 09:35)
+- [x] Write the tests first: generation writes only `generated/` and leaves
       `output/` byte-untouched; the crash crumb lands in `generated/`;
       generation fails on an evaluator error; fails on an unsound written
       artifact; fails on an extraneous `input/` file; fails on an empty suite;
       **does not** fail when `generated` differs from `output`
-- [ ] Write the tests first: pruning removes a `generated/` artifact whose
+      (2026-08-12 09:40)
+      Five new tests. `generation_writes_generated_and_leaves_output_byte_-
+      untouched` asserts on BYTES, not existence: a committed baseline
+      rewritten with identical content is still a violation, because the stamp
+      chain and metadata header would churn.
+      Two clauses were already covered and are not duplicated: evaluator error
+      (`err_becomes_input_error_status`, `panic_becomes_output_error_status`)
+      and the shape preconditions (`check_integrity`'s O1/O2 tests). "Fails on
+      an unsound written artifact" is asserted indirectly via
+      `written_and_verified`, which is the re-verify-what-we-wrote result;
+      there is no way to make einmo write an unsound artifact on purpose
+      without breaking the signer, so it is not directly triggerable.
+- [x] Write the tests first: pruning removes a `generated/` artifact whose
       input was deleted, and leaves `generated/flagged/` alone
-- [ ] Retarget `write_output` at `generated/` (rename it to match) and sign
+      (2026-08-12 09:41)
+- [x] Retarget `write_output` at `generated/` (rename it to match) and sign
       with the generation stage's key
-- [ ] Move catastrophe-crumb creation into `generated/`
-- [ ] Implement pruning of input-less `generated/` artifacts, skipping the
+      (2026-08-12 09:52)
+      Renamed `write_generated`. **`Stamps::generate` turned out to be
+      specialized to `"stage:output"`** — passing it the generated keypair
+      produced a file stamped `stage:output` signed by the generation key,
+      which made the no-op fast path miss and 14 tests fail with an opaque
+      byte-diff. Fixed by calling `Stamps::generate_for_stage(...,
+      Stage::Generated.stamp_key(), ...)`, the general form `EIMP-1` §S.3
+      already added for `notes/`. Worth recording: the failure surfaced as a
+      1000-element byte-array assertion, not as anything naming the stamp key.
+- [x] Move catastrophe-crumb creation into `generated/`
+      (2026-08-12 09:45)
+      Follows from the retarget — the crumb is written to the same `out_path`.
+      Recorded in `write_crash_crumb`'s doc comment, including the consequence
+      for EIMP 6: the crumb no longer pollutes a committed tree.
+- [x] Implement pruning of input-less `generated/` artifacts, skipping the
       flagged sink via `is_in_flagged_sink`
-- [ ] Remove the drift path: `FileResult::drifted`, its `detail` message,
+      (2026-08-12 09:47)
+      `prune_generated`, called at the top of `evaluate_all` — before
+      evaluating, so a crash mid-run leaves a pruned tree rather than a
+      half-pruned one.
+- [x] Remove the drift path: `FileResult::drifted`, its `detail` message,
       `EinmoTestRunner::regenerate_output`
-- [ ] Remove the multi-signer co-sign path from the runner (§S.5 — co-signing
+      (2026-08-12 09:50)
+      All three gone. The `force` parameter threaded through `evaluate_impl`
+      and `write_output` went with them.
+- [x] Remove the multi-signer co-sign path from the runner (§S.5 — co-signing
       is `promote`'s job)
-- [ ] Retire EIMP 3's tests that covered the removed surface, with a comment
+      (2026-08-12 09:50)
+      `write_generated`'s `existing` handling is now a single fast path: same
+      sections AND already carrying this signer's stamp → restore the original
+      bytes; anything else → fresh write. Both removed branches are documented
+      at the site with where their requirement now lives.
+- [x] Retire EIMP 3's tests that covered the removed surface, with a comment
       naming EIMP-01; rewrite the tests covering EIMP 3's **intent** (drift
       must not be silently accepted) against the Output gate in Phase 4
-- [ ] Run all tests — old and new — and make sure they all pass correctly
-- [ ] Commit
+      (2026-08-12 09:55)
+      Three unit tests retired, replaced by a block naming each one, what it
+      covered, and where its surviving requirement now lives — so nothing is
+      dropped silently. One (`..._different_signer_appends_stamp`) is replaced
+      by a test pinning the *new* behavior rather than leaving a hole.
+      Two survive, retargeted: the byte-identical no-op and the corrupt-existing
+      fresh write.
+- [x] **Pulled forward into Phase 2 by the compiler** — recorded rather than
+      done silently, because each belongs to a later phase's checkbox:
+      (2026-08-12 10:05)
+  - [x] **Phase 3's CLI verb.** Removing `regenerate_output` broke `cli.rs`
+        immediately, so `Generate` (alias `evaluate`) replaced `Evaluate`, and
+        `RegenerateOutput` was removed, in this phase.
+        (2026-08-12 09:58)
+  - [x] **Phase 5's `(Generated, Output)` transition.** Seven `review.rs`
+        tests and two zweimomo tests used `regenerate_output` to refresh
+        `output/` after changing an input. Under EIMP-01 that act *is*
+        generate-then-promote, so the transition had to exist for them to
+        compile. One line in `is_legal_transition`; the rest of Phase 5
+        (retraction inversion, help text) is untouched.
+        (2026-08-12 10:00)
+  - [x] **Phase 7's zweimomo rewrite.** `eimp3_output_drift_comprehensive`
+        could not compile against the removed surface. Rewritten as
+        `eimp01_generate_promote_comprehensive` — generate → no-op → distinct
+        signer → changed result does NOT fail → promote signs → clean rerun —
+        against the real `BoaEvaluator` and a scratch copy of `day.1`. The
+        Output-gate assertion is the one part it cannot make yet; Phase 4 adds
+        it. `crash_crumb_survives_stack_overflow` repointed at `generated/`
+        and given a second assertion that `output/` stays clean.
+  - [x] Seven `review.rs` sites collapsed into one `generate_and_accept`
+        helper, and `seeded_suite` now promotes — tests that want a committed
+        baseline must ask for one, because evaluation no longer produces it as
+        a side effect.
+        (2026-08-12 10:02)
+  - [x] The same fixture change in `review_server.rs` (its own `seeded_suite`
+        plus one inline site). **Found only by the full workspace run** — the
+        earlier `review::tests`-scoped runs were all green.
+        (2026-08-12 10:15)
+  - [x] And again in `src/bin/einmo_review_server.rs`'s own `seeded_suite`.
+        **Three layers of the same fixture**, each invisible to the previous
+        layer's scoped run: `review.rs` → `review_server.rs` → the binary.
+        Lesson for the remaining phases: a scoped `cargo test --lib <module>`
+        is not evidence; only `cargo test --workspace` is.
+        (2026-08-12 10:22)
+- [x] **EIMP-9's T9 poisoning cascade, observed live.** Recorded because it
+      shaped how this phase was debugged and is worth the next reader knowing.
+      (2026-08-12 10:12)
+      The workspace run reported **40 failures; 3 were real.** The other 37
+      were `PoisonError` from `JOURNAL_ENV_LOCK.lock().unwrap()`
+      (`review.rs:1271`) after the first genuine panic poisoned it — and every
+      one of the 3 real failures **passed in isolation**, so per-test reruns
+      diagnosed nothing. The method that worked: filter the panic lines,
+      discard everything pointing at the lock site, and read only what
+      remained. A later run showed the same 40-for-1 pattern in
+      `review_server::tests`.
+      This is EIMP-9 §S.1 T9 exactly, and the concrete argument for its
+      nextest recommendation: process-per-test isolation makes a failure
+      *count* mean something. Staying on `cargo test` per maintainer
+      direction; recording the cost rather than re-learning it.
+- [x] Run all tests — old and new — and make sure they all pass correctly
+      (2026-08-12 10:21)
+      **412 tests, 0 failed** (`cargo test --workspace`): 368 lib + 31
+      review-server binary + 8 einmo-tools + 4 zweimomo + 1. Against the
+      Phase 1 baseline of 409: +5 generation tests, +1 replacing the retired
+      co-sign test, −3 retired EIMP-3 tests = +3. `cargo fmt --check` clean;
+      `cargo clippy --workspace --all-targets -- -D warnings` clean.
+      zweimomo 4/4 including the rewritten
+      `eimp01_generate_promote_comprehensive` against the real `BoaEvaluator`.
+- [x] Commit
+      (2026-08-12 10:25)
 
 ---
 
 ## Phase 3 — The `generate` CLI verb
 
-- [ ] Read §S.2 of EIMP-01.md
-- [ ] Write the tests first for the verb's exit codes: zero when every input
+**Executed inside Phase 2** — removing `regenerate_output` broke `cli.rs`
+immediately, so the verb could not wait. Recorded here rather than left
+looking undone.
+
+- [x] Read §S.2 of EIMP-01.md
+      (2026-08-12 09:35)
+- [x] Write the tests first for the verb's exit codes: zero when every input
       evaluated to a sound artifact, non-zero on an evaluator error
-- [ ] Rename the `Evaluate` subcommand to `Generate`, keeping `evaluate` as a
+      (2026-08-12 09:58)
+      Covered by the existing exit-code path plus the parser smoke test, which
+      now asserts `generate` and its `evaluate` alias parse **and that
+      `regenerate-output` does not** — the removal is asserted, not merely
+      done, so re-adding the verb has to be a deliberate act.
+- [x] Rename the `Evaluate` subcommand to `Generate`, keeping `evaluate` as a
       clap alias
-- [ ] Remove the `RegenerateOutput` subcommand; its help text pointed at
+      (2026-08-12 09:58)
+- [x] Remove the `RegenerateOutput` subcommand; its help text pointed at
       EIMP 3's workflow, which no longer exists
-- [ ] Help text must state both uses (§S.2): a test that things run, and the
+      (2026-08-12 09:58)
+- [x] Help text must state both uses (§S.2): a test that things run, and the
       way to materialize results **for direct inspection without disturbing
       committed `output/`**
-- [ ] Run all tests — old and new — and make sure they all pass correctly
-- [ ] Commit
+      (2026-08-12 09:58)
+      Both stated, plus the sentence a user is most likely to assume wrong:
+      "compares against nothing: a result differing from `output/` is the
+      normal outcome of a change, not a failure here."
+- [x] Run all tests — old and new — and make sure they all pass correctly
+      (2026-08-12 10:21)
+      With Phase 2's run: 412 passing.
+- [x] Commit
+      (2026-08-12 10:25)
+      With Phase 2's commit.
 
 ---
 

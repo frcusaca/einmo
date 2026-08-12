@@ -415,6 +415,25 @@ impl ValidationLevel {
 makes an input-less artifact there impossible by construction, and the gate
 would only be re-asserting the phase's own post-condition.
 
+#### The Output gate needs an evaluator, and must refuse to run without one
+
+**Resolved during implementation.** "The Output gate generates first" is
+straightforward in the library — `evaluate_all` holds an `&dyn Evaluator` and
+runs the level's integrity check afterwards — but `einmo verify` has no
+evaluator and no `--command`. Left alone, `einmo verify --level output` would
+compare whatever happens to be sitting in `generated/`.
+
+That is not merely incomplete, it is dangerous: a `generated/` left over from
+an earlier run compares clean against the baseline it was promoted to, so the
+gate goes **green while asserting nothing about the current code**. A gate that
+passes without running the thing it gates is precisely the failure mode
+`EIMP-9` exists to catch.
+
+Therefore `einmo verify --level output` **requires `--command`**, generates
+with it, and then compares. Without it the command fails, naming the fix,
+rather than silently grading a stale work file. `--level checked` and
+`--level verified` neither accept nor need it.
+
 Every gate verifies signatures on **both sides** of its pair — that is already
 what `stage_pair_problems` → `compare` does, refusing rather than comparing an
 artifact that fails verify-on-inspect. "Signatures and all" is the existing

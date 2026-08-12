@@ -1168,11 +1168,33 @@ mod tests {
     fn seeded_suite() -> TestContext {
         let ctx = test_context();
         write_input(ctx.path(), "a.foo", "{1+1;}");
-        let config =
-            crate::config::TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        suite.evaluate_all(&Echo).unwrap();
+        generate_and_accept(ctx.path());
         ctx
+    }
+
+    /// Run the evaluator over the suite and accept the results as the
+    /// `output/` baseline — generate, then `promote generated to output`.
+    ///
+    /// EIMP-01 §S.2: evaluation writes only `generated/`, so a fixture that
+    /// needs a committed baseline has to promote, exactly as a user would.
+    /// These review-server tests are all *about* a suite that already has an
+    /// `output/` stage, so this is where they get one.
+    fn generate_and_accept(dir: &std::path::Path) {
+        let config =
+            crate::config::TestConfig::new(dir, crate::einmo_suite::ValidationLevel::Output);
+        crate::einmo_suite::EinmoTestRunner::new(config.clone())
+            .evaluate_all(&Echo)
+            .unwrap();
+        crate::suite::EinmoSuite::scan(crate::storage::EinmoDirectory::new(config), None)
+            .unwrap()
+            .promote(
+                Stage::Generated,
+                Stage::Output,
+                &crate::config::KeySource::from_passphrase(""),
+                None,
+                None,
+            )
+            .unwrap();
     }
 
     fn promote_output_to_checked(dir: &std::path::Path) {
@@ -2409,10 +2431,7 @@ mod tests {
         for i in 0..N {
             write_input(tmp.path(), &format!("case-{i}.foo"), "{1+1;}");
         }
-        let config =
-            crate::config::TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        suite.evaluate_all(&Echo).unwrap();
+        generate_and_accept(tmp.path());
 
         let state = Arc::new(AppState::default());
         let session = state.create_session(tmp.path());

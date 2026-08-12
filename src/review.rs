@@ -1298,10 +1298,32 @@ mod tests {
         let ctx = test_context();
         write_input(ctx.path(), "a.foo", "{1+1;}");
         write_input(ctx.path(), "b.foo", "{2+2;}");
-        let config = TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        suite.evaluate_all(&Echo).unwrap();
+        generate_and_accept(ctx.path());
         ctx
+    }
+
+    /// Run the evaluator over the whole suite and accept the results as the
+    /// `output/` baseline — generate, then `promote generated to output`.
+    ///
+    /// Replaces `EinmoTestRunner::regenerate_output`, which these tests used
+    /// to refresh `output/` after changing an input. EIMP-01 §S.5 retired that
+    /// verb: evaluation now writes only `generated/`, so a test that wants a
+    /// committed baseline must promote, exactly as a user would.
+    fn generate_and_accept(dir: &std::path::Path) {
+        let config = TestConfig::new(dir, crate::einmo_suite::ValidationLevel::Output);
+        crate::einmo_suite::EinmoTestRunner::new(config.clone())
+            .evaluate_all(&Echo)
+            .unwrap();
+        EinmoSuite::scan(EinmoDirectory::new(config), None)
+            .unwrap()
+            .promote(
+                Stage::Generated,
+                Stage::Output,
+                &KeySource::from_passphrase(""),
+                None,
+                None,
+            )
+            .unwrap();
     }
 
     fn promote_output_to_checked(dir: &std::path::Path) {
@@ -1543,12 +1565,7 @@ mod tests {
         let tmp = seeded_suite();
         promote_output_to_checked(tmp.path()); // checked := "2" (1+1)
         write_input(tmp.path(), "a.foo", "{3+3;}");
-        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        let regen = suite
-            .regenerate_output(std::path::Path::new("a.foo"), &Echo)
-            .unwrap();
-        assert!(regen.written_and_verified);
+        generate_and_accept(tmp.path());
 
         let review = EinmoReview::open(tmp.path());
         let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
@@ -1597,11 +1614,7 @@ mod tests {
         // Change what a.foo evaluates to -- the output/ content the
         // decision was based on is no longer what's on disk.
         write_input(tmp.path(), "a.foo", "{9+9;}");
-        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        suite
-            .regenerate_output(std::path::Path::new("a.foo"), &Echo)
-            .unwrap();
+        generate_and_accept(tmp.path());
 
         let stale = review.refresh();
         assert_eq!(stale, vec![id]);
@@ -1613,11 +1626,7 @@ mod tests {
         let review = EinmoReview::open(tmp.path());
         // b.foo has no decision at all.
         write_input(tmp.path(), "b.foo", "{9+9;}");
-        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        suite
-            .regenerate_output(std::path::Path::new("b.foo"), &Echo)
-            .unwrap();
+        generate_and_accept(tmp.path());
         assert!(review.refresh().is_empty());
     }
 
@@ -1629,11 +1638,7 @@ mod tests {
         review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
 
         write_input(tmp.path(), "a.foo", "{9+9;}");
-        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        suite
-            .regenerate_output(std::path::Path::new("a.foo"), &Echo)
-            .unwrap();
+        generate_and_accept(tmp.path());
 
         let plan = review.plan();
         let keys = SignerSet {
@@ -1712,11 +1717,7 @@ mod tests {
         let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
         review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
         write_input(tmp.path(), "a.foo", "{9+9;}");
-        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        suite
-            .regenerate_output(std::path::Path::new("a.foo"), &Echo)
-            .unwrap();
+        generate_and_accept(tmp.path());
 
         let keys = SignerSet {
             to_checked: KeySource::from_passphrase(""),
@@ -2212,15 +2213,11 @@ mod tests {
         review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
         review.execute(&review.plan(), &keys).unwrap();
 
-        // Change what a.foo evaluates to, accept it via regenerate_output
+        // Change what a.foo evaluates to, accept it as the new baseline
         // (EIMP-3), then decide+execute promote again -- output now
         // genuinely differs from the existing checked/ baseline.
         write_input(tmp.path(), "a.foo", "{9+9;}");
-        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        suite
-            .regenerate_output(std::path::Path::new("a.foo"), &Echo)
-            .unwrap();
+        generate_and_accept(tmp.path());
 
         review.decide(id.clone(), Decision::Promote { to: Stage::Checked });
         let report = review.execute(&review.plan(), &keys).unwrap();
@@ -2309,9 +2306,7 @@ mod tests {
         for i in 0..5 {
             write_input(tmp.path(), &format!("case{i}.foo"), "{1+1;}");
         }
-        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        suite.evaluate_all(&Echo).unwrap();
+        generate_and_accept(tmp.path());
 
         let review = EinmoReview::open(tmp.path());
         for i in 0..5 {
@@ -2486,13 +2481,10 @@ mod tests {
         let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
 
         review.flag_now(&id, Stage::Output, "first").unwrap();
-        // flag_now moves output/a.foo.einmo away; regenerate it so there is
-        // something to flag again.
-        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        suite
-            .evaluate(std::path::Path::new("a.foo"), &Echo)
-            .unwrap();
+        // flag_now moves output/a.foo.einmo away; re-establish a baseline so
+        // there is something to flag again. Under EIMP-01 that is generate +
+        // promote, not a bare re-evaluation — evaluation writes `generated/`.
+        generate_and_accept(tmp.path());
         review.flag_now(&id, Stage::Output, "second").unwrap();
 
         let flagged =
@@ -2854,9 +2846,7 @@ mod tests {
         for i in 0..4 {
             write_input(tmp.path(), &format!("case{i}.foo"), "{1+1;}");
         }
-        let config = TestConfig::new(tmp.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        suite.evaluate_all(&Echo).unwrap();
+        generate_and_accept(tmp.path());
 
         let review = Arc::new(EinmoReview::open(tmp.path()));
         for i in 0..4 {
@@ -2937,9 +2927,7 @@ mod tests {
         write_input(ctx.path(), "a.foo", "{1+1;}");
         write_input(ctx.path(), "b.foo", "{2+2;}");
         write_input(ctx.path(), "c.foo", "{3+3;}");
-        let config = TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        suite.evaluate_all(&Echo).unwrap();
+        generate_and_accept(ctx.path());
         promote_output_to_checked(ctx.path());
 
         let passphrase = "comprehensive-reviewer";
@@ -3042,11 +3030,7 @@ mod tests {
         // ── Step 5: drift detection — regenerate c.foo, refresh, re-decide ──
 
         write_input(ctx.path(), "c.foo", "{99+99;}");
-        let config = TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Output);
-        let suite = crate::einmo_suite::EinmoTestRunner::new(config);
-        suite
-            .regenerate_output(std::path::Path::new("c.foo"), &Echo)
-            .unwrap();
+        generate_and_accept(ctx.path());
         // Re-promote output→checked so the checked baseline (the decision's
         // basis for a checked→verified promotion) reflects the new content.
         EinmoSuite::scan(
@@ -3240,9 +3224,7 @@ mod tests {
         write_input(ctx.path(), "d_tampered.foo", "{5;}");
 
         let config = TestConfig::new(ctx.path(), crate::einmo_suite::ValidationLevel::Checked);
-        crate::einmo_suite::EinmoTestRunner::new(config.clone())
-            .evaluate_all(&Echo)
-            .unwrap();
+        generate_and_accept(ctx.path());
         promote_output_to_checked(ctx.path());
 
         let directory = EinmoDirectory::new(config.clone());

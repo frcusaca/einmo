@@ -84,7 +84,12 @@ impl SignatureReport {
 pub(crate) fn is_legal_transition(from: Stage, to: Stage) -> bool {
     matches!(
         (from, to),
-        (Stage::Output, Stage::Checked)
+        // EIMP-01 §S.3. Deliberately the ONLY pair out of `generated`:
+        // `(Generated, Checked)` and `(Generated, Verified)` stay illegal, so
+        // generated content reaches a reviewed stage only by passing through
+        // the baseline.
+        (Stage::Generated, Stage::Output)
+            | (Stage::Output, Stage::Checked)
             | (Stage::Output, Stage::Verified)
             | (Stage::Checked, Stage::Verified)
             // console-review demotion (re-promotion appends another stamp)

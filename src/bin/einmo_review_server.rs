@@ -1317,9 +1317,23 @@ mod tests {
     fn seeded_suite() -> TestContext {
         let ctx = test_context();
         write_input(ctx.path(), "a.foo", "{1+1;}");
+        // EIMP-01 §S.2: evaluation writes only `generated/`. These tests are
+        // about a suite that already has an `output/` baseline, so the fixture
+        // has to promote for one — generate, then accept.
         let config = TestConfig::new(ctx.path(), ValidationLevel::Output);
-        let suite = einmo::EinmoTestRunner::new(config);
-        suite.evaluate_all(&Echo).unwrap();
+        einmo::EinmoTestRunner::new(config.clone())
+            .evaluate_all(&Echo)
+            .unwrap();
+        einmo::EinmoSuite::scan(einmo::EinmoDirectory::new(config), None)
+            .unwrap()
+            .promote(
+                Stage::Generated,
+                Stage::Output,
+                &KeySource::from_passphrase(""),
+                None,
+                None,
+            )
+            .unwrap();
         ctx
     }
 

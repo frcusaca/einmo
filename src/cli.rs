@@ -56,13 +56,21 @@ enum Command {
     Body(BodyArgs),
     /// Compute the SHA-256 of this binary (self-attestation).
     SelfCheck(SelfCheckArgs),
-    /// Evaluate inputs and write signed output files.
-    Evaluate(EvaluateArgs),
-    /// Re-evaluate inputs and deliberately REPLACE any drifted `output/`
-    /// baseline with the freshly evaluated content (EIMP-3). Every other
-    /// case (no-op / co-sign / fresh-if-absent) behaves exactly like
-    /// `evaluate`.
-    RegenerateOutput(EvaluateArgs),
+    /// Run the evaluator over every input and write signed artifacts to
+    /// `generated/`. Never writes `output/`.
+    ///
+    /// Passes when every input evaluated without error and every artifact
+    /// written verifies against its own stamps. It compares against nothing:
+    /// a result differing from `output/` is the normal outcome of a change,
+    /// not a failure here.
+    ///
+    /// Two uses. As a test that everything still runs — no baseline needed.
+    /// And as the way to materialize fresh results for direct inspection
+    /// (`einmo compare generated output`, `einmo show`, `einmo body`) WITHOUT
+    /// disturbing the committed `output/`; accept them with
+    /// `einmo promote generated to output`.
+    #[command(alias = "evaluate")]
+    Generate(EvaluateArgs),
 }
 
 #[derive(Args, Debug)]
@@ -332,8 +340,7 @@ fn dispatch(command: Command) -> Result<ExitCode> {
         Command::List(a) => cmd_list(a),
         Command::Body(a) => cmd_body(a),
         Command::SelfCheck(a) => cmd_self_check(a),
-        Command::Evaluate(a) => cmd_evaluate(a),
-        Command::RegenerateOutput(a) => cmd_regenerate_output(a),
+        Command::Generate(a) => cmd_generate(a),
     }
 }
 
@@ -1046,23 +1053,16 @@ impl crate::einmo_suite::Evaluator for CommandEvaluator {
     }
 }
 
-fn cmd_evaluate(args: EvaluateArgs) -> Result<ExitCode> {
-    run_evaluate_like(args, false, "evaluated")
-}
-
-/// `einmo regenerate-output`: like `evaluate`, but a drifted case is
-/// deliberately replaced instead of failing (`EinmoTestRunner::regenerate_output`,
-/// `EIMP-3.md` §Specification).
-fn cmd_regenerate_output(args: EvaluateArgs) -> Result<ExitCode> {
-    run_evaluate_like(args, true, "regenerated")
-}
-
-/// Shared driver for `cmd_evaluate`/`cmd_regenerate_output`: walk+filter the
-/// input tree, run each input through `evaluator`, and report per-file
-/// success/failure. `force` selects `EinmoTestRunner::regenerate_output` (drift
-/// replaces) over `EinmoTestRunner::evaluate` (drift fails); `verb` only affects
-/// the summary line's wording/JSON key.
-fn run_evaluate_like(args: EvaluateArgs, force: bool, verb: &str) -> Result<ExitCode> {
+/// `einmo generate` (alias `evaluate`): walk+filter the input tree, run each
+/// input through the evaluator, and write signed artifacts to `generated/`.
+///
+/// `einmo regenerate-output` stood beside this as a second entry point,
+/// selecting a `force` flag that replaced a drifted `output/` baseline
+/// instead of failing it. EIMP-01 §S.5 retires both the verb and the flag:
+/// generation always writes `generated/` freely, and accepting a new baseline
+/// is `einmo promote generated to output`.
+fn cmd_generate(args: EvaluateArgs) -> Result<ExitCode> {
+    let verb = "generated";
     let mut config = TestConfig::new(&args.work_dir, ValidationLevel::Output);
     if let Some(limit) = args.walk_depth_limit {
         config = config.with_walk_depth_limit(limit);
@@ -1088,12 +1088,7 @@ fn run_evaluate_like(args: EvaluateArgs, force: bool, verb: &str) -> Result<Exit
     let mut written = 0usize;
     let mut failed = 0usize;
     for input_rel in &filtered {
-        let outcome = if force {
-            suite.regenerate_output(input_rel, &evaluator)
-        } else {
-            suite.evaluate(input_rel, &evaluator)
-        };
-        match outcome {
+        match suite.evaluate(input_rel, &evaluator) {
             Ok(result) => {
                 if result.written_and_verified {
                     written += 1;
@@ -1200,9 +1195,14 @@ mod tests {
         assert!(Cli::try_parse_from(["einmo", "compare", "output", "checked", "/tmp/s"]).is_ok());
         assert!(Cli::try_parse_from(["einmo", "promote", "output:checked", "/tmp/s"]).is_ok());
         assert!(Cli::try_parse_from(["einmo", "self-check", "--quiet"]).is_ok());
+        assert!(Cli::try_parse_from(["einmo", "generate", "/tmp/s", "--command", "cat"]).is_ok());
+        // `evaluate` survives as an alias for `generate` (EIMP-01 §S.2).
+        assert!(Cli::try_parse_from(["einmo", "evaluate", "/tmp/s", "--command", "cat"]).is_ok());
+        // `regenerate-output` is gone (EIMP-01 §S.5). Asserted rather than
+        // merely deleted, so a re-added verb has to be a deliberate act.
         assert!(
             Cli::try_parse_from(["einmo", "regenerate-output", "/tmp/s", "--command", "cat"])
-                .is_ok()
+                .is_err()
         );
         assert!(
             Cli::try_parse_from(["einmo", "verify", "/tmp/s", "--flag-is-not-failure"]).is_ok()

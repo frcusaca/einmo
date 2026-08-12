@@ -168,10 +168,17 @@ fn crash_crumb_survives_stack_overflow() {
         output.status
     );
 
-    let crumb_path = tmp.path().join("output").join("overflow.js.einmo");
+    // EIMP-01 §S.2 moved crumb creation into `generated/`, so a crash leaves
+    // no committed stage dirty. The guarantee under test is unchanged and the
+    // child still genuinely overflows its stack — only the path moved.
+    let crumb_path = tmp.path().join("generated").join("overflow.js.einmo");
     assert!(
         crumb_path.exists(),
         "crash-crumb should survive stack overflow"
+    );
+    assert!(
+        !tmp.path().join("output").join("overflow.js.einmo").exists(),
+        "a crash must leave no trace in the committed output/ stage"
     );
 
     let file =
@@ -197,102 +204,171 @@ fn copy_dir_recursive(src: &Path, dst: &Path) {
     }
 }
 
-/// EIMP-3 comprehensive test: the full content/key decision table, driven
-/// against a scratch copy of `day.1`'s real, already-signed `output/`
-/// baseline with the real `BoaEvaluator` — not the synthetic `Echo`
-/// evaluator `einmo_suite.rs`'s unit tests use. Exercises, in one pass:
-/// a no-op rerun, a second-signer co-sign, a drifted case that fails and
-/// leaves `output/` untouched, `regenerate_output` replacing it, and a
-/// subsequent clean rerun.
+/// EIMP-01 comprehensive test: generate → inspect → promote, driven against a
+/// scratch copy of `day.1`'s real, already-signed `output/` baseline with the
+/// real `BoaEvaluator` — not the synthetic `Echo` evaluator
+/// `einmo_suite.rs`'s unit tests use.
+///
+/// **Inherited from EIMP-3**, whose comprehensive test stood here and covered
+/// the content/key decision table: a no-op rerun, a second-signer co-sign, a
+/// drifted case that failed and left `output/` untouched, `regenerate_output`
+/// replacing it, and a clean rerun. EIMP-01 §S.5 removed drift and the
+/// `regenerate-output` verb, so those steps could not survive as written.
+///
+/// The **requirement** they encoded is kept: *a changed evaluator must not
+/// silently redefine the committed baseline*. It is enforced differently now —
+/// generation is indifferent to `output/` and simply never writes it, and
+/// accepting a new baseline is an explicit, signing promotion. Steps 4–6 below
+/// are that requirement, re-expressed. The test was rewritten rather than
+/// deleted, deliberately.
 #[test]
-fn eimp3_output_drift_comprehensive() {
+fn eimp01_generate_promote_comprehensive() {
     let tmp = tempfile::tempdir().unwrap();
     let scratch = tmp.path().join("day.1");
     std::fs::create_dir_all(&scratch).unwrap();
     copy_dir_recursive(&tier_dir("day.1"), &scratch);
 
-    // ---- 1. No-op rerun: unchanged content, the same (computer-key)
-    // signer that originally produced this fixture. `output/` must be
-    // byte-for-byte untouched.
     let config = TestConfig::new(&scratch, ValidationLevel::Output);
     let suite = EinmoTestRunner::new(config);
-    let out_path = scratch.join("output").join("integer_arithmetic.js.einmo");
-    let bytes_before = std::fs::read(&out_path).unwrap();
-    let rerun = suite
+    let generated = scratch
+        .join("generated")
+        .join("integer_arithmetic.js.einmo");
+    let committed = scratch.join("output").join("integer_arithmetic.js.einmo");
+    let baseline_bytes = std::fs::read(&committed).unwrap();
+
+    // ---- 1. Generation writes `generated/` and never `output/`.
+    let first = suite
         .evaluate(Path::new("integer_arithmetic.js"), &BoaEvaluator)
         .unwrap();
-    assert!(!rerun.drifted, "unchanged content must not be drift");
-    assert!(rerun.written_and_verified);
+    assert!(first.written_and_verified);
+    assert!(generated.is_file(), "generation must write generated/");
     assert_eq!(
-        std::fs::read(&out_path).unwrap(),
-        bytes_before,
+        std::fs::read(&committed).unwrap(),
+        baseline_bytes,
+        "generation must leave the committed output/ baseline byte-untouched"
+    );
+
+    // ---- 2. Re-generating unchanged content under the same signer is a
+    // true no-op — byte-for-byte, not merely "same sections".
+    let bytes_after_first = std::fs::read(&generated).unwrap();
+    let second = suite
+        .evaluate(Path::new("integer_arithmetic.js"), &BoaEvaluator)
+        .unwrap();
+    assert!(second.written_and_verified);
+    assert_eq!(
+        std::fs::read(&generated).unwrap(),
+        bytes_after_first,
         "a true no-op must not touch the file at all"
     );
 
-    // ---- 2. Second-signer co-sign: same content, a different `output`
-    // passphrase. Stamps accumulate; content is untouched.
+    // ---- 3. A different signer writes their OWN stamp; the runner does not
+    // accumulate signers in `generated/` (EIMP-01 §S.5 — co-signing is
+    // `promote`'s job, against `output/`).
     std::fs::write(
         scratch.join("einmo.toml"),
-        "[signing]\noutput = \"zweimomo second signer\"\nchecked = \"We unanimously, unequivocally, categorically and definitively approve these test results !\"\n",
+        "[signing]\ngenerated = \"zweimomo second signer\"\nchecked = \"We unanimously, unequivocally, categorically and definitively approve these test results !\"\n",
     )
     .unwrap();
-    let second_config = TestConfig::new(&scratch, ValidationLevel::Output);
-    let second_suite = EinmoTestRunner::new(second_config);
-    let co_signed = second_suite
-        .evaluate(Path::new("integer_arithmetic.js"), &BoaEvaluator)
-        .unwrap();
-    assert!(!co_signed.drifted);
-    assert!(co_signed.written_and_verified);
-    let file = EinmoFile::from_file(&out_path).unwrap();
+    let second_suite = EinmoTestRunner::new(TestConfig::new(&scratch, ValidationLevel::Output));
+    assert!(
+        second_suite
+            .evaluate(Path::new("integer_arithmetic.js"), &BoaEvaluator)
+            .unwrap()
+            .written_and_verified
+    );
+    let file = EinmoFile::from_file(&generated).unwrap();
     assert_eq!(file.section("OUTPUT").unwrap().body(), "9");
-    let stage_output_stamps = file
-        .stamps()
-        .entries()
-        .iter()
-        .filter(|s| s.key() == "stage:output")
-        .count();
     assert_eq!(
-        stage_output_stamps, 2,
-        "both the original and the second signer's stage:output stamps must be present"
+        file.stamps()
+            .entries()
+            .iter()
+            .filter(|s| s.key() == "stage:generated")
+            .count(),
+        1,
+        "the runner must not accumulate stage:generated stamps"
     );
 
-    // ---- 3. Drift: change what `name_binding.js` evaluates to. The
-    // normal (non-forcing) run must fail this case and leave `output/`
-    // untouched.
-    let nb_out_path = scratch.join("output").join("name_binding.js.einmo");
-    let nb_bytes_before = std::fs::read(&nb_out_path).unwrap();
+    // ---- 4. A CHANGED evaluator result is not a generation failure, and
+    // still does not touch `output/`. This is EIMP-3's "drift" case,
+    // re-expressed: what used to fail here now simply generates, and the
+    // divergence is the Output gate's business.
+    let nb_generated = scratch.join("generated").join("name_binding.js.einmo");
+    let nb_committed = scratch.join("output").join("name_binding.js.einmo");
+    let nb_baseline_bytes = std::fs::read(&nb_committed).unwrap();
     std::fs::write(
         scratch.join("input").join("name_binding.js"),
         "(() => { let x = 42; let y = x + 9; return y; })()",
     )
     .unwrap();
-    let drifted = suite
+    let changed = suite
         .evaluate(Path::new("name_binding.js"), &BoaEvaluator)
         .unwrap();
-    assert!(drifted.drifted, "changed evaluator output must be drift");
-    assert!(!drifted.written_and_verified);
+    assert!(
+        changed.written_and_verified,
+        "differing from the baseline is not a generation failure (EIMP-01 §S.2)"
+    );
     assert_eq!(
-        std::fs::read(&nb_out_path).unwrap(),
-        nb_bytes_before,
-        "output/ must be untouched by a drifted (failing) run"
+        EinmoFile::from_file(&nb_generated)
+            .unwrap()
+            .section("OUTPUT")
+            .unwrap()
+            .body(),
+        "51",
+        "generated/ must hold the NEW result"
+    );
+    assert_eq!(
+        std::fs::read(&nb_committed).unwrap(),
+        nb_baseline_bytes,
+        "the committed baseline must still be untouched — accepting it is a \
+         separate, deliberate act"
     );
 
-    // ---- 4. `regenerate_output`: deliberately accept the new content.
-    let regenerated = suite
-        .regenerate_output(Path::new("name_binding.js"), &BoaEvaluator)
-        .unwrap();
-    assert!(!regenerated.drifted);
-    assert!(regenerated.written_and_verified);
-    let nb_file = EinmoFile::from_file(&nb_out_path).unwrap();
-    assert_eq!(nb_file.section("OUTPUT").unwrap().body(), "51");
+    // ---- 5. Accepting the new result is an explicit, SIGNING promotion.
+    // This is what replaced `einmo regenerate-output`.
+    einmo::EinmoSuite::scan(
+        einmo::EinmoDirectory::new(TestConfig::new(&scratch, ValidationLevel::Output)),
+        None,
+    )
+    .unwrap()
+    .promote(
+        einmo::Stage::Generated,
+        einmo::Stage::Output,
+        &einmo::KeySource::from_passphrase(""),
+        None,
+        None,
+    )
+    .unwrap();
 
-    // ---- 5. A subsequent normal run of the regenerated case is clean:
-    // no drift, no rewrite.
-    let nb_bytes_after_regen = std::fs::read(&nb_out_path).unwrap();
-    let clean = suite
-        .evaluate(Path::new("name_binding.js"), &BoaEvaluator)
-        .unwrap();
-    assert!(!clean.drifted);
-    assert!(clean.written_and_verified);
-    assert_eq!(std::fs::read(&nb_out_path).unwrap(), nb_bytes_after_regen);
+    let promoted = EinmoFile::from_file(&nb_committed).unwrap();
+    assert_eq!(
+        promoted.section("OUTPUT").unwrap().body(),
+        "51",
+        "the promoted baseline must hold the accepted content"
+    );
+    assert!(
+        promoted
+            .stamps()
+            .entries()
+            .iter()
+            .any(|s| s.key() == "stage:output"),
+        "promotion must sign: a stage:output stamp is what makes it a baseline"
+    );
+    assert!(
+        promoted
+            .stamps()
+            .entries()
+            .iter()
+            .any(|s| s.key() == "stage:generated"),
+        "promotion appends; the generation stamp survives underneath it"
+    );
+
+    // ---- 6. A subsequent generation of the accepted case is a clean no-op.
+    let nb_bytes_after = std::fs::read(&nb_generated).unwrap();
+    assert!(
+        suite
+            .evaluate(Path::new("name_binding.js"), &BoaEvaluator)
+            .unwrap()
+            .written_and_verified
+    );
+    assert_eq!(std::fs::read(&nb_generated).unwrap(), nb_bytes_after);
 }
