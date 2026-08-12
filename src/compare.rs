@@ -25,6 +25,22 @@ pub struct DiffEntry {
     pub sections: Vec<String>,
 }
 
+/// A file refused by verify-on-inspect, naming which side(s) failed.
+///
+/// `EIMP-01` §S.4: a gate must name the link that broke, and at artifact
+/// granularity that means naming *which stage* holds the bad bytes. The
+/// information was always computed — [`StagePairAgreement::Tampered`] carries
+/// it — and was discarded here until EIMP-01 needed it, which is why a
+/// tampered left-hand artifact used to be reported against the right-hand
+/// stage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TamperedEntry {
+    /// The mirror-relative path.
+    pub rel_path: PathBuf,
+    /// Which of the pair's stages failed verification — one or both.
+    pub stages: Vec<Stage>,
+}
+
 /// The result of comparing two stages over the mirrored tree.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ComparisonResult {
@@ -36,8 +52,9 @@ pub struct ComparisonResult {
     pub only_in_a: Vec<PathBuf>,
     /// Files present only in stage B.
     pub only_in_b: Vec<PathBuf>,
-    /// Files that failed verify-on-inspect (refused; not compared).
-    pub tampered: Vec<PathBuf>,
+    /// Files that failed verify-on-inspect (refused; not compared), each
+    /// naming which side(s) failed.
+    pub tampered: Vec<TamperedEntry>,
 }
 
 impl ComparisonResult {
@@ -138,7 +155,10 @@ pub fn compare(
                     result.only_in_b.push(rel);
                 }
             }
-            Some(StagePairAgreement::Tampered { .. }) => result.tampered.push(rel),
+            Some(StagePairAgreement::Tampered { stages }) => result.tampered.push(TamperedEntry {
+                rel_path: rel,
+                stages: stages.clone(),
+            }),
             // Neither side present: not counted anywhere, matching the
             // pre-EIMP-7 behavior of never even adding such a rel to the
             // candidate list.
@@ -434,7 +454,16 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(r.tampered, vec![PathBuf::from("a.foo.einmo")]);
+        assert_eq!(
+            r.tampered,
+            vec![TamperedEntry {
+                rel_path: PathBuf::from("a.foo.einmo"),
+                // `checked/` is what the test tampered — EIMP-01 made the
+                // reported side exact, so this pins WHICH stage, not merely
+                // that something was refused.
+                stages: vec![Stage::Checked],
+            }]
+        );
         assert!(
             r.differing.is_empty(),
             "tampered must not be counted as differing"

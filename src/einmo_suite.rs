@@ -106,21 +106,33 @@ pub enum ValidationLevel {
 }
 
 impl ValidationLevel {
-    /// This level and every level it escalates from, in ascending order.
+    /// The stage this level compares its own stage **against** — its
+    /// immediate predecessor in the chain (`EIMP-01` §S.4).
     ///
-    /// The engine walks these in order, so a lower level's problems are always
-    /// reported before the higher level's.
+    /// Replaces `escalation()`. The levels are independent, not cumulative:
+    /// each states exactly one link, and no level re-checks another's. Their
+    /// conjunction establishes the whole claim by transitivity, and a red gate
+    /// names which link broke rather than saying "something in the chain".
     #[must_use]
-    pub fn escalation(self) -> &'static [ValidationLevel] {
+    pub fn compares_against(self) -> Stage {
         match self {
-            ValidationLevel::Output => &[ValidationLevel::Output],
-            ValidationLevel::Checked => &[ValidationLevel::Output, ValidationLevel::Checked],
-            ValidationLevel::Verified => &[
-                ValidationLevel::Output,
-                ValidationLevel::Checked,
-                ValidationLevel::Verified,
-            ],
+            ValidationLevel::Output => Stage::Generated,
+            ValidationLevel::Checked => Stage::Output,
+            ValidationLevel::Verified => Stage::Checked,
         }
+    }
+
+    /// Whether this level must run the generation phase before it can compare.
+    ///
+    /// True only for [`ValidationLevel::Output`], whose predecessor stage is
+    /// the one stage that is **not committed** and so does not exist until
+    /// something makes it. `Checked` and `Verified` read two committed stages
+    /// and need no evaluator, no runner command, and no build of the system
+    /// under test — which is what makes a signed release artifact verifiable
+    /// against its reviewed baseline from the files and keys alone.
+    #[must_use]
+    pub fn generates(self) -> bool {
+        matches!(self, ValidationLevel::Output)
     }
 
     /// The stage this level judges (`Output` → `output/`, …).
@@ -130,16 +142,6 @@ impl ValidationLevel {
             ValidationLevel::Output => Stage::Output,
             ValidationLevel::Checked => Stage::Checked,
             ValidationLevel::Verified => Stage::Verified,
-        }
-    }
-
-    /// The level this one escalates from, if any.
-    #[must_use]
-    pub fn escalates_from(self) -> Option<ValidationLevel> {
-        match self {
-            ValidationLevel::Output => None,
-            ValidationLevel::Checked => Some(ValidationLevel::Output),
-            ValidationLevel::Verified => Some(ValidationLevel::Checked),
         }
     }
 
@@ -310,13 +312,23 @@ impl Problem {
             | Problem::SignatureDoesNotVerify { stage, .. } => match stage {
                 Stage::Verified => ValidationLevel::Verified,
                 Stage::Checked => ValidationLevel::Checked,
-                _ => ValidationLevel::Output,
+                // `Generated` maps to `Output` because the Output level is the
+                // only one that touches the generation stage — it is the left
+                // side of that level's pair.
+                Stage::Generated | Stage::Output => ValidationLevel::Output,
             },
+            // A pair problem belongs to the level that OWNS that pair, which
+            // is named by its right-hand stage. EIMP-01 §S.4 made this exact:
+            // `right: Output` is now reachable (from `Generated ↔ Output`) and
+            // is an Output-level problem — before, the catch-all mapped it to
+            // `Checked`, which was correct only because `Output` never
+            // appeared on the right.
             Problem::LeftMissingEntirely { right, .. }
             | Problem::RightMissingEntirely { right, .. }
             | Problem::SectionDifference { right, .. } => match right {
                 Stage::Verified => ValidationLevel::Verified,
-                _ => ValidationLevel::Checked,
+                Stage::Checked => ValidationLevel::Checked,
+                Stage::Generated | Stage::Output => ValidationLevel::Output,
             },
             Problem::SignedByUnexpectedKey { .. }
             | Problem::KeyDerivedFromEmptyPassphrase { .. } => ValidationLevel::Verified,
@@ -475,6 +487,15 @@ impl TestResults {
     /// re-verified (or acknowledged as an ignored catastrophe crumb), and every
     /// required correspondence held.
     #[must_use]
+    /// **EIMP-01 §S.4 shifted what this means.** It folds in
+    /// `integrity.is_clean()`, and the Output level's integrity now includes
+    /// the `generated ↔ output` pair — so this is "the configured level's
+    /// gate passes", not merely "generation succeeded". A suite that has
+    /// generated cleanly but never been promoted returns `false` here,
+    /// correctly: there is no committed baseline for the gate to affirm.
+    ///
+    /// Callers that mean "did every input evaluate?" should test
+    /// `files.iter().all(|f| f.written_and_verified || f.ignored)` directly.
     pub fn all_output_written_and_verified(&self) -> bool {
         self.integrity.is_clean()
             && self
@@ -570,12 +591,24 @@ impl EinmoTestRunner {
     ///
     /// `flagged/` is exempt from R2 — flagging is retirement, so a flagged
     /// artifact without an input is a finished job, not an orphan.
-    /// Validate the suite at `level`, walking the escalation from the base up
-    /// (FOOP-64 §"The escalating validation levels").
+    /// Validate the suite at `level` — **one link only** (`EIMP-01` §S.4).
     ///
-    /// Lower levels' problems are reported before higher ones, so a reviewer
-    /// fixes the foundation first: an extraneous file is not hidden behind a
-    /// signing complaint.
+    /// The levels stopped escalating. Each judges exactly the pair
+    /// (`level.compares_against()`, `level.stage()`) and re-checks nothing
+    /// another level owns, so a red gate names the link that broke rather
+    /// than reporting a foundational problem alongside the one asked about.
+    ///
+    /// Two things still hold at **every** level, because they are properties
+    /// of the tree rather than of any one pair: the shape checks (an
+    /// extraneous `input/` file, an empty suite), and verify-on-inspect on
+    /// both sides of the pair — the latter inside `stage_pair_problems`,
+    /// which refuses rather than compares an artifact whose signature does
+    /// not check out.
+    ///
+    /// Problems are still emitted in a fixed order — shape, then orphans,
+    /// then the pair, then attestation — so `FailFast` surfaces the most
+    /// foundational fault available at this level rather than an arbitrary
+    /// one.
     fn check_integrity(
         &self,
         inputs: &[PathBuf],
@@ -603,41 +636,42 @@ impl EinmoTestRunner {
                 }
             };
         }
-        for step in level.escalation() {
-            match step {
-                // ── Output level ───────────────────────────────────────
-                ValidationLevel::Output => {
-                    // O1 — extraneous files under input/.
-                    let mut extras: Vec<PathBuf> = extraneous
-                        .iter()
-                        .map(|rel| Path::new(self.config.input_dir()).join(rel))
-                        .collect();
-                    extras.sort();
-                    add!(
-                        extras
-                            .into_iter()
-                            .map(|path| Problem::ExtraneousInputFile { path })
-                    );
-                    // O2 — a suite that discovered nothing is not a pass.
-                    if inputs.is_empty() {
-                        add!([Problem::EmptySuite]);
-                    }
-                    // O5 — orphans in output/. (O3/O4 come from the run itself.)
-                    add!(self.orphans_of(Stage::Output, &expected)?);
-                }
-                // ── Checked level: escalates from Output ───────────────
-                ValidationLevel::Checked => {
-                    add!(self.orphans_of(Stage::Checked, &expected)?); // C3
-                    add!(self.stage_pair_problems(Stage::Output, Stage::Checked)?); // C2/C4/C5
-                }
-                // ── Verified level: escalates from Checked ─────────────
-                ValidationLevel::Verified => {
-                    add!(self.orphans_of(Stage::Verified, &expected)?); // V3
-                    add!(self.stage_pair_problems(Stage::Checked, Stage::Verified)?); // V2/V4/V5
-                    add!(self.attestation_problems()?); // V6/V7
-                }
-            }
+        // Shape: true of the tree, not of any pair, so every level asks.
+        // A malformed tree is a failure at any strictness — einmo never
+        // silently skips a file in its own directory.
+        //
+        // O1 — extraneous files under input/.
+        let mut extras: Vec<PathBuf> = extraneous
+            .iter()
+            .map(|rel| Path::new(self.config.input_dir()).join(rel))
+            .collect();
+        extras.sort();
+        add!(
+            extras
+                .into_iter()
+                .map(|path| Problem::ExtraneousInputFile { path })
+        );
+        // O2 — a suite that discovered nothing is not a pass.
+        if inputs.is_empty() {
+            add!([Problem::EmptySuite]);
         }
+
+        // Orphans in the stage this level judges. `generated/` is never asked:
+        // §S.2's pruning makes an input-less artifact there impossible by
+        // construction, so the question would only re-assert the generation
+        // phase's own post-condition.
+        add!(self.orphans_of(level.stage(), &expected)?);
+
+        // The one link this level owns. `stage_pair_problems` verifies both
+        // sides and compares only the configured sections.
+        add!(self.stage_pair_problems(level.compares_against(), level.stage())?);
+
+        // Verified alone asks *who* signed, not merely whether the signature
+        // is valid (V6/V7).
+        if level == ValidationLevel::Verified {
+            add!(self.attestation_problems()?);
+        }
+
         Ok(SuiteIntegrity { problems })
     }
 
@@ -713,12 +747,19 @@ impl EinmoTestRunner {
                 });
             }
         }
-        for rel in cmp.tampered {
-            out.push(Problem::SignatureDoesNotVerify {
-                stage: right,
-                path: rel,
-                detail: "verify-on-inspect refused this artifact".to_string(),
-            });
+        // One problem per tampered SIDE, naming the stage that actually holds
+        // the bad bytes. This used to attribute every tampered artifact to
+        // `right` regardless of which side failed — harmless while both sides
+        // were always reviewed together, wrong once a gate's job is to name
+        // the link that broke (`EIMP-01` §S.4).
+        for entry in cmp.tampered {
+            for stage in entry.stages {
+                out.push(Problem::SignatureDoesNotVerify {
+                    stage,
+                    path: entry.rel_path.clone(),
+                    detail: "verify-on-inspect refused this artifact".to_string(),
+                });
+            }
         }
         out.sort_by(|x, y| x.path().cmp(&y.path()));
         Ok(out)
@@ -1783,6 +1824,30 @@ mod tests {
     /// EIMP-01 promotion, as a test helper. Tests that need a committed
     /// baseline must now ask for one, because evaluation no longer produces
     /// it as a side effect.
+    /// Promote every case from `from` to `to`.
+    ///
+    /// A promotion INTO `verified` uses a human-looking passphrase, because
+    /// the empty one derives the well-known computer key that V7 exists to
+    /// catch — a test that promoted to verified with `""` would be asserting
+    /// against the AI-bypass detector rather than against the level.
+    fn promote(config: &TestConfig, from: Stage, to: Stage) {
+        let passphrase = if to == Stage::Verified {
+            "a-human-reviewer-passphrase"
+        } else {
+            ""
+        };
+        crate::suite::EinmoSuite::scan(crate::storage::EinmoDirectory::new(config.clone()), None)
+            .unwrap()
+            .promote(
+                from,
+                to,
+                &crate::config::KeySource::from_passphrase(passphrase),
+                None,
+                None,
+            )
+            .unwrap();
+    }
+
     fn promote_generated_to_output(config: &TestConfig) {
         crate::suite::EinmoSuite::scan(crate::storage::EinmoDirectory::new(config.clone()), None)
             .unwrap()
@@ -2348,20 +2413,36 @@ mod tests {
         std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
         std::fs::write(config.input_path().join(".a.foo.swp"), "vim").unwrap();
 
+        let config2 = config.clone();
         let results = EinmoTestRunner::new(config).evaluate_all(&Echo).unwrap();
 
         assert_eq!(results.files.len(), 1, "the swap file is not a test");
-        assert_eq!(
-            results.integrity.problems,
-            vec![Problem::ExtraneousInputFile {
-                path: PathBuf::from("input/.a.foo.swp"),
-            }]
+        assert!(
+            results
+                .integrity
+                .problems
+                .contains(&Problem::ExtraneousInputFile {
+                    path: PathBuf::from("input/.a.foo.swp"),
+                }),
+            "the swap file must be reported: {:?}",
+            results.integrity.problems
         );
         assert!(
             !results.all_output_written_and_verified(),
             "an unsound suite shape must fail the gate"
         );
         assert!(results.integrity.report().contains(".a.foo.swp"));
+        // The shape check runs at EVERY level (EIMP-01 §S.4), so it is still
+        // reported once a baseline exists and the pair is clean.
+        promote_generated_to_output(&config2);
+        let after = check_suite_integrity(&config2, FailurePolicy::FailAtEnd).unwrap();
+        assert_eq!(
+            after.problems,
+            vec![Problem::ExtraneousInputFile {
+                path: PathBuf::from("input/.a.foo.swp"),
+            }],
+            "with a baseline in place, the swap file is the only problem left"
+        );
     }
 
     /// Fail-at-end (the default) gathers every problem; fail-fast stops at the
@@ -2427,33 +2508,283 @@ mod tests {
         );
     }
 
-    /// The levels escalate: each carries every requirement of the level below.
+    /// The levels no longer escalate (EIMP-01 §S.4): each names exactly one
+    /// adjacent pair, and no level re-checks another level's pair.
     #[test]
-    fn levels_escalate_cumulatively() {
-        assert_eq!(
-            ValidationLevel::Output.escalation(),
-            &[ValidationLevel::Output]
-        );
-        assert_eq!(
-            ValidationLevel::Checked.escalation(),
-            &[ValidationLevel::Output, ValidationLevel::Checked]
-        );
-        assert_eq!(
-            ValidationLevel::Verified.escalation(),
-            &[
-                ValidationLevel::Output,
-                ValidationLevel::Checked,
-                ValidationLevel::Verified
-            ]
-        );
-        assert_eq!(ValidationLevel::Output.escalates_from(), None);
-        assert_eq!(
-            ValidationLevel::Verified.escalates_from(),
-            Some(ValidationLevel::Checked)
-        );
-        // Ord follows the escalation, so `level >= Checked` is meaningful.
+    fn levels_compare_against_their_immediate_predecessor_only() {
+        assert_eq!(ValidationLevel::Output.compares_against(), Stage::Generated);
+        assert_eq!(ValidationLevel::Checked.compares_against(), Stage::Output);
+        assert_eq!(ValidationLevel::Verified.compares_against(), Stage::Checked);
+
+        // The pair is (compares_against, stage) — adjacent by construction.
+        for level in [
+            ValidationLevel::Output,
+            ValidationLevel::Checked,
+            ValidationLevel::Verified,
+        ] {
+            assert!(
+                level.compares_against() < level.stage(),
+                "{level} must compare against an EARLIER stage"
+            );
+        }
+
+        // Exactly one level runs the evaluator: the one whose predecessor
+        // stage is not committed and so must be materialized first.
+        assert!(ValidationLevel::Output.generates());
+        assert!(!ValidationLevel::Checked.generates());
+        assert!(!ValidationLevel::Verified.generates());
+
+        // Ord still follows the chain, so `level >= Checked` stays meaningful
+        // even though the levels no longer imply one another.
         assert!(ValidationLevel::Verified > ValidationLevel::Checked);
         assert!(ValidationLevel::Checked > ValidationLevel::Output);
+    }
+
+    /// `Checked` and `Verified` are pure comparisons: they must not invoke the
+    /// evaluator even once. Asserted with a counting evaluator rather than
+    /// left to review — "this level does not evaluate" is the load-bearing
+    /// claim of EIMP-01 §S.4, and the whole reason attestation becomes
+    /// verifiable without a working build.
+    #[test]
+    fn checked_and_verified_levels_never_invoke_the_evaluator() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct Counting(AtomicUsize);
+        impl Evaluator for Counting {
+            fn evaluate(&self, source: &str) -> std::result::Result<Vec<String>, String> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![source.trim().to_string()])
+            }
+        }
+
+        let (_tmp, suite0) = suite();
+        let config = suite0.config().clone();
+        std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
+
+        // Establish the full chain so every level has something to compare.
+        EinmoTestRunner::new(config.clone())
+            .evaluate_all(&Echo)
+            .unwrap();
+        promote_generated_to_output(&config);
+        promote(&config, Stage::Output, Stage::Checked);
+        promote(&config, Stage::Checked, Stage::Verified);
+
+        for level in [ValidationLevel::Checked, ValidationLevel::Verified] {
+            let leveled = config.clone().with_validation_level(level);
+            let counter = Counting(AtomicUsize::new(0));
+            let integrity = check_suite_integrity(&leveled, FailurePolicy::FailAtEnd).unwrap();
+            assert!(
+                integrity.is_clean(),
+                "{level} should be clean on a fully promoted chain: {:?}",
+                integrity.problems
+            );
+            assert_eq!(
+                counter.0.load(Ordering::SeqCst),
+                0,
+                "{level} must not evaluate anything"
+            );
+        }
+    }
+
+    /// `Checked` and `Verified` write nothing — asserted on the stage
+    /// directories' modification times, since "does not write" is what lets
+    /// all three gates run concurrently.
+    #[test]
+    fn checked_and_verified_levels_write_nothing() {
+        let (_tmp, suite0) = suite();
+        let config = suite0.config().clone();
+        std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
+        EinmoTestRunner::new(config.clone())
+            .evaluate_all(&Echo)
+            .unwrap();
+        promote_generated_to_output(&config);
+        promote(&config, Stage::Output, Stage::Checked);
+
+        let before: Vec<_> = Stage::ALL
+            .iter()
+            .map(|s| {
+                let d = config.stage_dir(*s);
+                std::fs::metadata(&d).and_then(|m| m.modified()).ok()
+            })
+            .collect();
+
+        let leveled = config
+            .clone()
+            .with_validation_level(ValidationLevel::Checked);
+        check_suite_integrity(&leveled, FailurePolicy::FailAtEnd).unwrap();
+
+        let after: Vec<_> = Stage::ALL
+            .iter()
+            .map(|s| {
+                let d = config.stage_dir(*s);
+                std::fs::metadata(&d).and_then(|m| m.modified()).ok()
+            })
+            .collect();
+        assert_eq!(before, after, "a gate above `output` must write nothing");
+    }
+
+    /// The Output level's whole point: `generated ≢ output` is reported, and
+    /// reported as an OUTPUT-level problem naming the section — this is where
+    /// EIMP-3's "a changed evaluator must not silently redefine the baseline"
+    /// requirement now lives.
+    #[test]
+    fn output_level_reports_generated_output_divergence_naming_the_section() {
+        let (_tmp, suite0) = suite();
+        let config = suite0.config().clone();
+        std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
+        EinmoTestRunner::new(config.clone())
+            .evaluate_all(&Echo)
+            .unwrap();
+        promote_generated_to_output(&config);
+
+        // Change what the evaluator produces, and regenerate.
+        std::fs::write(config.input_path().join("a.foo"), "{6;}").unwrap();
+        EinmoTestRunner::new(config.clone())
+            .evaluate_all(&Echo)
+            .unwrap();
+
+        let integrity = check_suite_integrity(&config, FailurePolicy::FailAtEnd).unwrap();
+        assert_eq!(
+            integrity.problems,
+            vec![
+                Problem::SectionDifference {
+                    left: Stage::Generated,
+                    right: Stage::Output,
+                    path: PathBuf::from("a.foo.einmo"),
+                    section: "INPUT".into(),
+                },
+                // `Echo` echoes its input, so changing the input moves both
+                // sections. One problem per differing section, by design — a
+                // bare "content differs" hides how much differs.
+                Problem::SectionDifference {
+                    left: Stage::Generated,
+                    right: Stage::Output,
+                    path: PathBuf::from("a.foo.einmo"),
+                    section: "OUTPUT".into(),
+                },
+            ],
+            "divergence must be reported as a Generated↔Output section difference"
+        );
+        assert_eq!(integrity.problems[0].level(), ValidationLevel::Output);
+    }
+
+    /// EIMP-01 §S.8: an `output/` artifact is NOT required to carry a
+    /// `stage:generated` stamp. Provenance is asserted by the gate passing,
+    /// not by a stamp — which is what lets the already-committed baselines
+    /// stay valid with no migration.
+    #[test]
+    fn output_level_accepts_a_baseline_with_no_generated_stamp() {
+        let (_tmp, suite0) = suite();
+        let config = suite0.config().clone();
+        std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
+        EinmoTestRunner::new(config.clone())
+            .evaluate_all(&Echo)
+            .unwrap();
+
+        // Hand-build a legacy `output/` artifact: same sections, but stamped
+        // the pre-EIMP-01 way (compiled + configured + stage:output only).
+        let gen_path = config.stage_dir(Stage::Generated).join("a.foo.einmo");
+        let mut legacy = EinmoFile::from_file(&gen_path).unwrap();
+        let (configured, _) = derive_keypair(config.configured_passphrase());
+        let (stage_output, _) = derive_keypair("");
+        legacy.set_stamps(Stamps::generate(
+            &legacy.signed_prefix(),
+            &configured,
+            &stage_output,
+        ));
+        let out_path = config.stage_dir(Stage::Output).join("a.foo.einmo");
+        ensure_parent_dir(&out_path).unwrap();
+        std::fs::write(&out_path, legacy.serialize().unwrap()).unwrap();
+        assert!(
+            !EinmoFile::from_file(&out_path)
+                .unwrap()
+                .stamps()
+                .entries()
+                .iter()
+                .any(|s| s.key() == Stage::Generated.stamp_key()),
+            "precondition: this baseline carries no stage:generated stamp"
+        );
+
+        let integrity = check_suite_integrity(&config, FailurePolicy::FailAtEnd).unwrap();
+        assert!(
+            integrity.is_clean(),
+            "a legacy baseline must still pass the output gate: {:?}",
+            integrity.problems
+        );
+    }
+
+    /// A gate reports a signature failure on EITHER side of its own pair —
+    /// the "both sides verify" half of EIMP-01 §S.0.
+    #[test]
+    fn a_gate_reports_a_tampered_artifact_on_either_side_of_its_pair() {
+        for tampered_stage in [Stage::Generated, Stage::Output] {
+            let (_tmp, suite0) = suite();
+            let config = suite0.config().clone();
+            std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
+            EinmoTestRunner::new(config.clone())
+                .evaluate_all(&Echo)
+                .unwrap();
+            promote_generated_to_output(&config);
+
+            let victim = config.stage_dir(tampered_stage).join("a.foo.einmo");
+            let bytes = std::fs::read_to_string(&victim).unwrap();
+            std::fs::write(&victim, bytes.replace("{5;}", "{7;}")).unwrap();
+
+            let integrity = check_suite_integrity(&config, FailurePolicy::FailAtEnd).unwrap();
+            assert!(
+                integrity.problems.iter().any(|p| matches!(
+                    p,
+                    Problem::SignatureDoesNotVerify { stage, .. } if *stage == tampered_stage
+                )),
+                "tampering {tampered_stage} must be reported: {:?}",
+                integrity.problems
+            );
+        }
+    }
+
+    /// `Verified` no longer reports `output ↔ checked` problems — the
+    /// cumulative behavior EIMP-01 §S.4 removes. A suite whose checked stage
+    /// disagrees with output, but whose verified stage matches checked, is
+    /// GREEN at the verified level and red at the checked level.
+    #[test]
+    fn verified_level_does_not_report_output_checked_problems() {
+        let (_tmp, suite0) = suite();
+        let config = suite0.config().clone();
+        std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
+        EinmoTestRunner::new(config.clone())
+            .evaluate_all(&Echo)
+            .unwrap();
+        promote_generated_to_output(&config);
+        promote(&config, Stage::Output, Stage::Checked);
+        promote(&config, Stage::Checked, Stage::Verified);
+
+        // Break output↔checked only: retract nothing, just remove output/.
+        std::fs::remove_file(config.stage_dir(Stage::Output).join("a.foo.einmo")).unwrap();
+
+        let at_checked = check_suite_integrity(
+            &config
+                .clone()
+                .with_validation_level(ValidationLevel::Checked),
+            FailurePolicy::FailAtEnd,
+        )
+        .unwrap();
+        assert!(
+            !at_checked.is_clean(),
+            "the checked gate owns output↔checked and must go red"
+        );
+
+        let at_verified = check_suite_integrity(
+            &config
+                .clone()
+                .with_validation_level(ValidationLevel::Verified),
+            FailurePolicy::FailAtEnd,
+        )
+        .unwrap();
+        assert!(
+            at_verified.is_clean(),
+            "the verified gate must not re-check output↔checked: {:?}",
+            at_verified.problems
+        );
     }
 
     /// The Output level makes no claim about checked/ or verified/: an
@@ -2469,14 +2800,26 @@ mod tests {
             .with_validation_level(ValidationLevel::Output);
         std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
 
-        let results = EinmoTestRunner::new(config).evaluate_all(&Echo).unwrap();
+        let results = EinmoTestRunner::new(config.clone())
+            .evaluate_all(&Echo)
+            .unwrap();
+        promote_generated_to_output(&config);
+        let integrity = check_suite_integrity(&config, FailurePolicy::FailAtEnd).unwrap();
 
         assert!(
-            results.integrity.is_clean(),
+            integrity.is_clean(),
             "empty checked/ and verified/ are not Output-level problems: {:?}",
-            results.integrity.problems
+            integrity.problems
         );
-        assert!(results.all_output_written_and_verified());
+        // Generation itself succeeded — asserted directly, since
+        // `all_output_written_and_verified` now also folds in the gate
+        // (EIMP-01 §S.4) and `results` predates the promotion above.
+        assert!(
+            results
+                .files
+                .iter()
+                .all(|f| f.written_and_verified || f.ignored)
+        );
     }
 
     /// The Checked level demands a reviewed baseline: an unpromoted output is
@@ -2592,12 +2935,16 @@ mod tests {
         ensure_parent_dir(&retired).unwrap();
         std::fs::write(&retired, "retired").unwrap();
 
-        let results = EinmoTestRunner::new(config).evaluate_all(&Echo).unwrap();
+        EinmoTestRunner::new(config.clone())
+            .evaluate_all(&Echo)
+            .unwrap();
+        promote_generated_to_output(&config);
+        let integrity = check_suite_integrity(&config, FailurePolicy::FailAtEnd).unwrap();
 
         assert!(
-            results.integrity.is_clean(),
+            integrity.is_clean(),
             "a stage's flagged sink is a terminal sink, nested or not: {:?}",
-            results.integrity.problems
+            integrity.problems
         );
     }
 
@@ -2608,10 +2955,18 @@ mod tests {
         let config = suite0.config().clone();
         std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
 
-        let results = EinmoTestRunner::new(config).evaluate_all(&Echo).unwrap();
+        // EIMP-01: a suite that has never been promoted is legitimately RED
+        // at the Output level — the gate asserts "the code produces the
+        // committed baseline", and there is no baseline until someone accepts
+        // one. "Clean" therefore means generated AND accepted.
+        EinmoTestRunner::new(config.clone())
+            .evaluate_all(&Echo)
+            .unwrap();
+        promote_generated_to_output(&config);
+        let integrity = check_suite_integrity(&config, FailurePolicy::FailAtEnd).unwrap();
 
-        assert!(results.integrity.is_clean());
-        assert!(results.integrity.report().is_empty());
+        assert!(integrity.is_clean(), "{:?}", integrity.problems);
+        assert!(integrity.report().is_empty());
     }
 
     // EIMP-1 S.3: the goal-state flag count. Deliberately separate from
@@ -3006,7 +3361,19 @@ mod tests {
                 .unwrap()
                 .contains("ignored by configuration")
         );
-        assert!(results.all_output_written_and_verified());
+        // What this test means is "an ignored crumb does not fail the run".
+        // `all_output_written_and_verified` folds in the level's gate, which
+        // now also wants a committed baseline (EIMP-01 §S.4) — a different
+        // claim, and not this test's.
+        assert!(
+            results
+                .files
+                .iter()
+                .all(|f| f.written_and_verified || f.ignored),
+            "an ignored crumb must not fail the run: {:?}",
+            results.files
+        );
+        assert!(results.correspondence_failures.is_empty());
     }
 
     #[test]

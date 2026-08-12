@@ -415,6 +415,39 @@ impl ValidationLevel {
 makes an input-less artifact there impossible by construction, and the gate
 would only be re-asserting the phase's own post-condition.
 
+#### A suite with no baseline is red at the Output level
+
+**Consequence, stated because it surprises.** The Output gate asserts *the
+code produces the committed baseline*. A brand-new suite — generated cleanly,
+never promoted — has no baseline, so the gate reports every case as
+`RightMissingEntirely { Generated, Output }` and goes red. That is correct:
+there is nothing for the gate to affirm. The first `einmo promote generated to
+output` is what makes a suite gateable, and it is a deliberate act by design
+(§S.3).
+
+Before this EIMP, evaluation *was* the baseline, so a fresh suite passed at the
+Output level immediately. Anything that took "generated cleanly" and "the
+Output gate passes" to be the same statement now has to say which it means.
+`TestResults::all_output_written_and_verified` is exactly such a place: it
+folds in `integrity.is_clean()`, so it now answers "the configured level's gate
+passes", not "every input evaluated". Callers wanting the weaker claim should
+test `files.iter().all(|f| f.written_and_verified || f.ignored)` directly; the
+method's doc comment says so.
+
+#### A gate names which *side* is tampered
+
+`ComparisonResult::tampered` was `Vec<PathBuf>`, and `stage_pair_problems`
+attributed every entry to the pair's **right** stage. Tampering the left-hand
+artifact was therefore reported against the right-hand one. That was harmless
+while both sides of every pair were reviewed together, and wrong the moment a
+gate's job is to name the link that broke.
+
+The information was already computed —
+`StagePairAgreement::Tampered { stages }` carries it — and was discarded at the
+`compare` boundary. `tampered` becomes `Vec<TamperedEntry>`, carrying
+`rel_path` plus the stage(s) that failed, and `stage_pair_problems` emits one
+`SignatureDoesNotVerify` per failing side.
+
 #### The Output gate needs an evaluator, and must refuse to run without one
 
 **Resolved during implementation.** "The Output gate generates first" is

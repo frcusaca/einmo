@@ -307,26 +307,87 @@ looking undone.
 
 ## Phase 4 — Gates compare only against their predecessor
 
-- [ ] Read §S.4 of EIMP-01.md
-- [ ] Write the tests first: `output` reports
+- [x] Read §S.4 of EIMP-01.md
+      (2026-08-12 10:30)
+- [x] Write the tests first: `output` reports
       `SectionDifference { Generated, Output }` on divergence; `checked` and
       `verified` invoke the evaluator **zero** times (assert with a
       call-counting `Evaluator`) and write nothing (assert on directory
       mtimes); `verified` no longer reports `output ↔ checked` problems; each
       gate still reports a signature failure on either side of its own pair
-- [ ] Write the tests first: a legacy `output/` artifact carrying only
+      (2026-08-12 10:34)
+      Seven new tests, confirmed RED first. The two negatives are asserted
+      with evidence rather than left to review: a counting `Evaluator` proves
+      zero invocations, and stage-directory mtimes prove nothing is written.
+      `verified_level_does_not_report_output_checked_problems` breaks
+      output↔checked deliberately and asserts the verified gate stays green —
+      the removed cumulative behavior, pinned.
+- [x] Write the tests first: a legacy `output/` artifact carrying only
       `compiled`/`configured`/`stage:output` (no `stage:generated`) passes the
       `output` gate (§S.8)
-- [ ] Replace `escalation()` / `escalates_from()` with `compares_against()`
+      (2026-08-12 10:34)
+      Hand-builds the legacy stamp chain rather than assuming one, and asserts
+      the absence of `stage:generated` as a precondition.
+- [x] Replace `escalation()` / `escalates_from()` with `compares_against()`
       and `generates()` per §S.4's API shape
-- [ ] Rewrite `check_integrity` to run, per level: O1, O2, orphans in the
+      (2026-08-12 10:36)
+      Both removed. `Ord` on `ValidationLevel` is kept — it still follows the
+      chain, so `level >= Checked` stays meaningful even though the levels no
+      longer imply one another.
+- [x] Rewrite `check_integrity` to run, per level: O1, O2, orphans in the
       stages that level touches, and `stage_pair_problems` for that level's
       pair only — plus attestation (V6/V7) at `verified`
-- [ ] Wire the `output` gate to run the generation phase first
-- [ ] Confirm no new `Problem` variant is needed (§S.4) — divergence is
+      (2026-08-12 10:37)
+      The `for step in level.escalation()` loop is gone; the body is now a
+      straight line: shape → orphans in `level.stage()` → the one pair →
+      attestation if `Verified`.
+- [x] Wire the `output` gate to run the generation phase first
+      (2026-08-12 10:45)
+      In the library this is `evaluate_all` + the level's integrity check. In
+      the CLI it needed a decision, recorded in §S.4: **`einmo verify --level
+      output` now requires `--command`** and refuses without it, because
+      comparing a stale `generated/` produces a green gate that asserts
+      nothing about the current tree. `--command` at a non-generating level is
+      refused too. Both refusals are tested; the silent-green case is the
+      dangerous one.
+- [x] Confirm no new `Problem` variant is needed (§S.4) — divergence is
       `SectionDifference`, a runtime error is `ArtifactUnsound`
-- [ ] Run all tests — old and new — and make sure they all pass correctly
-- [ ] Commit
+      (2026-08-12 10:38)
+      Confirmed — but `Problem::level()` needed fixing. Its catch-all mapped a
+      pair problem with `right: Output` to `ValidationLevel::Checked`, correct
+      only while `Output` could never appear on the right. Both matches are now
+      exhaustive over `Stage`, so a future stage cannot be silently misfiled.
+- [x] **Found and fixed: a gate misnamed which SIDE was tampered.**
+      (2026-08-12 10:42)
+      `ComparisonResult::tampered` was `Vec<PathBuf>` and `stage_pair_problems`
+      attributed every entry to the pair's **right** stage — so tampering the
+      left-hand artifact was reported against the right-hand one. Harmless
+      while both sides of a pair were always reviewed together; wrong once a
+      gate's job is to name the link that broke. The information was never
+      missing: `StagePairAgreement::Tampered { stages }` carries it, and
+      `compare.rs` discarded it with a `{ .. }` wildcard. Now
+      `Vec<TamperedEntry>`, with one `SignatureDoesNotVerify` per failing side.
+- [x] **Recorded: a suite with no baseline is now red at the Output level.**
+      (2026-08-12 10:44)
+      Correct — the gate asserts "the code produces the committed baseline",
+      and a never-promoted suite has none. But it is a real behavior change
+      (evaluation used to BE the baseline), and it shifted what
+      `TestResults::all_output_written_and_verified` means: it folds in
+      `integrity.is_clean()`, so it now answers "the level's gate passes"
+      rather than "every input evaluated". Documented on the method, with
+      callers wanting the weaker claim pointed at
+      `files.iter().all(...)`. Five pre-existing tests encoded the old
+      assumption and were updated to promote, or to assert the weaker claim
+      where that is what they meant.
+- [x] Run all tests — old and new — and make sure they all pass correctly
+      (2026-08-12 10:40)
+      **419 tests, 0 failed** (`cargo test --workspace`) against Phase 2's
+      412: +7 gate tests, +1 CLI refusal test, −1 (`levels_escalate_cumulatively`
+      replaced by `levels_compare_against_their_immediate_predecessor_only`).
+      `cargo fmt --check` and
+      `cargo clippy --workspace --all-targets -- -D warnings` clean.
+- [x] Commit
+      (2026-08-12 10:52)
 
 ---
 

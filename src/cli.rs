@@ -178,11 +178,26 @@ struct CompareArgs {
 struct VerifyArgs {
     /// The suite work directory.
     work_dir: PathBuf,
-    /// The escalating validation level to judge the suite at
+    /// The validation level to judge the suite at
     /// (`output` | `checked` | `verified`). The CLI defaults to `checked`; the
     /// library API has no default.
+    ///
+    /// The levels do not escalate (`EIMP-01` §S.4): each compares exactly one
+    /// adjacent pair. `output` compares `generated ↔ output`, `checked`
+    /// compares `output ↔ checked`, `verified` compares `checked ↔ verified`.
     #[arg(long, default_value = "checked")]
     level: String,
+    /// The evaluator command, required by `--level output` and meaningless to
+    /// the other levels.
+    ///
+    /// `--level output` asserts that the code produces the committed
+    /// baseline, so it must RUN the code: it generates first, then compares.
+    /// Without this it would grade whatever happens to be sitting in
+    /// `generated/` — and a leftover from an earlier run compares clean
+    /// against the baseline it was promoted to, so the gate would go green
+    /// while asserting nothing. Refused rather than defaulted.
+    #[arg(long)]
+    command: Option<String>,
     /// Stop at the first failure instead of gathering every problem.
     /// The default is fail-at-end: run everything, report it all.
     #[arg(long, conflicts_with = "fail_at_end")]
@@ -623,6 +638,33 @@ fn cmd_verify(args: VerifyArgs) -> Result<ExitCode> {
     let mut config = TestConfig::new(&args.work_dir, level);
     if let Some(limit) = args.walk_depth_limit {
         config = config.with_walk_depth_limit(limit);
+    }
+
+    // EIMP-01 §S.4: the Output level is the only one that runs the code, and
+    // it must actually run it. Comparing a stale `generated/` would produce a
+    // green gate that asserts nothing about the current tree.
+    match (level.generates(), &args.command) {
+        (true, Some(command)) => {
+            let evaluator = CommandEvaluator {
+                command: command.clone(),
+            };
+            crate::einmo_suite::EinmoTestRunner::new(config.clone()).evaluate_all(&evaluator)?;
+        }
+        (true, None) => {
+            return Err(EinmoError::Config(
+                "--level output must generate before it compares, so it requires \
+                 --command <evaluator>; without it the gate would grade a stale \
+                 generated/ directory"
+                    .into(),
+            ));
+        }
+        (false, Some(_)) => {
+            return Err(EinmoError::Config(format!(
+                "--command is meaningless at --level {level}: this level compares two \
+                 committed stages and runs nothing"
+            )));
+        }
+        (false, None) => {}
     }
     let stage = match &args.stage {
         Some(s) => Some(Stage::parse(s)?),
@@ -1186,6 +1228,55 @@ mod tests {
 
         // `->` is no longer accepted, glued or otherwise.
         assert!(split_promote_args(&strs(&["checked->verified", "suite"])).is_err());
+    }
+
+    /// EIMP-01 §S.4: `--level output` must run the code it grades. Both
+    /// refusals are asserted, because the dangerous case is the silent one —
+    /// a stale `generated/` compares clean against the baseline it was
+    /// promoted to, so the gate would go green while asserting nothing.
+    #[test]
+    fn output_level_requires_an_evaluator_and_the_others_refuse_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_string_lossy().into_owned();
+
+        let missing = cmd_verify(VerifyArgs {
+            work_dir: tmp.path().to_path_buf(),
+            level: "output".into(),
+            command: None,
+            fail_fast: false,
+            fail_at_end: false,
+            stage: None,
+            all: false,
+            files: vec![],
+            walk_depth_limit: None,
+            json: false,
+            flag_is_not_failure: false,
+        });
+        let msg = format!("{:?}", missing.unwrap_err());
+        assert!(
+            msg.contains("--command"),
+            "the refusal must name the fix: {msg}"
+        );
+
+        let pointless = cmd_verify(VerifyArgs {
+            work_dir: tmp.path().to_path_buf(),
+            level: "checked".into(),
+            command: Some("cat".into()),
+            fail_fast: false,
+            fail_at_end: false,
+            stage: None,
+            all: false,
+            files: vec![],
+            walk_depth_limit: None,
+            json: false,
+            flag_is_not_failure: false,
+        });
+        let msg = format!("{:?}", pointless.unwrap_err());
+        assert!(
+            msg.contains("meaningless"),
+            "a non-generating level must refuse an evaluator: {msg}"
+        );
+        let _ = dir;
     }
 
     #[test]
