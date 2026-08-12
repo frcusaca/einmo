@@ -429,24 +429,25 @@ impl<'s, S: EinmoStorage> EinmoCase<'s, S> {
     /// per-file logic.
     ///
     /// # Errors
-    /// Returns [`EinmoError::Config`] if `stage` is `output` (regenerated
-    /// every run, nothing to un-promote). Propagates any [`EinmoStorage`]
-    /// I/O failure.
+    /// Returns [`EinmoError::Config`] if `stage` is `generated` (regenerated
+    /// every run, nothing to un-promote — `EIMP-01` §S.6). Propagates any
+    /// [`EinmoStorage`] I/O failure.
     pub fn retract(&self, stage: Stage) -> Result<Vec<Stage>> {
+        // `EIMP-01` §S.6 inverted this. The refusal belongs to whichever
+        // stage is rebuilt every run, and that is now `generated/` — there is
+        // nothing to un-promote from a work file. `output/` became a
+        // committed baseline, so withdrawing one is expressible, and must
+        // cascade: `checked` and `verified` attest to the baseline beneath
+        // them, so leaving them behind would have a reviewed stage attesting
+        // to bytes that no longer exist.
         let cascade: &[Stage] = match stage {
             Stage::Verified => &[Stage::Verified],
             Stage::Checked => &[Stage::Verified, Stage::Checked],
-            // `EIMP-01` §S.6 inverts this pair: `generated/` becomes the
-            // un-retractable one (it IS regenerated every run) and `output/`
-            // becomes retractable with a cascade. Only the `Generated` half
-            // has landed here — adding the variant made this match
-            // non-exhaustive, and refusing it is already the final answer.
-            // Flipping `Output` is Phase 5's job and needs the cascade,
-            // `EinmoSuite::retract`, and the CLI doc comment changed with it.
-            Stage::Generated | Stage::Output => {
-                return Err(EinmoError::Config(format!(
-                    "cannot retract from {stage}/: it is regenerated every run"
-                )));
+            Stage::Output => &[Stage::Verified, Stage::Checked, Stage::Output],
+            Stage::Generated => {
+                return Err(EinmoError::Config(
+                    "cannot retract from generated/: it is regenerated every run".into(),
+                ));
             }
         };
         let mut retracted = Vec::new();
@@ -1121,14 +1122,50 @@ mod tests {
         );
     }
 
+    /// EIMP-01 §S.6 inverts the pair. `generated/` is the stage that is
+    /// regenerated every run, so it is the one with nothing to un-promote.
     #[test]
-    fn retract_refuses_output() {
+    fn retract_refuses_generated() {
         let storage = InMemoryStorage::new();
         let case = EinmoCase::new(id("a.foo"), &storage);
         assert!(matches!(
-            case.retract(Stage::Output).unwrap_err(),
+            case.retract(Stage::Generated).unwrap_err(),
             EinmoError::Config(_)
         ));
+    }
+
+    /// EIMP-01 §S.6: `output/` became a committed baseline, so withdrawing one
+    /// is now expressible — and must cascade, because `checked` and
+    /// `verified` attest to the baseline beneath them. Retracting a baseline
+    /// without invalidating what was promoted from it would leave a reviewed
+    /// stage attesting to bytes that no longer exist.
+    #[test]
+    fn retract_output_cascades_through_checked_and_verified() {
+        let storage = InMemoryStorage::new();
+        let case_id = id("a.foo");
+        let case = EinmoCase::new(case_id.clone(), &storage);
+        for stage in [Stage::Output, Stage::Checked, Stage::Verified] {
+            storage
+                .write(&case_id, ArtifactLocation::Stage(stage), b"artifact")
+                .unwrap();
+        }
+
+        let mut retracted = case.retract(Stage::Output).unwrap();
+        retracted.sort();
+        assert_eq!(
+            retracted,
+            vec![Stage::Output, Stage::Checked, Stage::Verified],
+            "retracting the baseline must invalidate everything promoted from it"
+        );
+        for stage in [Stage::Output, Stage::Checked, Stage::Verified] {
+            assert!(
+                storage
+                    .read(&case_id, ArtifactLocation::Stage(stage))
+                    .unwrap()
+                    .is_none(),
+                "{stage} must be gone"
+            );
+        }
     }
 
     /// Retracting `verified` removes only verified — it is the top of the

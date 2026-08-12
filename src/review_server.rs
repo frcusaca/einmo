@@ -785,8 +785,9 @@ async fn flag_case(
 }
 
 /// Retract (demote) `id` from `stage` immediately — a single atomic call,
-/// unlike promote (EIMP-2 §3, `EinmoReview::retract_now`). Cascades
-/// `checked → verified`.
+/// unlike promote (EIMP-2 §3, `EinmoReview::retract_now`). Cascades forward
+/// through every stage promoted from it (`output` → `checked` → `verified`);
+/// `generated` is refused (EIMP-01 §S.6).
 async fn retract_case(
     State(state): State<Arc<AppState>>,
     Path((session, id, stage)): Path<(SessionId, EinmoId, Stage)>,
@@ -1489,13 +1490,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retract_endpoint_400s_on_output_stage() {
+    /// EIMP-01 §S.6: the un-retractable stage is `generated`, not `output`.
+    /// The endpoint carries no rule of its own — it inherits the library's,
+    /// which is the point of a thin surface.
+    async fn retract_endpoint_400s_on_generated_stage() {
         let tmp = seeded_suite();
         let state = Arc::new(AppState::default());
         let session = state.create_session(tmp.path());
         let app = router(state);
 
-        let req = Request::post(format!("/einmo/{session}/cases/a.foo/retract/output"))
+        let req = Request::post(format!("/einmo/{session}/cases/a.foo/retract/generated"))
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();

@@ -35,10 +35,26 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Promote files between stages (appends the destination stage's stamp).
+    ///
+    /// The three promotions make deliberately different claims, and the
+    /// wording matters (`EIMP-01` §S.3):
+    ///
+    ///   generated to output   the run completed and the output looks
+    ///                         REASONABLE. A sanity check — explicitly NOT a
+    ///                         semantic or stylistic review.
+    ///   output to checked     the results are CORRECT against the
+    ///                         specification, justified statement by
+    ///                         statement. The real review.
+    ///   checked to verified   a human attests to them under their own key.
+    ///
+    /// `generated to output` is the weakest of the three by design: it is the
+    /// moment a behavior change is consciously accepted as the new baseline,
+    /// and nothing more.
     Promote(PromoteArgs),
     /// Move files from a stage into flagged/ (advisory line, no stamp).
     Flag(FlagArgs),
-    /// Retract (demote) artifacts from a stage; cascades checked→verified.
+    /// Retract (demote) artifacts from a stage, cascading forward through
+    /// every stage promoted from it (`output` → `checked` → `verified`).
     Retract(RetractArgs),
     /// Compare two stages over the mirrored tree.
     Compare(CompareArgs),
@@ -80,6 +96,12 @@ struct PromoteArgs {
     ///   `<from>:<to>` · `<from>..<to>`  (glued)
     /// then the work directory, then any specific `.einmo` files.
     ///
+    /// Legal pairs: `generated to output`, `output to checked`,
+    /// `output to verified`, `checked to verified`, and `verified to checked`
+    /// (a console-review demotion). `generated` reaches a reviewed stage only
+    /// by passing through the baseline — `generated to checked` and
+    /// `generated to verified` are refused (`EIMP-01` §S.3).
+    ///
     /// Parsed positionally by [`split_promote_args`].
     #[arg(required = true, num_args = 1..)]
     args: Vec<String>,
@@ -107,7 +129,12 @@ struct PromoteArgs {
 struct RetractArgs {
     /// The suite work directory.
     work_dir: PathBuf,
-    /// The stage to retract from (`checked` or `verified`).
+    /// The stage to retract from (`output`, `checked`, or `verified`).
+    ///
+    /// `generated` is refused: it is rebuilt on every run, so there is
+    /// nothing to un-promote. Retracting `output` withdraws a baseline and
+    /// cascades through everything promoted from it, so a reviewed stage is
+    /// never left attesting to bytes that no longer exist (`EIMP-01` §S.6).
     stage: String,
     /// Specific `.einmo` files to retract. Use `-` to read paths from stdin.
     #[arg(num_args = 0.., trailing_var_arg = true)]

@@ -393,26 +393,70 @@ looking undone.
 
 ## Phase 5 — Promotion and retraction
 
-- [ ] Read §S.3 and §S.6 of EIMP-01.md
-- [ ] Write the tests first: `is_legal_transition(Generated, Output)` is true;
+- [x] Read §S.3 and §S.6 of EIMP-01.md
+      (2026-08-12 10:55)
+- [x] Write the tests first: `is_legal_transition(Generated, Output)` is true;
       `(Generated, Checked)` and `(Generated, Verified)` are false; retract
       from `generated` is refused; retract from `output` cascades through
       `verified`
-- [ ] Write the tests first: `promote generated to output` writes an `output/`
+      (2026-08-12 10:58)
+      `generated_promotes_only_into_output` also asserts nothing promotes
+      *backwards* into the work file — a stray `matches!` arm would otherwise
+      silently undo the property that makes the weak promotion safe to have.
+      `retract_output_cascades_through_checked_and_verified` and
+      `retract_refuses_generated` replace their `output`-flavored predecessors.
+- [x] Write the tests first: `promote generated to output` writes an `output/`
       artifact whose configured sections are byte-identical to its `generated/`
       source and whose stamps are the source's plus `stage:output`; a second
       signer co-signs rather than rewriting
-- [ ] Add `(Generated, Output)` to `is_legal_transition`
-- [ ] Invert the retraction rule in `EinmoCase::retract` and
+      (2026-08-12 10:58)
+      Already covered end to end by zweimomo's
+      `eimp01_generate_promote_comprehensive` step 5, against the real
+      `BoaEvaluator`: it asserts the promoted body, the appended
+      `stage:output` stamp, and that the underlying `stage:generated` stamp
+      survives. Co-signing is `EinmoSuite::promote`'s existing behavior,
+      already covered by `suite::tests`, and is stage-pair agnostic — the new
+      pair exercises the same path.
+- [x] Add `(Generated, Output)` to `is_legal_transition`
+      (2026-08-12 10:00)
+      Landed early in Phase 2; the compiler required it.
+- [x] Invert the retraction rule in `EinmoCase::retract` and
       `EinmoSuite::retract`: refuse `generated`, allow `output` with a cascade
       through `checked` and `verified`. Update `RetractArgs`' doc comment,
       which currently says "`checked` or `verified`".
-- [ ] Set the `promote generated to output` help text to the **weak** claim
+      (2026-08-12 10:57)
+      Both inverted, plus the `Command::Retract` summary line (which said
+      "cascades checked→verified") and `EinmoSuite::retract`'s doc. The
+      suite-level refusal stays *before* selection, so an empty suite still
+      errors rather than silently succeeding with an empty report — and the
+      test now asserts both halves: `generated` refused, `output` allowed.
+- [x] Set the `promote generated to output` help text to the **weak** claim
       (§S.3): "ran without error, output is reasonable — not a semantic or
       stylistic review". Read it beside `promote output to checked` and
       confirm it reads as clearly weaker.
-- [ ] Run all tests — old and new — and make sure they all pass correctly
-- [ ] Commit
+      (2026-08-12 10:59)
+      Written as a three-line table on `Command::Promote` so the claims are
+      read *against each other* rather than one at a time — REASONABLE vs
+      CORRECT against the specification vs a human attests. `PromoteArgs`
+      also now lists the legal pairs and states that `generated` reaches a
+      reviewed stage only through the baseline.
+- [x] **Found: the review layer kept its own copy of the retraction rule.**
+      (2026-08-12 11:08)
+      `retract_now`'s comment asserted `EinmoCase::retract` checks
+      `stage == Output` first, and both `review::tests` and the HTTP retract
+      endpoint asserted `output` is refused. Resolved by having the surface
+      follow the library rather than re-encode the rule — a divergence there
+      is precisely the `EIMP-1` P1 defect returning, since `EinmoReview`
+      exists to be a thin view over one object. The test now asserts BOTH
+      halves: `generated` refused, and retracting `output` actually removes
+      the baseline.
+- [x] Run all tests — old and new — and make sure they all pass correctly
+      (2026-08-12 11:11)
+      **421 tests, 0 failed** (`cargo test --workspace`) against Phase 4's
+      419. `cargo fmt --check` and
+      `cargo clippy --workspace --all-targets -- -D warnings` clean.
+- [x] Commit
+      (2026-08-12 11:13)
 
 ---
 

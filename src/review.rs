@@ -737,10 +737,9 @@ impl EinmoReview {
         let _guard = self.exec.lock().expect("exec lock poisoned");
         let directory = EinmoDirectory::new(self.config.clone());
         let case = EinmoCase::new(id.clone(), &directory);
-        // `EinmoCase::retract` checks `stage == Output` FIRST, before
-        // touching storage, so this call errors immediately for Output —
-        // no separate pre-check needed to match `transitions::retract`'s
-        // old ordering.
+        // `EinmoCase::retract` checks the un-retractable stage FIRST, before
+        // touching storage, so this call errors immediately for `generated`
+        // (EIMP-01 §S.6) — no separate pre-check needed here.
         let retracted = case.retract(stage)?;
         if retracted.is_empty() {
             return Err(EinmoError::io(
@@ -2598,14 +2597,27 @@ mod tests {
         assert!(matches!(err, EinmoError::Io { .. }));
     }
 
+    /// EIMP-01 §S.6 inverted which stage is un-retractable, and the review
+    /// surface follows the library rather than keeping its own copy of the
+    /// rule — `EinmoReview` is a thin view over `EinmoCase` (`EIMP-1`'s "one
+    /// review, one object, every surface a thin view"), so a divergence here
+    /// would be exactly the `EIMP-1` P1 defect returning.
     #[test]
-    fn retract_now_refuses_output_stage() {
+    fn retract_now_refuses_generated_stage_and_allows_output() {
         let tmp = seeded_suite();
         let review = EinmoReview::open(tmp.path());
         let id = EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap();
 
-        let err = review.retract_now(&id, Stage::Output).unwrap_err();
+        let err = review.retract_now(&id, Stage::Generated).unwrap_err();
         assert!(matches!(err, EinmoError::Config(_)));
+
+        // `output/` is a committed baseline now, so withdrawing one is a
+        // legitimate act — and it cascades.
+        review.retract_now(&id, Stage::Output).unwrap();
+        assert!(
+            !tmp.path().join("output").join("a.foo.einmo").exists(),
+            "the baseline must be gone"
+        );
     }
 
     #[test]

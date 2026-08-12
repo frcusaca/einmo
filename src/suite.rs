@@ -231,8 +231,8 @@ impl<S: EinmoStorage> EinmoSuite<S> {
         Ok(report)
     }
 
-    /// Retract every selected case from `stage` (cascading `checked` →
-    /// `verified`) — see [`EinmoCase::retract`]. Selection follows
+    /// Retract every selected case from `stage`, cascading forward through
+    /// every stage promoted from it (`output` → `checked` → `verified`) — see [`EinmoCase::retract`]. Selection follows
     /// [`Self::select`].
     ///
     /// # Errors
@@ -247,9 +247,13 @@ impl<S: EinmoStorage> EinmoSuite<S> {
         filter: Option<&str>,
         ids: Option<&[EinmoId]>,
     ) -> Result<RetractReport> {
-        if stage == Stage::Output {
+        // `EIMP-01` §S.6: the refusal moved to `generated/`, the stage that
+        // is actually rebuilt every run. Checked unconditionally, before
+        // selection, so an empty suite still errors rather than silently
+        // succeeding with an empty report.
+        if stage == Stage::Generated {
             return Err(EinmoError::Config(
-                "cannot retract from output/: it is regenerated every run".into(),
+                "cannot retract from generated/: it is regenerated every run".into(),
             ));
         }
         let mut report = RetractReport::default();
@@ -826,15 +830,18 @@ mod tests {
     }
 
     #[test]
-    fn retract_refuses_output_even_for_an_empty_selection() {
+    fn retract_refuses_generated_even_for_an_empty_selection() {
         let storage = InMemoryStorage::new();
         let suite = EinmoSuite::scan(storage, None).unwrap();
         // No cases at all, let alone matching any filter -- must still
         // error, not silently succeed with an empty report. This is what
-        // the suite-level Output check (checked unconditionally, before
-        // selection) exists for.
-        let err = suite.retract(Stage::Output, None, None).unwrap_err();
+        // the suite-level check (run unconditionally, before selection)
+        // exists for. EIMP-01 §S.6 moved the refusal from `output` to
+        // `generated`: the latter is what is regenerated every run.
+        let err = suite.retract(Stage::Generated, None, None).unwrap_err();
         assert!(matches!(err, EinmoError::Config(_)));
+        // And `output` is now retractable, so it must NOT error here.
+        assert!(suite.retract(Stage::Output, None, None).is_ok());
     }
 
     #[test]

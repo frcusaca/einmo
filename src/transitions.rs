@@ -418,6 +418,32 @@ fn glob_match(text: &str, pattern: &str) -> bool {
 mod tests {
     use super::*;
     use crate::einmo_suite::ValidationLevel;
+
+    /// `EIMP-01` §S.3: exactly one new pair out of `generated`, and the two
+    /// shortcuts past the baseline stay illegal. Asserted rather than left to
+    /// review — "generated content reaches a reviewed stage only by passing
+    /// through the baseline" is the whole reason the weak promotion is safe
+    /// to have, and a stray `matches!` arm would silently undo it.
+    #[test]
+    fn generated_promotes_only_into_output() {
+        assert!(is_legal_transition(Stage::Generated, Stage::Output));
+        assert!(
+            !is_legal_transition(Stage::Generated, Stage::Checked),
+            "generated must not skip the baseline into a reviewed stage"
+        );
+        assert!(
+            !is_legal_transition(Stage::Generated, Stage::Verified),
+            "generated must not skip the baseline into an attested stage"
+        );
+        // Nothing promotes backwards into the work file.
+        for from in [Stage::Output, Stage::Checked, Stage::Verified] {
+            assert!(
+                !is_legal_transition(from, Stage::Generated),
+                "{from} must not promote into generated/"
+            );
+        }
+    }
+
     use crate::format::{DEFAULT_SEPARATOR, Metadata, Section, Status};
     use crate::signature::{Stamps, derive_keypair};
     use std::fs;
