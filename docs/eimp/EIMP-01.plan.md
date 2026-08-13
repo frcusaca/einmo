@@ -577,49 +577,137 @@ at `zweimomo/suites/python/`. It is the only place the whole stage model runs
 for real, so it is both the thing that must be updated and the best evidence
 this EIMP works.
 
-- [ ] Read `zweimomo/tests/suites.rs` in full and list every test that
+- [x] Read `zweimomo/tests/suites.rs` in full and list every test that
       assumes the three-stage model in this plan before editing any
-- [ ] **`eimp3_output_drift_comprehensive` (`zweimomo/tests/suites.rs:208`)**
-      — this is EIMP 3's comprehensive test, and EIMP-01 removes the
-      behavior it covers. **Rewrite it against the Output gate; do not
-      delete it.** It encodes a real requirement — a changed evaluator must
-      not silently redefine the baseline — which EIMP-01 keeps and relocates.
-      Deleting a failing test instead of rewriting it is precisely the
-      failure mode `EIMP-9` exists to catch.
-  - [ ] Name the rewritten test for EIMP-01, and state in a comment what it
+      (2026-08-12 09:57)
+      Four: `eimp3_output_drift_comprehensive`,
+      `crash_crumb_survives_stack_overflow`, and the two suite drivers
+      (`run_tier` / `run_suite`, shared by `javascript_tiers_generate_and_verify`
+      and `python_suite_generates_and_verifies`).
+- [x] **`eimp3_output_drift_comprehensive`** — rewritten, not deleted.
+      (2026-08-12 09:57)
+      Now `eimp01_generate_promote_comprehensive`: generate → byte-identical
+      no-op → distinct signer writes its own stamp → a CHANGED result does not
+      fail generation → `promote generated to output` signs → clean rerun.
+      Driven by the real `BoaEvaluator` against a scratch copy of `day.1`.
+  - [x] Name the rewritten test for EIMP-01, and state in a comment what it
         inherited from EIMP 3 and what changed
-  - [ ] It must still fail if the baseline is silently redefined
-- [ ] `crash_crumb_survives_stack_overflow` — crumbs now land in
-      `generated/`. Update the path it asserts on. **The test must still
-      genuinely overflow the stack in a re-spawned child**; do not weaken it
-      into a unit test.
-- [ ] `python_suite_generates_and_verifies` and
-      `javascript_tiers_generate_and_verify` — update `run_suite` / `run_tier`
-      for the four-stage model: generate into `generated/`, then gate
-- [ ] `zweimomo/src/evaluators.rs` — confirm the `Evaluator` impls need no
-      change (EIMP-01 does not touch the trait); record that as verified
-      rather than assumed
-- [ ] Add a zweimomo integration test for the **new** surface: generate →
+        (2026-08-12 09:57)
+        Its doc comment names each retired step and where the surviving
+        requirement went — "a changed evaluator must not silently redefine the
+        committed baseline" is kept and re-expressed as steps 4–6.
+  - [x] It must still fail if the baseline is silently redefined
+        (2026-08-12 09:57)
+        Step 4 asserts the committed baseline is byte-untouched after a
+        changed result; step 5 asserts it changes only after an explicit,
+        signing promotion.
+- [x] `crash_crumb_survives_stack_overflow` — repointed at `generated/`, and
+      given a SECOND assertion that `output/` stays clean. Still re-spawns the
+      binary and genuinely overflows the stack; not weakened.
+      (2026-08-12 09:55)
+- [x] `python_suite_generates_and_verifies` and
+      `javascript_tiers_generate_and_verify` — needed no change. They assert
+      per-file `written_and_verified`, which is generation's own result, and
+      generation is exactly what they drive. Verified rather than assumed:
+      both pass unmodified, and the suites they run against are the real
+      committed ones.
+      (2026-08-12 10:21)
+- [x] `zweimomo/src/evaluators.rs` — confirmed unchanged and unchanging:
+      EIMP-01 does not touch the `Evaluator` trait, and neither `BoaEvaluator`
+      nor `Pyo3Evaluator` needed an edit. Recorded as verified.
+      (2026-08-13 04:30)
+- [x] Add a zweimomo integration test for the **new** surface: generate →
       `generated ≠ output` → Output gate red → `promote generated to output`
       → Output gate green, driven through the real Python evaluator
-- [ ] Run all tests — old and new — and make sure they all pass correctly
+      (2026-08-13 04:33)
+      `eimp01_output_gate_goes_red_on_divergence_and_green_after_promotion`.
+      This is the assertion the rewritten comprehensive test could NOT make
+      when written — Phase 2 predated the gate — so it was carried as a known
+      gap and closed here rather than forgotten. It closes §S.0's loop:
+      generation is indifferent to divergence, the gate is what objects, and
+      the promotion is the remedy. It also asserts the gate **reports without
+      repairing**: the baseline still reads `9` while the gate is red.
+      **Verified the test can fail**: a deliberate mutation of the final
+      expectation (`"4"` → `"5"`) produced
+      `assertion left == right failed ... left: "4" right: "5"`, confirming
+      the real `Pyo3Evaluator` genuinely produced `4` and the assertion is
+      live. Reverted. Done because a green test proves nothing until it has
+      been seen to fail — the `EIMP-9` discipline applied to my own work.
+- [x] Run all tests — old and new — and make sure they all pass correctly
+      (2026-08-13 04:35)
+      zweimomo 5/5. `cargo fmt --check` exit 0;
+      `cargo clippy --workspace --all-targets -- -D warnings` exit 0.
 - [ ] Commit
 
 ---
 
 ## Phase 8 — Verify the real suite is unchanged
 
-- [ ] Run `einmo generate` over `zweimomo/suites/python`
-- [ ] Compare `generated` against the committed `output`
+- [x] Run `einmo generate` over `zweimomo/suites/python`
+      (2026-08-13 04:05)
+      Run over both real suites (Python and JavaScript `day.1`).
+- [x] Compare `generated` against the committed `output`
       (`einmo compare generated output --root-cause`)
-- [ ] **Report the result to the human in ONE statement**: how many artifacts
-      differ, and whether any **configured section** differs. §S.8 says a
-      section difference here is a bug this implementation introduced, not a
-      diff to accept — fix the code, do not promote.
-- [ ] Confirm all three gates are green against the untouched committed
+      (2026-08-13 04:06)
+- [x] **Report the result to the human in ONE statement**: how many artifacts
+      differ, and whether any **configured section** differs.
+      (2026-08-13 04:06)
+      **Zero differ, on both suites: 8 matching / 0 differing / 0 one-sided /
+      0 tampered each.** No configured section differs, so this EIMP changed
+      nothing about what the evaluators produce.
+      The metadata that legitimately DOES differ was inspected to confirm the
+      comparison is meaningful rather than vacuous — same case, three days and
+      one commit apart:
+      `producer: d37671b` vs `d785adc`; `generated: 2026-08-12T17:21:20Z` vs
+      `2026-08-09T19:37:18Z`; stamps `stage:generated` vs `stage:output`.
+      Different bytes, identical sections, clean compare. That is §S.0's
+      "two runs an hour apart still match", demonstrated on committed data.
+      It also demonstrates §S.8 on real artifacts: the committed baseline
+      carries **no `stage:generated` stamp** and passes anyway.
+- [x] Confirm all three gates are green against the untouched committed
       baseline: `--level output`, `--level checked`, `--level verified`
-- [ ] Run all tests — old and new — and make sure they all pass correctly
-- [ ] Commit
+      (2026-08-13 04:20)
+      Recorded honestly rather than forced green:
+      | suite | generated↔output | checked | verified |
+      |---|---|---|---|
+      | `suites/python` | pass | pass (after this phase's promotion) | **red** |
+      | `suites/javascript/day.1` | pass | pass | **red** |
+      Both `verified` reds are correct and pre-existing: no `verified/`
+      artifacts exist in either suite, because nobody has attested them.
+      Attestation needs a human passphrase — V7 exists to catch a computer key
+      there — so it is **not mine to give**, and forcing it green would be the
+      exact bypass that check defends against.
+      One result is the whole EIMP demonstrated on real data: before this
+      phase's promotion, `python --level verified` **passed** while
+      `--level checked` **failed**. Under the old cumulative model that was
+      impossible, since `verified` performed everything `checked` did.
+- [x] **The promotions themselves** (maintainer request, 2026-08-13).
+      (2026-08-13 04:22)
+      `promote generated to output` on both suites: reported 8 files each and
+      changed **zero bytes** — `PromoteOutcome::AlreadySigned`, since the
+      destinations already held matching content signed by that key.
+      `git status` stayed empty. So the migration §S.8 called *optional* is
+      **unnecessary**: there is nothing to migrate, because promotion never
+      rewrites what already agrees.
+      `promote output to checked` on the Python suite established the reviewed
+      baseline it never had — 8 new artifacts, each carrying the full chain
+      (`compiled`, `configured`, `stage:output`, and a fresh `stage:checked`
+      appended without disturbing the 2026-08-09 `stage:output` stamp).
+      The review justification — every case's INPUT read against its OUTPUT
+      under real Python semantics, plus the dependent's DIFF — is recorded in
+      commit `0f39530`, not merely asserted here.
+- [x] Run all tests — old and new — and make sure they all pass correctly
+      (2026-08-13 04:25)
+      **422 declared, 0 failed** after the promotion; the new `checked/`
+      content disturbed nothing.
+- [x] Commit
+      (2026-08-13 04:22)
+      `0f39530` — the eight `checked/` artifacts, with the review
+      justification in the commit message. Staged narrowly: `AGENTS.md`,
+      `eimp.md`, `README.md`, `rust_instructions.md` and both EIMP skills had
+      concurrent uncommitted edits from outside this session (a new "Running
+      specific tests" section and per-sub-section test subsets), which were
+      deliberately left alone.
 
 ---
 

@@ -17,7 +17,10 @@
 
 use std::path::{Path, PathBuf};
 
-use einmo::{EinmoFile, EinmoTestRunner, Evaluator, TestConfig, ValidationLevel};
+use einmo::{
+    EinmoFile, EinmoTestRunner, Evaluator, FailurePolicy, Problem, TestConfig, ValidationLevel,
+    check_suite_integrity,
+};
 use zweimomo::{BoaEvaluator, Pyo3Evaluator};
 
 /// The tiers, oldest (easiest) first. Directory name doubles as the
@@ -371,4 +374,125 @@ fn eimp01_generate_promote_comprehensive() {
             .written_and_verified
     );
     assert_eq!(std::fs::read(&nb_generated).unwrap(), nb_bytes_after);
+}
+
+/// The Output gate, end to end, through the real `Pyo3Evaluator` against a
+/// scratch copy of the committed Python suite: **green → red → promote →
+/// green**.
+///
+/// This is the assertion `eimp01_generate_promote_comprehensive` could not
+/// make when it was written (Phase 2 predated the gate). That test covers the
+/// generation phase's indifference to the baseline; this one covers the gate
+/// that *is* meant to care, and closes the loop EIMP-01 §S.0 describes:
+///
+///   generation does not fail on divergence  →  the Output gate does  →
+///   `promote generated to output` is the remedy
+///
+/// Driven through a real evaluator rather than `Echo`, because the claim under
+/// test is about einmo's behavior over genuine evaluated output, including a
+/// dependent case whose DIFF is recomputed from the same run.
+#[test]
+fn eimp01_output_gate_goes_red_on_divergence_and_green_after_promotion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let scratch = tmp.path().join("python");
+    std::fs::create_dir_all(&scratch).unwrap();
+    copy_dir_recursive(&python_suite_dir(), &scratch);
+    // The committed suite carries `checked/`; this test judges only the
+    // output link, so drop it rather than let an unrelated stage participate.
+    let _ = std::fs::remove_dir_all(scratch.join("checked"));
+
+    let config = TestConfig::new(&scratch, ValidationLevel::Output)
+        .with_suite_name("zweimomo/suites/python".to_string());
+    let suite = EinmoTestRunner::new(config.clone());
+
+    // ---- 1. GREEN. Generation reproduces the committed baseline.
+    suite.evaluate_all(&Pyo3Evaluator).unwrap();
+    let green = check_suite_integrity(&config, FailurePolicy::FailAtEnd).unwrap();
+    assert!(
+        green.is_clean(),
+        "the committed baseline must reproduce: {:?}",
+        green.problems
+    );
+
+    // ---- 2. RED. Change what an input evaluates to. Generation still
+    // succeeds — indifference to the baseline is S.2's rule — and the GATE is
+    // what objects.
+    std::fs::write(scratch.join("input").join("integer_arithmetic.py"), "2 + 2").unwrap();
+    let results = suite.evaluate_all(&Pyo3Evaluator).unwrap();
+    assert!(
+        results
+            .files
+            .iter()
+            .all(|f| f.written_and_verified || f.ignored),
+        "generation itself must still succeed: {:?}",
+        results.files
+    );
+
+    let red = check_suite_integrity(&config, FailurePolicy::FailAtEnd).unwrap();
+    let divergences: Vec<_> = red
+        .problems
+        .iter()
+        .filter(|p| {
+            matches!(
+                p,
+                Problem::SectionDifference {
+                    left: einmo::Stage::Generated,
+                    right: einmo::Stage::Output,
+                    ..
+                }
+            )
+        })
+        .collect();
+    assert!(
+        !divergences.is_empty(),
+        "the Output gate must report generated↔output divergence: {:?}",
+        red.problems
+    );
+    assert!(
+        divergences.iter().any(|p| p
+            .path()
+            .is_some_and(|path| path.to_string_lossy().contains("integer_arithmetic"))),
+        "the divergence must name the case that changed: {divergences:?}"
+    );
+
+    // ---- 3. The committed baseline is STILL untouched at this point. The
+    // gate reports; it does not repair.
+    assert_eq!(
+        EinmoFile::from_file(&scratch.join("output").join("integer_arithmetic.py.einmo"))
+            .unwrap()
+            .section("OUTPUT")
+            .unwrap()
+            .body(),
+        "9",
+        "a red gate must not have rewritten the baseline"
+    );
+
+    // ---- 4. GREEN again, but only after the deliberate act of accepting the
+    // new results — the weak `generated to output` claim.
+    einmo::EinmoSuite::scan(einmo::EinmoDirectory::new(config.clone()), None)
+        .unwrap()
+        .promote(
+            einmo::Stage::Generated,
+            einmo::Stage::Output,
+            &einmo::KeySource::from_passphrase(""),
+            None,
+            None,
+        )
+        .unwrap();
+
+    let green_again = check_suite_integrity(&config, FailurePolicy::FailAtEnd).unwrap();
+    assert!(
+        green_again.is_clean(),
+        "the gate must go green once the new results are accepted: {:?}",
+        green_again.problems
+    );
+    assert_eq!(
+        EinmoFile::from_file(&scratch.join("output").join("integer_arithmetic.py.einmo"))
+            .unwrap()
+            .section("OUTPUT")
+            .unwrap()
+            .body(),
+        "4",
+        "the accepted baseline must hold the new result"
+    );
 }
