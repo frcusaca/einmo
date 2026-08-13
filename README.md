@@ -309,6 +309,203 @@ einmo body   generated/my_case.foo.einmo           # the signed sections
 None of that touches your committed baseline. Generate, read, decide, and only
 then promote.
 
+## Using einmo in a Rust project
+
+This is the main way einmo is used: as a `cargo test` that snapshots your
+crate's behavior over a corpus of inputs.
+
+### Lay out the suite
+
+```
+tests/my_suite/
+├── input/          # your corpus — one file per case, any extension
+├── generated/      # einmo writes here.  GITIGNORE THIS.
+├── output/         # the accepted baseline        ] committed
+├── checked/        # the reviewed baseline        ] committed
+└── verified/       # the attested baseline        ] committed
+```
+
+```gitignore
+# .gitignore
+generated/
+```
+
+`input/` is the corpus. The three committed stages are the record of what your
+code did to it and who vouched for that. `generated/` is scratch — einmo
+rewrites it on every run, which is exactly why it must not be committed.
+
+### Write the test
+
+```rust
+use einmo::{
+    EinmoTestRunner, Evaluator, FailurePolicy, TestConfig, ValidationLevel,
+    check_suite_integrity,
+};
+
+struct MyEvaluator;
+
+impl Evaluator for MyEvaluator {
+    fn evaluate(&self, source: &str) -> Result<Vec<String>, String> {
+        // Whatever your crate does to an input. Return one string per
+        // OUTPUT section; `Err` means "could not accept this input".
+        Ok(vec![my_crate::render(source)])
+    }
+}
+
+#[test]
+fn snapshots_match_the_reviewed_baseline() {
+    let config = TestConfig::new("tests/my_suite", ValidationLevel::Output);
+
+    // 1. Generate. Runs your code over every file in input/ and writes
+    //    generated/. It never touches a committed stage.
+    let results = EinmoTestRunner::new(config.clone())
+        .evaluate_all(&MyEvaluator)
+        .unwrap();
+    assert!(
+        results
+            .files
+            .iter()
+            .all(|f| f.written_and_verified || f.ignored),
+        "an input failed to evaluate: {:?}",
+        results.files
+    );
+
+    // 2. Gate. The levels do NOT escalate — each checks exactly one link —
+    //    so assert the ones you want. These two say: the code still produces
+    //    the accepted baseline, and that baseline is still what was reviewed.
+    for level in [ValidationLevel::Output, ValidationLevel::Checked] {
+        let integrity = check_suite_integrity(
+            &config.clone().with_validation_level(level),
+            FailurePolicy::FailAtEnd,
+        )
+        .unwrap();
+        assert!(integrity.is_clean(), "{level} gate:\n{}", integrity.report());
+    }
+}
+```
+
+Add `ValidationLevel::Verified` to that list once your suite has attested
+artifacts. Until then, leave it out — an empty `verified/` means "not signed
+yet", and asserting it would fail an honest suite for a thing nobody has
+claimed.
+
+### Running it yourself
+
+```bash
+cargo test snapshots_match_the_reviewed_baseline
+```
+
+Green means: everything ran, your code produces the committed baseline, and
+that baseline is what was reviewed.
+
+### When it goes red
+
+A red output gate names the case and the section that moved. Your code
+changed what it produces — the question is whether that was intended.
+
+```bash
+# See exactly what changed. Nothing is modified by looking.
+einmo compare generated output tests/my_suite --root-cause
+
+# Read one case in full.
+einmo show tests/my_suite/generated/some_case.txt.einmo
+einmo body tests/my_suite/generated/some_case.txt.einmo
+```
+
+`generated/` already holds the new results — `cargo test` put them there — so
+there is nothing to re-run and nothing committed has moved. Then decide:
+
+- **The change is a bug** → fix your code and re-run the test.
+- **The change is correct** → accept it as the new baseline:
+
+  ```bash
+  einmo promote generated to output tests/my_suite
+  ```
+
+  This is a **weak** claim on purpose: *it ran, and the output looks
+  reasonable.* It is not a review.
+
+- **Then review it properly**, case by case, and record that:
+
+  ```bash
+  einmo promote output to checked tests/my_suite
+  ```
+
+  This is the real review: *the results are correct against the
+  specification.* Commit `output/` and `checked/` together with the code
+  change that caused them.
+
+### In CI
+
+CI runs the same `cargo test` — no einmo-specific step, no special
+configuration:
+
+```yaml
+- run: cargo test
+```
+
+Two things worth knowing:
+
+**CI must never promote.** Promotion is a judgment; a machine that promotes
+automatically converts a red gate into a rubber stamp and the whole chain
+stops meaning anything. If CI is red, a human or agent looks, decides, and
+promotes locally.
+
+**Two of the three gates need no build at all.** `checked` and `verified`
+compare committed directories and run nothing, so a release job can verify
+that a signed artifact matches its reviewed baseline with only the files and
+the public keys:
+
+```bash
+einmo verify tests/my_suite --level checked
+einmo verify tests/my_suite --level verified
+```
+
+That is why the levels stopped escalating: each gate is separately runnable
+and separately reportable, and a red one names the link that broke rather
+than saying "something in the chain."
+
+## Testing any program from the command line
+
+Einmo does not need to be embedded in a Rust crate. `--command` is the entire
+interface to the system under test: einmo runs it once per input file, feeds
+the file's contents on **stdin**, and records **stdout** as the OUTPUT
+section. A non-zero exit fails that case, with stderr as the detail.
+
+```bash
+mkdir -p demo/input
+echo '2 + 3 * 4' > demo/input/arith.txt
+
+einmo generate demo --command 'python3 -c "import sys; print(eval(sys.stdin.read()))"'
+```
+
+```
+  ✓ arith.txt.einmo
+generated 1 file(s), 0 failure(s)
+```
+
+`demo/generated/arith.txt.einmo` now records `2 + 3 * 4` as INPUT and `14` as
+OUTPUT, signed. The rest of the loop is identical to the Rust one:
+
+```bash
+einmo compare generated output demo --root-cause      # what changed
+einmo promote generated to output demo                # accept the baseline
+einmo promote output to checked  demo                 # record the review
+
+einmo verify demo --level output --command 'python3 -c "..."'   # gate: runs the code
+einmo verify demo --level checked                                # gate: pure comparison
+```
+
+`--level output` requires `--command`, because it is the one gate that asserts
+something about your *code* rather than about two committed directories — so
+it has to run the code. Without it, einmo would grade whatever happened to be
+left in `generated/` from an earlier run, which compares clean against the
+baseline it was promoted to. The gate would go green while asserting nothing,
+so einmo refuses instead.
+
+The evaluator can be anything `sh -c` will run: an interpreter, a compiled
+binary, a linter, a formatter, a shell pipeline.
+
 ## The `.einmo` File Format
 
 A `.einmo` file is a header line, followed by sections separated by a
@@ -505,47 +702,6 @@ If a subset run reveals a failure, that is broken code — fix it; do not ignore
 it because "the full suite might pass."
 
 ---
-
-## Quick Start
-
-```rust
-use einmo::{EinmoSuite, Evaluator, TestConfig, Stage};
-
-struct MyEvaluator;
-impl Evaluator for MyEvaluator {
-    fn evaluate(&self, source: &str) -> Result<Vec<String>, String> {
-        Ok(vec![format!("result: {source}")])
-    }
-}
-
-fn main() {
-    let config = TestConfig::new("my-suite")
-        .require_correspondence(Stage::Output, Stage::Checked);
-    let suite = EinmoSuite::new(config);
-    let results = suite.evaluate_all(&MyEvaluator).unwrap();
-    assert!(results.all_output_written_and_verified());
-}
-```
-
-The suite discovers every file under `input/`, evaluates each one, writes a
-signed `.einmo` to **`generated/`**, and re-verifies what it just wrote. It
-never writes `output/` — accepting results as the baseline is a separate,
-deliberate act:
-
-```bash
-einmo compare generated output my-suite     # look at what changed
-einmo promote generated to output my-suite  # accept it as the baseline
-```
-
-`all_output_written_and_verified()` folds in the suite's integrity at the
-configured validation level, so on a suite with no baseline yet it reports
-`false` — correctly: there is nothing for the output gate to affirm until you
-promote once. If you only want to know whether every input evaluated, test
-`results.files.iter().all(|f| f.written_and_verified || f.ignored)`.
-
-If you configured `require_correspondence(Output, Checked)`, it also compares
-those two stages and reports any files that exist only on one side or differ
-in their INPUT/OUTPUT sections.
 
 ## The `Evaluator` Trait
 
@@ -1619,6 +1775,24 @@ configuration.
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-13 (3)
+**Updated By**: Claude Code (Opus 5)
+**Changes**: Restructured so the **primary** use case leads. Added
+§"Using einmo in a Rust project" — suite layout with the `generated/` gitignore
+line, the `Evaluator` impl and `#[test]`, `cargo test`, what to do when the
+gate goes red (compare → inspect → promote → review), and a CI section stating
+plainly that **CI must never promote** (a machine that promotes automatically
+turns a red gate into a rubber stamp) and that two of the three gates need no
+build at all. Then §"Testing any program from the command line" for the
+generic `--command` path, explaining that `--command` *is* the interface to
+the system under test: one run per input, source on stdin, stdout becomes
+OUTPUT.
+The old §Quick Start is removed — the Rust section supersedes it and said less.
+Both new sections were verified rather than written from memory: the Rust
+example was **compiled against the real API** as a temporary test target, and
+every command in the CLI walkthrough was **executed**, including the recorded
+artifact (`2 + 3 * 4` → `14`) shown in the text.
 
 **Date**: 2026-08-13 (2)
 **Updated By**: Claude Code (Opus 5)
