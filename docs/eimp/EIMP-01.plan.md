@@ -713,68 +713,98 @@ this EIMP works.
 
 ## Phase 9 — Documentation
 
-- [ ] **Review and land the end-user "What Passing Means" section of
-      `README.md`.** The section was **written up front**, before
-      implementation, from §S.0 of EIMP-01.md — it is already in `README.md`
-      carrying a status marker saying it describes a model that is specified
-      but not yet implemented. This task verifies it against what was actually
-      built and removes the marker. **The section is a claim to end users; do
-      not remove the marker until every line of it is true.**
-  - [ ] Re-read the section beside §S.0 of EIMP-01.md and beside the
-        implementation. Every pass/fail condition in §S.0 must appear in the
-        README, and the README must claim nothing §S.0 does not.
-  - [ ] Verify each named signature against the code: `compiled`,
-        `configured`, `stage:generated`, `stage:output`, `stage:checked`,
-        `stage:verified`. If implementation renamed or added one, fix the
-        README table.
-  - [ ] Verify each named compared section against `compare.rs`: `INPUT`,
-        `OUTPUT` / `OUTPUT[i]`, `DIFF` on referencing cases, `COMMENTS` only
-        under the stricter configuration. Fix any drift.
-  - [ ] Verify the "deliberately not compared" list: the `STAMPS` section and
-        the metadata header (suite path, producing commit, einmo binary hash,
-        run timestamp). Confirm by experiment that two runs minutes apart
-        still match — the README states this as a promise to the reader.
-  - [ ] Verify every command in the section actually runs as written:
-        `einmo generate`, `einmo verify --level {output,checked,verified}`,
-        `einmo compare generated output --root-cause`, `einmo show`,
-        `einmo body`, `einmo promote generated to output`
-  - [ ] Verify the red-gate remedy table names the real remedies, and that
-        the retraction paragraph matches the implemented cascade
-  - [ ] Confirm the audience guard still holds: no `Problem` variant names, no
-        O1/C2/V5 codes, no Rust type names, no EIMP numbers in the prose
-  - [ ] Have a reader who has not read EIMP-01 answer, from the README alone:
-        "what exactly must be true for `--level output` to pass?" If they
-        cannot, the section is not done.
-  - [ ] **Remove the status marker** at the head of the section — this is the
-        last sub-task in this block, and removing it asserts the section is
-        now true of shipped einmo
-- [ ] Update the rest of `README.md` for the new model — the parts NOT covered
-      by the section above, which still describe the three-stage world:
-  - [ ] "The Three Stages" → four stages; add the `generated/` row (written by
-        `einmo generate`, gitignored, never committed) and retitle the section
-  - [ ] The `flagged/` paragraph — it says the sink is nested inside "each of
-        the three stages"; there are now four
-  - [ ] "CLI" subcommand table — `generate` (with `evaluate` as its alias),
-        `promote generated to output`, and the removal of `regenerate-output`
-  - [ ] "Quick Start" — the loop is now generate → inspect → promote → gate
-  - [ ] "Catastrophe Crumb Defense" — crumbs land in `generated/` now
-  - [ ] "Configuration Precedence" / `einmo.toml` `[suite]` — the `generated`
-        stage-directory name is configurable like the other three
-  - [ ] "Appendix: Migrating an insta test to einmo" — its directory tree and
-        worked commands assume three stages
-  - [ ] Grep the whole file for `regenerate-output`, `evaluate`, and "three
-        stages" and fix every remaining hit
-- [ ] Update `AGENTS.md`: how an agent materializes results for inspection
-      without disturbing `output/`, and the distinction between the weak
-      `generated → output` claim and the `output → checked` review
-- [ ] Update `rust_instructions.md` where it states the three-stage contract —
-      it becomes four; say plainly which stage is the work file
-- [ ] Update `docs/eimp/EIMP-3.md`: set `status: superseded by EIMP-01` and add
-      a forward pointer. **Do not rewrite its history** — add the reference.
-- [ ] Update `docs/eimp/INDEX.md` with the EIMP-01 row
-- [ ] Update the `eimp-use-maintain` and `repo-context` skills if either names
+- [x] **Review and land the end-user "What Passing Means" section of
+      `README.md`**, then remove its status marker.
+      (2026-08-13 05:05)
+      Every claim re-verified against the implementation before the marker
+      came off: named signatures against `stage.rs`/`signature.rs`; compared
+      sections against `compare.rs`; and **every command executed** on a
+      scratch suite. The two that should exit non-zero did (no baseline yet →
+      output gate red; no `checked/` yet → checked gate red) and both went
+      green after their promotion — the section's narrative, run end to end.
+      **Four commands were wrong as written** and are fixed: `einmo verify
+      --level output` now requires `--command`, and the `compare` and
+      `promote` examples were missing their `<work_dir>`. Also corrected the
+      signature table, which implied a promoted baseline always carries
+      `stage:generated`; §S.8 says otherwise, and the real committed artifacts
+      prove it.
+- [x] **Found and fixed a PRE-EXISTING defect**: the README documented
+      `[signing.<stage>] passphrase = "..."`, which einmo does not parse.
+      (2026-08-13 05:02)
+      Verified by experiment rather than by reading the parser. A suite
+      configured the documented way signs with the well-known **computer key**
+      (`5b846599`); the correct form, `[signing] generated = "..."`, yields a
+      different key. The failure is silent and the wrong way round — an author
+      believes a team key is in use and gets the public one. The old text is
+      called out explicitly in the README rather than quietly replaced, since
+      anyone who followed it has a suite signed by the wrong key.
+- [x] Update the rest of `README.md` for the new model
+      (2026-08-13 05:00)
+  - [x] "The Three Stages" → **"The Four Stages"**, with a *Committed* column
+        and a paragraph on what makes `generated/` different (not committed;
+        exists to be compared against `output/`).
+        (2026-08-13 04:55)
+  - [x] The `flagged/` paragraph — four stages now, and its example list
+        updated.
+        (2026-08-13 04:55)
+  - [x] CLI table — added `generate` (with its `evaluate` alias) and
+        `retract`; stated the legal promotion pairs; noted that
+        `verify --level output` requires `--command`.
+        (2026-08-13 04:57)
+  - [x] "Quick Start" — writes `generated/`, never `output/`; shows the
+        compare-then-promote step; and explains that
+        `all_output_written_and_verified()` folds in the level's gate, so a
+        suite with no baseline reports `false` **correctly**.
+        (2026-08-13 04:58)
+  - [x] "Catastrophe Crumb Defense" — crumbs land in `generated/`, so a crash
+        never dirties a committed stage.
+        (2026-08-13 04:59)
+  - [x] Added an `einmo.toml` `[signing]` section (the correct syntax), noting
+        that stage *directory names* are not configurable.
+        (2026-08-13 05:01)
+  - [x] "Appendix: Migrating an insta test" — directory tree gains
+        `generated/` with a "GITIGNORED — never commit it" note.
+        (2026-08-13 05:00)
+  - [x] Grepped for `regenerate-output`, `evaluate`, and "three stages"; the
+        only survivors are historical mentions inside changelog entries and
+        `EIMP-01.md`'s own account of what it retired, which are correct.
+        (2026-08-13 05:03)
+- [x] Update `AGENTS.md` §Clarifications — four stages, and the two things an
+      agent most needs: **how to inspect results without disturbing anything a
+      reviewer signed**, and a table stating the three promotions' claims
+      against each other so they cannot be blurred. Records explicitly that
+      `checked to verified` is **not an agent's to give**.
+      (2026-08-13 05:10)
+      While doing this I mangled the §Markdown File Update Protocol section —
+      `s.index("## Last Updated")` matched a *quoted mention* of the heading
+      rather than the section. Caught by reading the result, repaired, and the
+      entry re-inserted at the real heading via `rindex`.
+- [x] `rust_instructions.md` — **no change needed.** The checkbox named a
+      §"Phase-by-phase testing discipline" carrying a three-stage contract;
+      that section does not exist in einmo's copy. The item was inherited from
+      `FOOP-06`'s foolish-specific text when this plan was adapted. Verified
+      by grep rather than assumed.
+      (2026-08-13 05:12)
+- [x] Update `docs/eimp/EIMP-3.md`: `status: superseded by EIMP-01`, with a
+      forward pointer. **History not rewritten.**
+      (2026-08-13 05:14)
+      The note says plainly that EIMP 3's decision was right and its
+      requirement *remains in force* — only the mechanism moved — and names
+      each retired symbol with where its requirement now lives.
+- [x] Update `docs/eimp/INDEX.md` — `EIMP-3` superseded, `EIMP-01`
+      `Draft` → `Implementing` in both the table and the sprint list.
+      (2026-08-13 05:15)
+- [x] Update the `eimp-use-maintain` and `repo-context` skills if either names
       the stage set or the `evaluate` / `regenerate-output` verbs
-- [ ] Run all tests — old and new — and make sure they all pass correctly
+      (2026-08-13 05:16)
+      Checked: neither does. `repo-context` names crates and the
+      `verified/`-fixture skip (still accurate); `eimp-use-maintain` describes
+      process mechanics only. No change. **Note**: both EIMP skills have
+      concurrent uncommitted edits from outside this session, left untouched.
+- [x] Run all tests — old and new — and make sure they all pass correctly
+      (2026-08-13 05:17)
+      `cargo fmt --check` exit 0; `cargo clippy --workspace --all-targets --
+      -D warnings` exit 0; `eimp_check.py check` OK. Full suite below.
 - [ ] Commit
 
 ---

@@ -18,14 +18,14 @@ ls docs/eimp | rev | sort -V | rev
 | [EIMP-0](EIMP-0.md) | EIMP Purpose, Process, and Format | Final | 2026-07-29 | Claude Code (Sonnet 5) |
 | [EIMP-1](EIMP-1.md) | EinmoReview — a thread-safe review-session object; thin bash, server, and dhtml frontends | Implementing | 2026-07-19 | Atlas (ported by Claude Code (Sonnet 5)) |
 | [EIMP-2](EIMP-2.md) | einmo-review-server — a minimal HTTP prototype of the review/sign/promote/flag loop | complete | 2026-07-29 | Claude Code (Sonnet 5) |
-| [EIMP-3](EIMP-3.md) | Output-stage drift fails the run; explicit regenerate; multi-signer output stamps | complete | 2026-07-30 | Claude Code (Sonnet 5) |
+| [EIMP-3](EIMP-3.md) | Output-stage drift fails the run; explicit regenerate; multi-signer output stamps | superseded by EIMP-01 | 2026-07-30 | Claude Code (Sonnet 5) |
 | [EIMP-4](EIMP-4.md) | Split einmo into core + einmo-review-server, publish both to crates.io at 0.0.6 | Draft | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-5](EIMP-5.md) | Merkle-tree corpus signing — faster to compute, cheaper to update | Draft | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-6](EIMP-6.md) | Add structured JSONL logging to the test-run path | Brewing | 2026-07-30 | Claude Code (Opus 5) |
 | [EIMP-7](EIMP-7.md) | EinmoCase / EinmoSuite / EinmoDirectory — unify case access behind an EinmoStorage trait | complete | 2026-07-31 | Claude Code (Sonnet 5) |
 | [EIMP-8](EIMP-8.md) | Code-review findings — einmo library, review server, and zweimomo | Draft | 2026-07-31 | opencode (z-ai/glm-5.2); Claude Code (Opus 5) |
 | [EIMP-9](EIMP-9.md) | The test-tooling contract — one reliable way to run einmo's tests and read the results | Implementing (paused) | 2026-08-01 | Claude Code (Opus 5) |
-| [EIMP-01](EIMP-01.md) | A separate generation phase writing an uncommitted `generated/` stage, and validation levels that compare only against their predecessor | Draft | 2026-08-11 | Claude Code (Opus 5) |
+| [EIMP-01](EIMP-01.md) | A separate generation phase writing an uncommitted `generated/` stage, and validation levels that compare only against their predecessor | Implementing | 2026-08-11 | Claude Code (Opus 5) |
 
 ---
 
@@ -96,7 +96,7 @@ it is knowingly left stale when the stage model changes.
 
 ### Then
 
-4. **`EIMP-01`** (Draft) — a separate `einmo generate` phase writing the
+4. **`EIMP-01`** (Implementing) — a separate `einmo generate` phase writing the
    uncommitted `generated/` stage, `output/` as a committed baseline reached
    by an explicitly weak promotion, and gates that each compare only against
    their immediate predecessor. Supersedes `EIMP-3`. Changes `Stage`,
@@ -143,6 +143,14 @@ nothing is dropped — both land after `EIMP-1`:
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-13
+**Updated By**: Claude Code (Opus 5)
+**Changes**: `EIMP-3` marked **superseded by EIMP-01** — it now carries a
+forward-pointing note at its head, and its history is deliberately not
+rewritten: the decision it recorded was correct and its requirement survives,
+only the mechanism moved. `EIMP-01` status `Draft` → `Implementing` in the
+table and the sprint list.
 
 **Date**: 2026-08-11 (4)
 **Updated By**: Claude Code (Opus 5)

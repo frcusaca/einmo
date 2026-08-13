@@ -86,34 +86,38 @@ For projects where a signed, auditable promotion chain is not needed, insta
 and expect-test remain excellent choices. Einmo is for when attestation
 matters.
 
-## The Three Stages
+## The Four Stages
 
-| Stage | Directory | What it holds | Who writes it |
-|---|---|---|---|
-| **The output stage** | `output/` | Generated test results (signed by test runner) | `EinmoSuite::evaluate` |
-| **The checked stage** | `checked/` | Reviewed outputs (AI or human promoted) | `einmo promote output to checked` |
-| **The verified stage** | `verified/` | Human-signed (passphrase required) | `einmo promote checked to verified` |
+| Stage | Directory | Committed | What it holds | Who writes it |
+|---|---|---|---|---|
+| **The generation stage** | `generated/` | **no** — gitignored | Fresh results, signed by the runner. The work file. | `einmo generate` |
+| **The output stage** | `output/` | yes | The accepted baseline: it ran, and the output looks reasonable | `einmo promote generated to output` |
+| **The checked stage** | `checked/` | yes | Reviewed outputs (AI or human promoted) | `einmo promote output to checked` |
+| **The verified stage** | `verified/` | yes | Human-signed (passphrase required) | `einmo promote checked to verified` |
+
+`generated/` is a stage in every respect the others are — signed artifacts,
+verify-on-inspect, its own nested `flagged/` sink, promotion into the next
+stage. It differs in exactly two ways: **its directory is not committed**, and
+it exists to be compared against `output/`. That is what lets you run the
+evaluator any time you like, look at what came out, and decide — without
+touching anything a reviewer has signed. See
+[What Passing Means](#what-passing-means).
 
 Each stage directory mirrors the `input/` tree at any depth. An input file
 like `stage1/section3/specific.foo` produces
 `output/stage1/section3/specific.foo.einmo`, and the same relative path is
 used in every other stage directory.
 
-**`flagged/` is not a fourth stage.** Each of the three stages above carries
-its own nested `flagged/` sink (`output/flagged/`, `checked/flagged/`,
-`verified/flagged/`) for artifacts set aside from that stage's ordinary flow
+**`flagged/` is not a stage of its own.** Each of the four stages above carries
+its own nested `flagged/` sink (`generated/flagged/`, `output/flagged/`,
+`checked/flagged/`, `verified/flagged/`) for artifacts set aside from that stage's ordinary flow
 pending reviewer action (`einmo flag <stage>`). This keeps a flagged
 artifact's origin stage always known, and preserves the intentional
 input/output/checked/verified directory split -- a hand-authored suite stays
-easy to browse and edit in place: type into `input/`, look at `output/`.
+easy to browse and edit in place: type into `input/`, look at `generated/`,
+commit `output/`.
 
 ## What Passing Means
-
-> **Status: describes the stage model introduced by `docs/eimp/EIMP-01.md`,
-> which is specified but not yet implemented.** Until that lands, evaluation
-> writes `output/` directly, there is no `generated/` stage, and the levels
-> escalate rather than each checking one link. This section describes the
-> model as designed; the sections above it describe einmo as it ships today.
 
 **Your suite passes when all three gates pass.** That's the whole claim, and
 it is worth understanding what it is built out of, because a red gate tells
@@ -165,10 +169,14 @@ which is what makes it safe to run any time you want to look at fresh results.
 ### Output passes when the code still produces your baseline
 
 ```bash
-einmo verify my_suite --level output
+einmo verify my_suite --level output --command ./my-evaluator
 ```
 
-This is the only gate that runs your code. It generates first, then compares.
+This is the only gate that runs your code — so it needs to be told how. It
+generates first, then compares, and **refuses to run without `--command`**:
+grading whatever happens to be sitting in `generated/` would let a leftover
+from an earlier run pass the gate while asserting nothing about your code.
+The other two levels neither need it nor accept it.
 It passes when **all** of the following hold:
 
 1. **Generation passed** — everything above is true.
@@ -185,10 +193,17 @@ It passes when **all** of the following hold:
    | `compiled` | which einmo binary produced this artifact — signed with einmo's own built-in key |
    | `configured` | the suite configuration in force — signed with your suite's key |
    | `stage:generated` | this content came out of a generation run |
-   | `stage:output` | someone accepted it as the baseline (present on the `output/` side only) |
+   | `stage:output` | someone accepted it as the baseline |
 
    A file whose signature does not check out is **refused, not compared**.
    Einmo will never tell you "these match" about bytes it could not verify.
+
+   The two sides carry different stage stamps, and that is expected: the
+   `generated/` artifact has `stage:generated`, and its `output/` counterpart
+   has `stage:output` appended on promotion. A baseline promoted before
+   `generated/` existed carries only `stage:output` — no `stage:generated` —
+   and passes exactly the same. **Einmo does not require a stamp to prove
+   where a baseline came from; the gate passing is the proof.**
 
 4. **Every compared section is byte-identical.** The sections compared are:
 
@@ -261,9 +276,9 @@ whose attestation the verified stage exists to record.
 | Red gate | What it means | What to do |
 |---|---|---|
 | generate | your evaluator errored, or produced an unsound artifact | fix the runner — nothing downstream can be trusted yet |
-| `--level output` | your code no longer produces the committed baseline | either fix the code, or accept the new results: `einmo promote generated to output` |
-| `--level checked` | the baseline moved past what was reviewed | review the difference, then `einmo promote output to checked` |
-| `--level verified` | the reviewed content moved past what was attested, or the wrong key signed | `einmo promote checked to verified --interactive` |
+| `--level output` | your code no longer produces the committed baseline | either fix the code, or accept the new results: `einmo promote generated to output my_suite` |
+| `--level checked` | the baseline moved past what was reviewed | review the difference, then `einmo promote output to checked my_suite` |
+| `--level verified` | the reviewed content moved past what was attested, or the wrong key signed | `einmo promote checked to verified my_suite --interactive` |
 
 The two promotions are **not** the same kind of act, and the difference
 matters:
@@ -286,7 +301,7 @@ it:
 
 ```bash
 einmo generate my_suite --command ./my-evaluator   # produce fresh results
-einmo compare generated output --root-cause        # what changed, and why
+einmo compare generated output my_suite --root-cause   # what changed, and why
 einmo show   generated/my_case.foo.einmo           # summary + signature chain
 einmo body   generated/my_case.foo.einmo           # the signed sections
 ```
@@ -513,10 +528,24 @@ fn main() {
 ```
 
 The suite discovers every file under `input/`, evaluates each one, writes a
-signed `.einmo` to `output/`, and re-verifies what it just wrote. If you
-configured `require_correspondence(Output, Checked)`, it also compares the two
-stages and reports any files that exist only on one side or differ in their
-INPUT/OUTPUT sections.
+signed `.einmo` to **`generated/`**, and re-verifies what it just wrote. It
+never writes `output/` — accepting results as the baseline is a separate,
+deliberate act:
+
+```bash
+einmo compare generated output my-suite     # look at what changed
+einmo promote generated to output my-suite  # accept it as the baseline
+```
+
+`all_output_written_and_verified()` folds in the suite's integrity at the
+configured validation level, so on a suite with no baseline yet it reports
+`false` — correctly: there is nothing for the output gate to affirm until you
+promote once. If you only want to know whether every input evaluated, test
+`results.files.iter().all(|f| f.written_and_verified || f.ignored)`.
+
+If you configured `require_correspondence(Output, Checked)`, it also compares
+those two stages and reports any files that exist only on one side or differ
+in their INPUT/OUTPUT sections.
 
 ## The `Evaluator` Trait
 
@@ -554,10 +583,12 @@ Einmo ships a single CLI app with two binary targets sharing the same parser:
 
 | Subcommand | What it does |
 |---|---|
-| `einmo promote <from> to <to> <work_dir>` | Append the destination stage's stamp to every matching file. `* to flagged` delegates to `flag`. |
+| `einmo generate <work_dir> --command <evaluator>` | Run the evaluator over every input and write signed artifacts to `generated/`. Never writes `output/`. (Alias: `einmo evaluate`.) |
+| `einmo promote <from> to <to> <work_dir>` | Append the destination stage's stamp to every matching file. `* to flagged` delegates to `flag`. Legal pairs: `generated to output`, `output to checked`, `output to verified`, `checked to verified`, and `verified to checked`. |
+| `einmo retract <work_dir> <stage>` | Withdraw artifacts from `output`, `checked`, or `verified`, cascading forward through everything promoted from them. `generated` is refused — it is rebuilt every run. |
 | `einmo flag <work_dir> <stage>` | Move matching files into that stage's own nested `flagged/` sink with an unsigned advisory line. No stamp. |
 | `einmo compare <a> <b> <work_dir>` | Per-section comparison of two stages over the mirrored tree. |
-| `einmo verify <work_dir>` | Verify signature integrity across one stage (`--stage`) or all stages (`--all`). |
+| `einmo verify <work_dir>` | Verify signature integrity across one stage (`--stage`) or all stages (`--all`), and judge the suite at `--level output\|checked\|verified`. `--level output` requires `--command`: it generates first, then compares. |
 | `einmo confirm-signatures <path> <prefix>` | Report which files carry a stamp whose pubkey starts with the prefix. |
 | `einmo show <file>` | Print an envelope's metadata and stamp chain summary. |
 | `einmo self-check` | Compute the SHA-256 of the running binary (self-attestation). |
@@ -627,7 +658,7 @@ arguments are given, `--filter` (or all files if no filter) is used.
 
 Promotion key resolution follows a cascade: `--passphrase` >
 `--stdin-passphrase` > `EINMO_PASSPHRASE` env var > `einmo.toml
-[signing.<stage>]` > interactive prompt. The `--interactive` flag forces the
+[signing]` > interactive prompt. The `--interactive` flag forces the
 prompt, skipping all other tiers. An explicit empty string is "set to empty"
 (the computer key), never "unset".
 
@@ -704,7 +735,8 @@ einmo-review-server serve /path/to/suite
 ## Catastrophe Crumb Defense
 
 Before each evaluator call, einmo writes a **signed** `.einmo` "catastrophe
-crumb" to the output path with `status: output-error` and `status_detail:
+crumb" to the **`generated/`** path with `status: output-error` and
+`status_detail:
 "TEST IN PROGRESS -- if you see this file, the test harness crashed during
 evaluation. Escalate to human or other agents for support."`.
 
@@ -714,11 +746,14 @@ ordinary panics and records them as `status: output-error` with the panic
 message, but it cannot catch `abort()` or SIGSEGV. The catastrophe crumb
 covers those cases.
 
-On success, `write_output` overwrites the crumb with the real output. The
-crumb itself is a valid signed `.einmo` file: it can be verified, compared,
-and even promoted. The test suite proves this by spawning a child process
-that calls `std::process::abort()`, then checking that the crumb exists,
-verifies, and promotes normally.
+Crumbs land in `generated/`, which is gitignored, so **a crash never dirties a
+committed stage.** On success the real output overwrites the crumb.
+
+The crumb itself is a valid signed `.einmo` file: it can be verified,
+compared, and even promoted like any other artifact — there is no special
+casing for it in the promotion machinery. The test suite proves this by
+spawning a child process that calls `std::process::abort()`, then checking
+that the crumb exists, verifies, and promotes the whole way to `checked`.
 
 ### Detecting stale crumbs
 
@@ -759,6 +794,26 @@ disable.
 | Per-suite duration limit | `EINMO_SUITE_DURATION_LIMIT` | seconds | none |
 | Rerun catastrophes | `EINMO_RERUN_CATASTROPHES` | `1` / `true` / `yes` | false |
 | Ignore catastrophe crumbs | `EINMO_IGNORE_CATASTROPHE_CRUMBS` | colon-separated paths | empty |
+
+### `einmo.toml` `[signing]` section
+
+```toml
+[signing]
+generated = ""        # the generation stage's key (default: empty = computer key)
+output    = ""        # the baseline stage's key
+checked   = "..."     # the review stage's key
+verified                # DELIBERATELY UNSET -- falls through to an interactive prompt
+reviewer_key_prefix = "a1b2c3"
+```
+
+One key per stage, resolved through the passphrase cascade. `generated`,
+`output`, and `checked` conventionally default to the empty passphrase (the
+well-known computer key), because an agent may legitimately produce, accept,
+and review. **Leave `verified` unset**: that is what makes human attestation
+emergent rather than enforced — see "The Three-Role Key Model" above.
+
+Stage *directory names* are not configurable from `einmo.toml`; only the keys
+are.
 
 ### `einmo.toml` `[suite]` section
 
@@ -1089,14 +1144,18 @@ If your insta snapshots live in `snapshot_tests/input/` and
 ```
 snapshot_tests/
 ├── input/          # existing .foo inputs (unchanged)
-├── output/         # einmo generates here (new); output/flagged/ holds set-aside files
+├── generated/      # einmo generates here (new); GITIGNORED -- never commit it
+├── output/         # the accepted baseline (new); output/flagged/ holds set-aside files
 ├── checked/        # promoted baselines (new, replaces approved/); checked/flagged/ holds set-aside files
 └── verified/       # human-signed (new); verified/flagged/ holds set-aside files
 ```
 
-(`flagged/` is not a top-level directory or a fourth stage -- each of the
-three stages above carries its own nested `flagged/` sink, so a flagged
-artifact's origin stage is always known. See "The Three Stages" above.)
+Add `generated/` to your `.gitignore`. It is the work file: einmo rewrites it
+on every run, and committing it would put churn in every diff.
+
+(`flagged/` is not a top-level directory or a stage of its own -- each of the
+four stages above carries its own nested `flagged/` sink, so a flagged
+artifact's origin stage is always known. See "The Four Stages" above.)
 
 **Step 2: Write the `Evaluator` adapter.**
 
@@ -1522,36 +1581,70 @@ cargo test -- dev_compliance_output_matches_checked
 
 ### The default key in configuration
 
-`TestConfig::new(work_dir)` sets the `output` and `checked` stage passphrases
-to `""` (the empty string). This means the test runner signs with the
-well-known computer key. An `einmo.toml` in the work directory can override
-this:
+`TestConfig::new(work_dir)` sets the `generated`, `output`, and `checked`
+stage passphrases to `""` (the empty string). This means the test runner signs
+with the well-known computer key. An `einmo.toml` in the work directory can
+override this:
 
 ```toml
 # dev_suite/einmo.toml
-[signing.output]
-passphrase = ""
-
-[signing.checked]
-passphrase = ""
+[signing]
+generated = ""
+output    = ""
+checked   = ""
 ```
 
 Or, to use a shared team key for development (so team members can promote
 without prompting):
 
 ```toml
-[signing.checked]
-passphrase = "team-dev-shared-passphrase"
+[signing]
+checked = "team-dev-shared-passphrase"
 ```
 
+> **Corrected 2026-08-13.** Earlier revisions of this section documented a
+> `[signing.<stage>]` table with a `passphrase = "..."` key. **That form does
+> not work and never did** — einmo reads `[signing]` with one string value per
+> stage name, and silently ignores a nested table. The failure is quiet and
+> the wrong way round: a suite configured the documented way signs with the
+> well-known **computer key** while its author believes a team key is in use.
+> If you have an `einmo.toml` written against the old text, convert it and
+> re-check the stamps with `einmo show`.
+
 The passphrase is resolved through the cascade: CLI `--passphrase` > env
-`EINMO_PASSPHRASE` > `einmo.toml [signing.<stage>]` > interactive prompt.
-For development, the empty passphrase is the default and requires no
+`EINMO_PASSPHRASE` > `einmo.toml [signing]` > interactive prompt. For
+development, the empty passphrase is the default and requires no
 configuration.
 
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-13 (2)
+**Updated By**: Claude Code (Opus 5)
+**Changes**: EIMP-01 landed, so the "What Passing Means" section's status
+marker is **removed** — it now describes einmo as it ships. Every claim in it
+was re-verified against the implementation first: the named signatures against
+`stage.rs`/`signature.rs`, the compared sections against `compare.rs`, and
+**every command executed** on a scratch suite (the two that should exit
+non-zero did, and went green after their promotion).
+Four commands were wrong as written and are fixed: `einmo verify --level
+output` now needs `--command`, and `compare`/`promote` examples were missing
+their `<work_dir>`.
+"The Three Stages" becomes **The Four Stages**, with `generated/` and a
+committed column; the `flagged/` note, the insta-migration directory tree, the
+CLI table (`generate`, `retract`, the legal promotion pairs, `verify --level`),
+Quick Start, and Catastrophe Crumb Defense all updated for the new model.
+Quick Start also now explains that `all_output_written_and_verified()` folds in
+the level's gate, so a suite with no baseline reports `false` correctly.
+Added an `einmo.toml` `[signing]` section.
+**Corrected a pre-existing defect** found while writing it: the README
+documented `[signing.<stage>] passphrase = "..."`, which einmo does not parse.
+Verified by experiment — a suite configured the documented way signs with the
+well-known computer key (`5b846599`) while its author believes a team key is
+in use, and the correct form (`[signing] generated = "..."`) yields a
+different key. The old text is called out explicitly rather than quietly
+replaced, since anyone who followed it has a suite signed by the wrong key.
 
 **Date**: 2026-08-13
 **Updated By**: Sisyphus (mimo-v2.5-pro)

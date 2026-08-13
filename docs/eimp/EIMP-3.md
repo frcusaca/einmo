@@ -2,7 +2,7 @@
 eimp: 3
 title: Output-stage drift fails the run; explicit regenerate; multi-signer output stamps
 author: Claude Code (Sonnet 5) <noreply@anthropic.com>
-status: complete
+status: superseded by EIMP-01
 type: Standards
 created: 2026-07-30
 supersedes: []
@@ -10,6 +10,25 @@ begun: [x]
 ---
 
 # EIMP-3: Output-stage drift fails the run; explicit regenerate; multi-signer output stamps
+
+> **Superseded by [EIMP-01](EIMP-01.md) on 2026-08-13.** Kept as the
+> historical record of a decision that was right and **remains in force** —
+> *a changed evaluator must not silently redefine the committed baseline* —
+> under a mechanism that has moved.
+>
+> What changed: evaluation no longer compares against `output/` at all. It
+> writes the uncommitted `generated/` stage and is indifferent to the
+> baseline, and the divergence this EIMP made a per-file verdict is now
+> reported by the **Output gate** as
+> `SectionDifference { left: Generated, right: Output }`. The escape hatch
+> `einmo regenerate-output` becomes `einmo promote generated to output` — a
+> promotion that, unlike the old verb, **signs**. Multi-signer accumulation
+> moved from the runner into `promote`'s existing co-sign path.
+>
+> Retired with it: `FileResult::drifted`, `EinmoTestRunner::regenerate_output`,
+> and the `regenerate-output` CLI verb. `EIMP-01` §S.5 records each removal and
+> where its requirement now lives; the tests that covered them were rewritten
+> against the gate rather than deleted.
 
 EIMP numbering is little-endian; the full rules live in `eimp.md` at the
 repository root.
@@ -322,3 +341,11 @@ per-signer stamps at all.
 - Code: `src/einmo_suite.rs` (`write_output`, `evaluate_raw_parallel`),
   `src/signature.rs` (`Stamps`, `Stamp`, `stamped_by`), `src/transitions.rs`
   (the analogous, already-existing `promote` for comparison).
+
+## Last Updated
+
+**Date**: 2026-08-13
+**Updated By**: Claude Code (Opus 5)
+**Changes**: Marked **superseded by EIMP-01** and given a forward-pointing note
+at the head. History deliberately not rewritten — the decision recorded here
+was correct and its requirement survives; only the mechanism moved.

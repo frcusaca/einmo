@@ -109,16 +109,48 @@ Binaries after release: `target/release/einmo` and `target/release/cargo-einmo`.
 
 ## Clarifications
 
-* A test case moves through three **stages** as it's validated and
-  reviewed: **the output stage**, **the checked stage**, and **the
-  verified stage** (backed by the `output/`, `checked/`, and `verified/`
-  directories respectively). Each stage also carries its own nested
-  `flagged/` sink for artifacts pulled out of that stage's ordinary flow
-  pending reviewer action (`output/flagged/`, `checked/flagged/`,
-  `verified/flagged/` — not a top-level `flagged/`, and not a fourth
-  stage). Never directly edit any `.einmo` artifact in any of these
-  directories by hand — they are signed envelopes; go through the `einmo`
-  CLI (`einmo promote`, `einmo flag`) so the stamp chain stays valid.
+* A test case moves through four **stages** as it's validated and
+  reviewed: **the generation stage**, **the output stage**, **the checked
+  stage**, and **the verified stage** (backed by the `generated/`,
+  `output/`, `checked/`, and `verified/` directories respectively). Each
+  stage also carries its own nested `flagged/` sink for artifacts pulled
+  out of that stage's ordinary flow pending reviewer action
+  (`generated/flagged/`, `output/flagged/`, … — not a top-level
+  `flagged/`, and not a stage of its own). Never directly edit any
+  `.einmo` artifact in any of these directories by hand — they are signed
+  envelopes; go through the `einmo` CLI (`einmo promote`, `einmo flag`)
+  so the stamp chain stays valid.
+
+* **`generated/` is the work file and is gitignored.** `einmo generate`
+  writes it; nothing else does. It is the one stage that is not committed,
+  and it exists to be compared against `output/`.
+
+  **This is how you inspect results without disturbing anything.** Finished
+  a change and want to see what it produced? Run `einmo generate <suite>
+  --command <evaluator>`, then read the results with `einmo compare
+  generated output <suite>`, `einmo show`, or `einmo body`. Nothing a
+  reviewer has signed moves. Only then decide whether to accept them.
+
+* **The three promotions make deliberately different claims.** Do not
+  blur them:
+
+  | Promotion | The claim you are making |
+  |---|---|
+  | `generated to output` | it ran, and the output looks **reasonable** — a sanity check, explicitly NOT a semantic or stylistic review |
+  | `output to checked` | the results are **correct** against the specification, justified statement by statement |
+  | `checked to verified` | a human **attests** to them under their own key |
+
+  `generated to output` is the weakest by design: it is the moment a
+  behavior change is consciously accepted as the new baseline, and nothing
+  more. An agent may perform it, and may perform `output to checked` after
+  a real review. **`checked to verified` is not an agent's to give** — it
+  needs a human passphrase, and einmo detects a computer key used there.
+
+* **Each gate checks one link only.** `--level output` compares
+  `generated ↔ output` (and requires `--command`, since it generates
+  first); `--level checked` compares `output ↔ checked`; `--level
+  verified` compares `checked ↔ verified`. No gate re-checks another
+  gate's link, so a red gate names what actually broke.
 
 ## Documentation
 
@@ -162,6 +194,19 @@ instructions to your self. Dump code snippets in code fences if code or pseudo c
 is more clear.
 
 ## Last Updated
+
+**Date**: 2026-08-13
+**Updated By**: Claude Code (Opus 5)
+**Changes**: EIMP-01 — §Clarifications rewritten for the **four**-stage model.
+`generated/` documented as the gitignored work file and, more importantly, as
+**how an agent inspects results without disturbing anything a reviewer has
+signed**: generate, read with `compare`/`show`/`body`, then decide. Added a
+table stating the three promotions' claims against each other so they cannot
+be blurred — `generated to output` is weak by design, `output to checked` is
+the real review, and `checked to verified` is explicitly **not an agent's to
+give** (it needs a human passphrase, and einmo detects a computer key used
+there). Added the one-link-per-gate rule, including that `--level output`
+requires `--command`.
 
 **Date**: 2026-08-13
 **Updated By**: Sisyphus (mimo-v2.5-pro)
