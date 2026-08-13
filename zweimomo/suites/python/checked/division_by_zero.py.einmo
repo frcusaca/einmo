@@ -1,0 +1,17 @@
+#einmo 1 encoding=utf-8 separator=①\n
+test: division_by_zero.py
+suite: zweimomo/suites/python
+producer: d785adc
+producer-diff: sha256:715e1310888ae004bc6737fce20fdca12f123785569837f3cd61db5ee57cb0de
+generated: 2026-08-09T19:37:14.000000000Z
+status: input-error
+status-detail: python error: ZeroDivisionError: division by zero
+sections: INPUT, OUTPUT, COMMENTS, STAMPS①
+10 // 0
+①
+INPUT ERROR: python error: ZeroDivisionError: division by zero①
+①
+{"key":"compiled","pubkey":"a5e456f9286268d2c0ab99878bfff84c7a24e14ad14bf51e696d2f5ddf37a6fa","signs":"pubkey:configured","signature":"aNqg5JP11ZPMotuOeo3+mRViOjJJb5QR1ppoMEK93peEbc3xOBz4V12CTF0iRZlvPeis9dshg+6O1xSCSomxDQ==","produced_by":"einmo 0.0.5 sha256:bca7ad0d3057cc3076219c59f85d4a2a6d21256eb0c6a13d4b01aecf73cee0f2","timestamp":"2026-08-09T19:37:15.000000000Z"}
+{"key":"configured","pubkey":"5b846599cda83acb9a67774f4d6970a396e0efb72cb508e544ef3c94c90e4853","signs":"pubkey:stage:output","signature":"M3aNLgUg1ksoQWATcmgfOA13Wg2dfPdQj+qQJj6msspFMVayFVyKGCiqyPLI9YLCbRh4lAel1MzjNQWBdmzhDw==","produced_by":"einmo 0.0.5 sha256:bca7ad0d3057cc3076219c59f85d4a2a6d21256eb0c6a13d4b01aecf73cee0f2","timestamp":"2026-08-09T19:37:15.000000000Z"}
+{"key":"stage:output","pubkey":"5b846599cda83acb9a67774f4d6970a396e0efb72cb508e544ef3c94c90e4853","signs":"prior-bytes","signature":"nG/+eMiQXofbCzgSNstaW8ozvEN1EBznEWJn2ncxKxvEISafF/sNKJXVl5zkf7nPhVEtVKR5U57ETeNNeQI5Dw==","produced_by":"einmo 0.0.5 sha256:bca7ad0d3057cc3076219c59f85d4a2a6d21256eb0c6a13d4b01aecf73cee0f2","timestamp":"2026-08-09T19:37:15.000000000Z"}
+{"key":"stage:checked","pubkey":"5b846599cda83acb9a67774f4d6970a396e0efb72cb508e544ef3c94c90e4853","signs":"prior-bytes","signature":"zWMYZQlzH3nGMaciYizV2CnlXFfr40R/uaeBbZFWyy9WTYhz0zGgItgTwGn8TgK7y3ad3g0of+JqW/N8QD5KCg==","produced_by":"einmo 0.0.5 sha256:e9ef6456f6ded688df24353cc5fb8afbe1ef7d6f355faa532a03d7402789f3cf","timestamp":"2026-08-13T11:08:52.000000000Z"}
