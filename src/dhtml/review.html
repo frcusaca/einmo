@@ -1,4 +1,21 @@
 <!DOCTYPE html>
+<!--
+  KNOWINGLY STALE, NOT OVERLOOKED.
+
+  EIMP-01 added a fourth stage (`generated/`), and this page still shows the
+  three-pane input/output/checked/verified view. That is deliberate: the dhtml
+  frontend is BACKBURNERED for the jia-sprint (EIMP-1.md S.9,
+  EIMP-1.plan.md Phase E), whose scope is the library, its tests, CLI
+  promotion, the server, and the TUI client. The page keeps working exactly as
+  it shipped on 2026-07-31; it simply does not know about the new stage.
+
+  Nothing here is broken. `generated/` is visible-but-not-actionable in the
+  review model (EIMP-01.md S.1) — it is not decidable and not retractable — so
+  a frontend that omits it shows a correct, if incomplete, picture.
+
+  To revive: remove the backburner marker in EIMP-1.plan.md Phase E, then add
+  the generated pane and delete this comment.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">

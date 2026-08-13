@@ -468,32 +468,104 @@ what it enumerates. **The dhtml frontend is backburnered** (`EIMP-1.md` §S.9,
 promotion, server, and TUI. The 4-pane page is therefore **knowingly left
 stale** by this phase; that is a recorded decision, not an oversight.
 
-- [ ] Read §S.0 and §S.1 of EIMP-01.md, and `EIMP-1.md` §S.2–§S.7
-- [ ] Inventory every place the review surface enumerates stages —
+- [x] Read §S.0 and §S.1 of EIMP-01.md, and `EIMP-1.md` §S.2–§S.7
+      (2026-08-12 11:14)
+- [x] Inventory every place the review surface enumerates stages —
       `src/review.rs` (`EinmoReview`, `ReviewMode`, worklist construction),
       `src/review_server.rs` (stage path params, body/diff endpoints),
       `src/case.rs` (`EinmoCase::stages`). List them in this plan before
       changing any, so the blast radius is written down rather than
       discovered.
-- [ ] Decide and record: **does `generated/` appear in the review worklist?**
-      This is EIMP-01.md's one Open Question. Arguments both ways: it is a
-      full stage with signed artifacts and `einmo compare generated output`
-      is exactly a review activity; but a reviewer promoting `output →
-      checked` has no business in an uncommitted work file. Record the
-      answer in EIMP-01.md §S.1 and remove it from §Open Questions.
-- [ ] Write the tests first for whichever answer was chosen — the worklist
+      (2026-08-12 11:15)
+      **The blast radius is nil**, which is the finding. The enumeration sites:
+      `case.rs` `stages()` iterates `Stage::ALL` (absorbs the fourth stage
+      correctly); `review.rs:550` scopes the worklist predicate to
+      `&[Stage::Output, Stage::Checked]` explicitly; `review.rs:1174` maps a
+      decision target to its source stages (`Checked → [Output]`,
+      `Verified → [Checked, Output]`) and needs nothing new because
+      `generated` is not a decision target; `review_server.rs` enumerates
+      **nothing** — it takes `Path<Stage>` and lets `Stage::parse` decide.
+- [x] Decide and record: **does `generated/` appear in the review worklist?**
+      (2026-08-12 11:18)
+      **Resolved: visible, but not actionable.** Recorded in EIMP-01.md §S.9
+      and removed from §Open Questions — the design is now frozen.
+      The answer needed no decision; it follows from §S.1's choice to make
+      `generated` a real `Stage`. Visible because `EinmoCase::stages()` walks
+      `Stage::ALL`. Not driving the worklist because `ReviewItem::differing`
+      is scoped to `output ↔ checked` — a scoping that was `EIMP-1`'s P1 fix
+      (an unpopulated `verified/` was false-positiving every case), and a
+      fourth stage folded in would reintroduce exactly that defect. Not
+      decidable (`parse_decidable_stage`), not retractable (§S.6).
+      Worth noting against Rejected Alternative D: a non-`Stage` concept would
+      have forced this question to be answered explicitly in every surface.
+- [x] Write the tests first for whichever answer was chosen — the worklist
       contains (or excludes) `generated/`, and the server's stage endpoints
       accept (or `400` on) `generated`
-- [ ] Implement in `src/review.rs` and `src/review_server.rs`
-- [ ] TUI client (`scripts/einmo_review_client.sh`): confirm it still works
+      (2026-08-12 11:20)
+      `generated_is_visible_in_the_worklist_but_does_not_drive_it` pins BOTH
+      halves, because each can regress independently and in opposite
+      directions: dropping `generated` from the listing would hide it, and
+      folding it into `differing` would make every un-promoted case look like
+      it needs review. The server side is covered by
+      `retract_endpoint_400s_on_generated_stage` (Phase 5) — the endpoints
+      enumerate no stages of their own, so there is nothing else to assert.
+- [x] Implement in `src/review.rs` and `src/review_server.rs`
+      (2026-08-12 11:20)
+      No implementation needed beyond Phase 5's retraction fix — the resolved
+      behavior was already what the code did. Recorded as verified rather
+      than assumed.
+- [x] TUI client (`scripts/einmo_review_client.sh`): confirm it still works
       against the updated server. If it hard-codes the three stage names,
       update it; if it reads them from the server, confirm that path.
-- [ ] **Do not touch `src/dhtml/review.html`.** Leave the 4-pane page as it
+      (2026-08-12 11:22)
+      It hard-codes `for stage in output checked verified` (line 274) for its
+      panes, and that is **left as is, deliberately** — those three are the
+      review, and `generated` is not decidable. Checked the one place the
+      script consumes the stage LIST rather than a fixed set: line 346 derives
+      the default retract target with
+      `map(select(. == "checked" or . == "verified"))`, which already filters
+      to the two it means, so a fourth entry in `.stages[]` passes through
+      harmlessly.
+- [x] **Do not touch `src/dhtml/review.html`.** Leave the 4-pane page as it
       is. Add a one-line comment at its head naming the staleness and
       pointing at `EIMP-1.plan.md` §Phase E, so the next reader knows it is
       deliberate.
-- [ ] Run all tests — old and new — and make sure they all pass correctly
-- [ ] Commit
+      (2026-08-12 11:23)
+      Comment added, headed "KNOWINGLY STALE, NOT OVERLOOKED", stating why the
+      page is correct-if-incomplete (a visible-but-not-actionable stage) and
+      naming what to do on revival.
+- [x] **Caught by clippy: I silently disabled a test.** Recorded because the
+      failure mode is the one `EIMP-9` exists to catch, and because the test
+      run did not reveal it.
+      (2026-08-12 11:26)
+      Inserting the new test left a duplicated `#[test]` attribute, which
+      stole it from `items_reflects_suite_scan` — that function stopped being
+      a test. Only `clippy -D warnings` objected, via `duplicated_attributes`
+      and `dead_code`.
+      **The test count was 378 before the fix and 378 after it.** One test was
+      lost and the doubly-attributed one was registered twice, so the two
+      cancelled exactly. `cargo test` reported "378 passed, 0 failed" in both
+      states — a test that no longer exists cannot fail, and the number that
+      would have betrayed it did not move.
+      Two things follow. First: **a stable green test count is not evidence
+      that nothing was lost.** Comparing counts across a change catches only
+      the arithmetic that happens not to cancel. Second: clippy is
+      load-bearing here, not hygiene — it was the sole signal — so a phase is
+      not green until its exit code is 0.
+      My own reporting was wrong twice while diagnosing this: the check
+      printed "clippy ok" unconditionally (a `;` where `&&` belonged), and a
+      follow-up conditional was inverted and claimed findings where there were
+      none. I now read exit codes (`cmd; echo "exit=$?"`) rather than grepping
+      output, and I stated the count claim above only after verifying both
+      test names appear in `cargo test -- --list`.
+- [x] Run all tests — old and new — and make sure they all pass correctly
+      (2026-08-12 11:32)
+      **422 declared, 0 failed**: 378 lib + 31 review-server binary + 8
+      einmo-tools + 4 zweimomo + 1. `cargo fmt --check` exit 0;
+      `cargo clippy --workspace --all-targets -- -D warnings` exit 0 —
+      verified by exit code, not by grepping output.
+- [x] Commit
+      (2026-08-12 11:38)
 
 ---
 

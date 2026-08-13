@@ -1339,6 +1339,44 @@ mod tests {
             .unwrap();
     }
 
+    /// EIMP-01's one Open Question, resolved: `generated/` is **visible but
+    /// not actionable** in the review surface.
+    ///
+    /// Visible, because `EinmoCase::stages()` iterates `Stage::ALL` — a
+    /// reviewer can see whether a case has been regenerated. Not actionable,
+    /// because the worklist predicate (`differing`) stays scoped to
+    /// `output ↔ checked`, which is the promotion a reviewer is deciding
+    /// about. `generated` is likewise not decidable (`parse_decidable_stage`)
+    /// and not retractable (§S.6).
+    ///
+    /// Both halves are pinned here because each could regress independently:
+    /// dropping `generated` from the listing would hide it, and folding it
+    /// into `differing` would make every un-promoted case look like it needs
+    /// review — the same false-positive `EIMP-1`'s P1 fix removed for
+    /// `verified/`.
+    #[test]
+    fn generated_is_visible_in_the_worklist_but_does_not_drive_it() {
+        let tmp = seeded_suite();
+        promote_output_to_checked(tmp.path());
+        let review = EinmoReview::open(tmp.path());
+
+        let items = review.items().unwrap();
+        assert!(!items.is_empty());
+        for item in &items {
+            assert!(
+                item.stages.iter().any(|(s, _)| *s == Stage::Generated),
+                "generated/ must appear in a case's stage listing: {:?}",
+                item.stages
+            );
+            assert!(
+                !item.differing,
+                "output and checked agree, so nothing needs review — the \
+                 presence of a generated/ artifact must not change that: {:?}",
+                item.stages
+            );
+        }
+    }
+
     #[test]
     fn items_reflects_suite_scan() {
         let tmp = seeded_suite();

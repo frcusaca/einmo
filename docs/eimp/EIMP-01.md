@@ -103,7 +103,7 @@ promotion, which — unlike the old verb — signs.
 
 ### S.0 — Product specification
 
-**This section is normative.** It states what einmo does. S.1 through S.8
+**This section is normative.** It states what einmo does. S.1 through S.9
 state how the implementation changes to do it; where they appear to disagree
 with this section, this section governs and the later section is a defect.
 
@@ -235,7 +235,7 @@ a baseline correctly invalidates everything promoted from it.
 
 ---
 
-*S.1 through S.8 are the implementation: what changes in einmo's code to make
+*S.1 through S.9 are the implementation: what changes in einmo's code to make
 S.0 true. They add no product behavior S.0 does not state.*
 
 ### S.1 — `Stage::Generated`, a fourth stage uniform with the other three
@@ -538,6 +538,34 @@ this EIMP did not change what the evaluator produces. Any *section* difference
 observed during implementation is a bug introduced by the implementation, not a
 diff to promote.
 
+### S.9 — In the review surface, `generated/` is visible but not actionable
+
+**Resolved during Phase 6.** The answer required no decision in the end: it
+follows from S.1's choice to make `generated` a real `Stage`.
+
+- **Visible.** `EinmoCase::stages()` iterates `Stage::ALL`, so every review
+  item lists `generated/` alongside the other three. A reviewer can see
+  whether a case has been regenerated.
+- **Not part of the worklist predicate.** `ReviewItem::differing` stays scoped
+  to `output ↔ checked`, which is the promotion a reviewer is deciding about.
+  That scoping was `EIMP-1`'s P1 fix, made because an unpopulated `verified/`
+  was false-positiving every case as "differing"; a fourth stage would
+  reintroduce exactly that defect if folded in.
+- **Not decidable.** `parse_decidable_stage` refuses it: `promote generated to
+  output` is a CLI act, never a reviewer's decision.
+- **Not retractable.** §S.6.
+
+A stage can be inspectable without being decidable, which was already true of
+`output`. Both halves — present in the listing, absent from the predicate —
+are pinned by a test, because each could regress independently and in opposite
+directions.
+
+**The dhtml frontend is knowingly left stale**, showing the three committed
+stages only. It is backburnered for the jia-sprint (`EIMP-1.md` §S.9), and a
+frontend that omits a visible-but-not-actionable stage shows a correct, if
+incomplete, picture. The page carries a comment saying so, and naming what to
+do when it is revived.
+
 ## Test Plan
 
 - **`src/stage.rs`** — `Stage::ALL` has four entries in lifecycle order;
@@ -633,21 +661,11 @@ point of S.2 — without being separately *gated on*.
 
 ## Open Questions
 
-- **Does `generated/` appear in the review worklist?** S.1 makes it a peer
-  stage, so it appears by default. Against: a reviewer promoting
-  `output → checked` has no business in an uncommitted work file. For: it is a
-  full stage with signed artifacts, and `einmo compare generated output` is
-  exactly a review activity.
+None. The design is frozen.
 
-  **Scheduled for resolution in `EIMP-01.plan.md` §Phase 6**, before that
-  phase's implementation and recorded back into §S.1. It is deliberately left
-  open while `status: Implementing`, contrary to the usual "design frozen"
-  rule, because **it does not block Phases 1–5**: the stage enum, the
-  generation phase, the CLI verb, the gates, and the promotion rules are all
-  settled and none of them depend on the answer. Freezing it early would mean
-  guessing at a review-surface question best answered with the review surface
-  in front of us. The dhtml frontend is out of scope either way
-  (`EIMP-1.md` §S.9, backburnered).
+*(Resolved 2026-08-12: "does `generated/` appear in the review worklist?" —
+answered in §S.9 below. It was deliberately held open through Phases 1–5,
+which did not depend on it.)
 
 ## References
 
