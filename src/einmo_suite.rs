@@ -2508,6 +2508,178 @@ mod tests {
         );
     }
 
+    /// **The EIMP-01 comprehensive test.** One case walked through the entire
+    /// four-stage chain, in the order a real user meets it, asserting the
+    /// *whole* model rather than any one rule:
+    ///
+    ///   generate → output gate RED (no baseline) → promote → GREEN
+    ///   → checked gate RED (unreviewed) → promote → GREEN
+    ///   → change the code → output gate RED naming the section, while
+    ///     generation itself still succeeds and the baseline stays untouched
+    ///   → promote → output GREEN but checked RED (the baseline moved past
+    ///     the review) → promote → GREEN
+    ///   → attest → verified GREEN
+    ///   → retract the baseline → checked and verified cascade away, and
+    ///     `generated/` survives because it is not retractable
+    ///
+    /// Every step is a claim some earlier test makes in isolation; the value
+    /// here is the ORDER, and the transitions between states. Three things in
+    /// particular are only observable end to end:
+    ///
+    ///   - a gate going red *without* the stage beneath it moving (step 7),
+    ///     which is the non-cumulative property doing real work;
+    ///   - the gate reporting without repairing (step 6);
+    ///   - the retraction cascade reaching two stages it did not name.
+    #[test]
+    fn eimp01_comprehensive_the_whole_chain() {
+        let (_tmp, suite0) = suite();
+        let config = suite0.config().clone();
+        let runner = EinmoTestRunner::new(config.clone());
+        std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
+
+        let gate = |level: ValidationLevel| {
+            check_suite_integrity(
+                &config.clone().with_validation_level(level),
+                FailurePolicy::FailAtEnd,
+            )
+            .unwrap()
+        };
+        let stage_path = |stage: Stage| config.stage_dir(stage).join("a.foo.einmo");
+
+        // ---- 1. Generate. Nothing committed exists yet.
+        runner.evaluate_all(&Echo).unwrap();
+        assert!(stage_path(Stage::Generated).is_file());
+        assert!(!stage_path(Stage::Output).exists());
+
+        // ---- 2. The output gate is RED: there is no baseline to affirm.
+        assert!(
+            !gate(ValidationLevel::Output).is_clean(),
+            "a suite with no baseline cannot pass the output gate"
+        );
+
+        // ---- 3. Accepting the results is what makes it gateable.
+        promote_generated_to_output(&config);
+        assert!(
+            gate(ValidationLevel::Output).is_clean(),
+            "{:?}",
+            gate(ValidationLevel::Output).problems
+        );
+
+        // ---- 4/5. Same shape, one link along: unreviewed, then reviewed.
+        assert!(!gate(ValidationLevel::Checked).is_clean());
+        promote(&config, Stage::Output, Stage::Checked);
+        assert!(gate(ValidationLevel::Checked).is_clean());
+
+        // ---- 6. The code changes. Generation does NOT fail — it is
+        // indifferent to the baseline — and the gate is what objects.
+        std::fs::write(config.input_path().join("a.foo"), "{6;}").unwrap();
+        let results = runner.evaluate_all(&Echo).unwrap();
+        assert!(
+            results
+                .files
+                .iter()
+                .all(|f| f.written_and_verified || f.ignored),
+            "generation must succeed on a changed result: {:?}",
+            results.files
+        );
+
+        let red = gate(ValidationLevel::Output);
+        assert!(
+            red.problems.iter().any(|p| matches!(
+                p,
+                Problem::SectionDifference {
+                    left: Stage::Generated,
+                    right: Stage::Output,
+                    ..
+                }
+            )),
+            "the output gate must name the divergence: {:?}",
+            red.problems
+        );
+        // The gate REPORTS; it does not repair.
+        assert_eq!(
+            EinmoFile::from_file(&stage_path(Stage::Output))
+                .unwrap()
+                .section("OUTPUT")
+                .unwrap()
+                .body(),
+            "{5;}",
+            "a red gate must leave the baseline untouched"
+        );
+        // And the review link is still intact — nothing about `checked`
+        // changed, so its gate says so.
+        assert!(
+            gate(ValidationLevel::Checked).is_clean(),
+            "the checked gate must not go red merely because generation moved"
+        );
+
+        // ---- 7. Accept the new baseline. Now `output` is green and
+        // `checked` is RED — the baseline has moved past what was reviewed.
+        // This pair of facts is the non-cumulative property doing real work:
+        // under the old escalating levels, `checked` could never be red while
+        // `output` was green for THIS reason, because `checked` re-ran
+        // everything `output` did and would have reported both at once.
+        promote_generated_to_output(&config);
+        assert!(gate(ValidationLevel::Output).is_clean());
+        assert!(
+            !gate(ValidationLevel::Checked).is_clean(),
+            "accepting a new baseline must invalidate the older review"
+        );
+
+        promote(&config, Stage::Output, Stage::Checked);
+        assert!(gate(ValidationLevel::Checked).is_clean());
+
+        // ---- 8. Attest. `promote` uses a human-looking passphrase for
+        // `verified`, because the empty one derives the computer key that V7
+        // exists to catch.
+        assert!(!gate(ValidationLevel::Verified).is_clean());
+        promote(&config, Stage::Checked, Stage::Verified);
+        assert!(
+            gate(ValidationLevel::Verified).is_clean(),
+            "{:?}",
+            gate(ValidationLevel::Verified).problems
+        );
+
+        // ---- 9. Withdraw the baseline. Everything promoted from it must go
+        // with it, or a reviewed stage would be left attesting to bytes that
+        // no longer exist.
+        let report = crate::suite::EinmoSuite::scan(
+            crate::storage::EinmoDirectory::new(config.clone()),
+            None,
+        )
+        .unwrap()
+        .retract(Stage::Output, None, None)
+        .unwrap();
+        let mut retracted: Vec<Stage> = report.retracted.iter().map(|(s, _)| *s).collect();
+        retracted.sort();
+        assert_eq!(
+            retracted,
+            vec![Stage::Output, Stage::Checked, Stage::Verified],
+            "retracting the baseline must cascade through everything promoted \
+             from it, including the two stages the caller did not name"
+        );
+        for stage in [Stage::Output, Stage::Checked, Stage::Verified] {
+            assert!(!stage_path(stage).exists(), "{stage} must be gone");
+        }
+
+        // ---- 10. `generated/` survives: it is not retractable, because it is
+        // rebuilt every run. The work file outlives the baseline built from it.
+        assert!(
+            stage_path(Stage::Generated).is_file(),
+            "the work file must survive a retraction of the baseline"
+        );
+        assert!(
+            crate::suite::EinmoSuite::scan(
+                crate::storage::EinmoDirectory::new(config.clone()),
+                None,
+            )
+            .unwrap()
+            .retract(Stage::Generated, None, None)
+            .is_err(),
+            "generated/ must refuse retraction"
+        );
+    }
+
     /// The levels no longer escalate (EIMP-01 §S.4): each names exactly one
     /// adjacent pair, and no level re-checks another level's pair.
     #[test]

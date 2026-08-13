@@ -811,13 +811,43 @@ this EIMP works.
 
 ## Phase 10 — Comprehensive test and completion
 
-- [ ] Write and verify the EIMP-01 comprehensive test — one test walking the
+- [x] Write and verify the EIMP-01 comprehensive test — one test walking the
       whole chain (§Test Plan): generate → inspect → promote to output → gate
       green → mutate the evaluator → gate red naming the section → promote →
       green again → promote to checked → retract output → checked and verified
       cascade away
-- [ ] All tests pass: `cargo test`, `cargo clippy --all-targets -- -D warnings`,
+      (2026-08-13 05:35)
+      `eimp01_comprehensive_the_whole_chain` — ten steps, in the order a real
+      user meets them. Every step is a claim some earlier test makes in
+      isolation; the value is the **order** and the transitions. Three things
+      are only observable end to end and are asserted nowhere else:
+      1. **A gate goes red without the stage beneath it moving.** After
+         accepting a new baseline, `output` is green and `checked` is red —
+         the baseline moved past the review. Under the old escalating levels
+         this exact pairing was impossible, because `checked` re-ran
+         everything `output` did and would have reported both at once. This is
+         the non-cumulative property doing real work rather than being
+         asserted about.
+      2. **The gate reports without repairing.** While red, the committed
+         baseline still reads `{5;}`; it reads `{6;}` only after an explicit
+         promotion.
+      3. **The retraction cascade reaches two stages the caller did not
+         name**, and `generated/` survives — the work file outlives the
+         baseline built from it, and still refuses retraction.
+      **Verified the test can fail.** A green test proves nothing until it has
+      been seen to fail, so two critical assertions were mutated and each was
+      confirmed to break the test: the cascade expectation (three stages → one)
+      and the report-without-repair expectation (`{5;}` → `{6;}`). Both
+      detected; both reverted and re-verified. Done because this test's whole
+      job is to fail when the chain breaks, and a comprehensive test that
+      cannot fail is the exact defect `EIMP-9` exists to catch.
+- [x] All tests pass: `cargo test`, `cargo clippy --all-targets -- -D warnings`,
       `cargo fmt --check`
+      (2026-08-13 05:10)
+      **424 declared, 0 failed**: 379 lib + 31 review-server binary + 8
+      einmo-tools + 5 zweimomo + 1. `cargo fmt --check` exit 0;
+      `cargo clippy --workspace --all-targets -- -D warnings` exit 0.
+      Growth across the EIMP: 401 (Phase 0 baseline) → 424.
 - [ ] Report ALL accumulated doubts to the human in ONE statement — or record
       "no doubts". Blocking doubts stop here.
 - [ ] STOP! ASK HUMAN to review before marking complete. Present the
