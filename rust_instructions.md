@@ -1154,6 +1154,15 @@ metric; behavioral coverage is — one `parallel_and_serial_agree` or
 `illegal_transition_refused` outweighs a dozen granular roundtrip variants, and
 a test asserting a stub's empty result pins the absence of a feature. *(c25)*
 
+**Within a phase, run the sub-section's subset frequently.** Every plan sub-section (and every
+undivided phase) starts with an "Establish relevant tests" checkbox naming its SMALL test
+subset — the old unit tests the work must not break, plus the new tests as they are written.
+During development, run that subset after each increment and analyze the results before moving
+on; when the sub-section completes, run the full gate (`just`) even if the phase boundary
+comes later. The command forms for selecting specific tests live in `README.md` §"Running
+specific tests" (the central reference); the discipline lives in `eimp.md` §"Sub-Section
+Test Subsets".
+
 ### Final rule
 When uncertain, choose the design that is easiest to prove correct, easiest to
 test, and easiest for the next human to understand. Correctness first, then
@@ -1214,6 +1223,17 @@ AI-generated code is human-verified before submission. *(c23, c24)*
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-13
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Added the **within-phase sub-section subset paragraph** to §7 "Testing":
+every plan sub-section starts with an "Establish relevant tests" checkbox naming its
+small test subset (old unit tests the work must not break, plus new tests as written);
+the subset runs frequently during development, the full `just` gate runs when the
+sub-section completes — not only at the phase boundary. Command forms for selecting
+specific tests are centralized in `README.md` §"Running specific tests"; the discipline
+is defined in `eimp.md` §"Sub-Section Test Subsets" (both EIMP skills carry the matching
+rule/invariant).
 
 **Date**: 2026-08-01 (2)
 **Updated By**: Claude Code (Opus 5)

@@ -155,6 +155,9 @@ ordered list of checkbox tasks. Build the plan so that:
 - Once work begins on an EIMP, updates to the `docs/eimp/` folder track the
   same commits as the implementation — there is no separate worktree stage
   to gate them (see "Plan execution" below).
+- Every sub-section (and every phase that is not subdivided) STARTS with the
+  "Establish relevant tests" checkbox naming that sub-section's test subset
+  (see "Sub-Section Test Subsets" below).
 
 ### Checkbox Format
 
@@ -224,6 +227,35 @@ When asking a human questions, always remind them: "Above message comes
 from EIMP-<NUMBER> working to ...brief description...; changes are on
 `jia`. PTAL"
 
+### Sub-Section Test Subsets (frequent-run discipline)
+
+Every sub-section of the plan — and every phase that is not subdivided — **starts** with one
+checkbox that establishes the SMALL set of tests relevant to that sub-section: the old unit
+tests its work must not break, plus the new tests written for it. The checkbox names the
+tests and links to the central test-running documentation; the planner fills in REAL test
+names (expand every placeholder, same rule as other plan variables):
+
+```markdown
+- [ ] Establish relevant tests for this sub-section. Use [these instructions](../../README.md#running-specific-tests) to run: <test_name_1>, <test_name_2>, <module>::<test_a>.
+```
+
+The list is alive: as the sub-section writes new tests, each one is added to its checkbox's
+list.
+
+**During development** the implementer runs this subset frequently — after each feature
+increment and each time a new test lands — and analyzes the results before moving on. **When
+the sub-section is complete**, ALL tests run (`just` — the full gate) — do not wait for the
+phase boundary if the sub-section ends earlier.
+
+**Run tests through subagents whenever the environment provides them.** Parallel subagent test
+runs are the agent equivalent of a human opening several terminals: launch the test subset as
+a separate subagent task, keep implementing, and collect the results. Do not serialize long
+test runs behind typing when a subagent could be running them.
+
+The command forms live ONLY in `README.md` §"Running specific tests" — the plan names TESTS,
+the central document owns the COMMANDS. When the test tooling evolves, only that README
+section changes; existing plans keep working because they reference tests by name.
+
 ### Sub-Tasks
 
 If a task proves larger than expected and splits into multiple sub-tasks,
@@ -263,6 +295,18 @@ approval-test corpus in this repository the way there is in Foolish.
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-13
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Added **§"Sub-Section Test Subsets (frequent-run discipline)"** under Plan Files:
+every plan sub-section (and every undivided phase) STARTS with an "Establish relevant tests"
+checkbox naming the sub-section's small test subset — old unit tests the work must not break,
+plus new tests as they are written — and linking to the central test-running reference
+(`README.md` §"Running specific tests"). The subset runs frequently during development; when
+the sub-section completes, ALL tests run. Implementers run tests through subagents in parallel
+where available (the agent equivalent of several terminals). Plans name TESTS; the command
+forms live only in the README section, so tooling evolution touches one place. Added the
+matching bullet to "Constructing the Plan"; both EIMP skills updated to match.
 
 **Date**: 2026-07-31
 **Updated By**: Sisyphus (mimo-v2.5-pro)

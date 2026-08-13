@@ -1,6 +1,6 @@
 ---
 name: eimp-write-plan
-description: "MUST USE when CREATING or PLANNING an EIMP (Einmo Improvement Process) — writing the specification file (EIMP-#.md) and the plan file (EIMP-#.plan.md). Covers: what an EIMP is, the two-file system (spec + plan), little-endian numbering (EIMP-1→EIMP-9→EIMP-01→EIMP-11→EIMP-21...), the EIMP-0 pinned meta-document, the eimp_check.py helper script (check/get_last/gen_next/list), naming convention (dash in filenames, space in prose), the spec template (frontmatter fields eimp/title/status/begun, body sections Abstract/Motivation/Specification/Test Plan/Rejected Alternatives/Open Questions/References), the D-prefix sort-key rule, plan construction rules (ordered/concrete/trackable, sub-tasks, variable expansion), checkbox format (timestamp on next indented line), sub-task splitting, comprehensive test placement, and the minimal plan skeleton. Gives exact copy-pasteable commands with <NUMBER> and <SHORT_DESCRIPTION> placeholders. Triggers: 'create eimp', 'new eimp', 'write eimp', 'eimp spec', 'eimp plan', 'eimp template', 'eimp numbering', 'eimp frontmatter', 'eimp_check gen_next', 'plan an eimp', 'eimp comprehensive test'."
+description: "MUST USE when CREATING or PLANNING an EIMP (Einmo Improvement Process) — writing the specification file (EIMP-#.md) and the plan file (EIMP-#.plan.md). Covers: what an EIMP is, the two-file system (spec + plan), little-endian numbering (EIMP-1→EIMP-9→EIMP-01→EIMP-11→EIMP-21...), the EIMP-0 pinned meta-document, the eimp_check.py helper script (check/get_last/gen_next/list), naming convention (dash in filenames, space in prose), the spec template (frontmatter fields eimp/title/status/begun, body sections Abstract/Motivation/Specification/Test Plan/Rejected Alternatives/Open Questions/References), the D-prefix sort-key rule, plan construction rules (ordered/concrete/trackable, sub-tasks, variable expansion, per-sub-section test subsets — the 'Establish relevant tests' checkbox linking to README §Running specific tests), checkbox format (timestamp on next indented line), sub-task splitting, comprehensive test placement, and the minimal plan skeleton. Gives exact copy-pasteable commands with <NUMBER> and <SHORT_DESCRIPTION> placeholders. Triggers: 'create eimp', 'new eimp', 'write eimp', 'eimp spec', 'eimp plan', 'eimp template', 'eimp numbering', 'eimp frontmatter', 'eimp_check gen_next', 'plan an eimp', 'eimp comprehensive test', 'eimp test subset', 'establish relevant tests'."
 ---
 
 # EIMP — Writing and Planning
@@ -233,6 +233,11 @@ Build the plan so that:
 5. If the spec has research/experimentation (web search, historic docs, prototyping), those should be **clearly documented in the EIMP file**, and the plan steps shall, where needed, contain **section or sub-section header pointers** into the EIMP file. A large todo with sub-tasks may have several "read section X of EIMP-<NUMBER>.md" as its first few checkboxes.
 6. **Sanity-check sub-tasks** may be installed where ambiguity exists — e.g. "[ ] sub-agent please consult with primary agent or human regarding the current approach to..." These can be installed or removed by the planning agent as specification, clarification, design, and planning progresses.
 7. **Commit regularly as work proceeds** — do not batch all work into a single commit at the end.
+8. **Every sub-section (and every undivided phase) starts with the "Establish relevant tests" checkbox** — the small test subset for that sub-section: the old unit tests its work must not break, plus the new tests written for it. The checkbox names the REAL tests (expand every placeholder) and links to `README.md` §"Running specific tests", the central command reference. The plan names TESTS, never command forms — so tooling evolution touches only the README section:
+    ```
+    - [ ] Establish relevant tests for this sub-section. Use [these instructions](../../README.md#running-specific-tests) to run: <test_name_1>, <test_name_2>, <module>::<test_a>.
+    ```
+    The implementer runs this subset frequently while the sub-section is developed (after each increment, each new test — adding each new test to the list), and runs ALL tests when the sub-section completes (the full `just` gate). Test invocations should go through subagents in parallel where available — the agent equivalent of a human opening several terminals.
 
 ### No Worktree Stage
 
@@ -284,6 +289,7 @@ Every EIMP has the right — and the obligation — to generate a **comprehensiv
 - [ ] Begin work: commit EIMP-<NUMBER>.md and EIMP-<NUMBER>.plan.md, check `begun: [x]` in frontmatter
       (YYYY-MM-DD HH:MM)
 - [ ] (read §<SECTION> of EIMP-<NUMBER>.md)
+- [ ] Establish relevant tests for this phase. Use [these instructions](../../README.md#running-specific-tests) to run: <test_name_1>, <test_name_2>, <module>::<test_a>. Run this subset frequently while implementing; add new tests to this list as they are written.
 - [ ] Write the tests first
 - [ ] <implementation task 1>
 - [ ] <implementation task 2>
@@ -320,3 +326,20 @@ $EDITOR docs/eimp/EIMP-<NUMBER>.plan.md             # write from spec, expand al
 4. **No worktree/branch checkboxes.** EIMP plans execute directly on `jia`.
 5. **Never start substantive work when tests are broken.** Fix first.
 6. **Never commit from inside this skill** unless the user explicitly asks.
+7. **Every sub-section (and undivided phase) starts with the "Establish relevant tests" checkbox** — the small subset of old + new unit tests, named by test, linking to `README.md` §"Running specific tests". The subset runs frequently during the sub-section; ALL tests run when it completes. Plans name tests, never command forms — the commands live only in the README section.
+
+---
+
+## Last Updated
+
+**Date**: 2026-08-13
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Added **plan-construction rule 8**, **safety invariant 7**, and the skeleton
+checkbox for **per-sub-section test subsets**: every sub-section (and every undivided phase)
+starts with an "Establish relevant tests" checkbox naming the sub-section's small test subset
+— old unit tests the work must not break, plus new tests as they are written — linking to the
+central command reference (`README.md` §"Running specific tests"). The subset runs frequently
+during development; ALL tests run when the sub-section completes; test invocations go through
+subagents in parallel where available. Plans name TESTS, never command forms, so tooling
+evolution touches only the README section. Mirrors the new §"Sub-Section Test Subsets" in
+`eimp.md`; execution-side guidance lives in the `eimp-use-maintain` skill.

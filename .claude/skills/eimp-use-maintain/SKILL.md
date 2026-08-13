@@ -1,6 +1,6 @@
 ---
 name: eimp-use-maintain
-description: "MUST USE when FINDING, EXECUTING, UPDATING, BACKBURNERING, or CANCELLING existing EIMPs (Einmo Improvement Process). Covers: listing/finding EIMPs in chronological order (little-endian ls|rev|sort -V|rev, eimp_check.py list/get_last/check), the EIMP-0 pinned meta-document, the two-file system (must read both spec and plan before executing), status lifecycle (Draft→Brewing→Final→Implementing→complete), plan execution flow (begin→work-on-jia→commit-regularly→mark-complete), checkbox lifecycle (completing with timestamp, backburnering with [x] backburnered, cancelling with [x] Canceled + [-] per-item), sub-task execution patterns (parent not checked until children done), comprehensive test verification via cargo test, human communication protocol (PTAL reminder with EIMP number), and safety invariants. Gives exact copy-pasteable commands with <NUMBER> and <SHORT_DESCRIPTION> placeholders. Triggers: 'find eimp', 'list eimp', 'execute eimp', 'eimp status', 'eimp execution', 'check eimp checkbox', 'backburner eimp', 'cancel eimp', 'deprecate eimp', 'eimp begun', 'eimp progress', 'resume eimp'."
+description: "MUST USE when FINDING, EXECUTING, UPDATING, BACKBURNERING, or CANCELLING existing EIMPs (Einmo Improvement Process). Covers: listing/finding EIMPs in chronological order (little-endian ls|rev|sort -V|rev, eimp_check.py list/get_last/check), the EIMP-0 pinned meta-document, the two-file system (must read both spec and plan before executing), status lifecycle (Draft→Brewing→Final→Implementing→complete), plan execution flow (begin→work-on-jia→commit-regularly→mark-complete), checkbox lifecycle (completing with timestamp, backburnering with [x] backburnered, cancelling with [x] Canceled + [-] per-item), sub-task execution patterns (parent not checked until children done), per-sub-section test subsets (the 'Establish relevant tests' checkbox, running subset frequently, full gate at sub-section end), comprehensive test verification via cargo test, human communication protocol (PTAL reminder with EIMP number), and safety invariants. Gives exact copy-pasteable commands with <NUMBER> and <SHORT_DESCRIPTION> placeholders. Triggers: 'find eimp', 'list eimp', 'execute eimp', 'eimp status', 'eimp execution', 'check eimp checkbox', 'backburner eimp', 'cancel eimp', 'deprecate eimp', 'eimp begun', 'eimp progress', 'resume eimp', 'eimp test subset', 'run test subset'."
 ---
 
 # EIMP — Using and Maintaining
@@ -164,6 +164,29 @@ Always remind them of context:
 
 > Above message comes from EIMP-<NUMBER> working to <brief description>; changes are on `jia`. PTAL
 
+### Running the sub-section test subset
+
+Each sub-section (or undivided phase) starts with an **"Establish relevant tests"** checkbox
+naming the sub-section's test subset and linking to `README.md` §"Running specific tests".
+When you reach it:
+
+1. Follow the linked README section to build the run commands for the NAMED tests (name
+   filters via `just test <filter>`, crate scoping with `-p`).
+2. Run the subset FREQUENTLY while implementing the sub-section — after each feature increment
+   and each time a new test lands — and analyze the results before moving on. Add each new
+   test to the subset's list as it is written.
+3. When the sub-section is complete, run ALL tests (`just` — the full gate including fmt +
+   lint + test) — even if the phase test-gate checkbox comes later.
+
+**Use subagents for test runs whenever the environment provides them** — launch the test
+subset as a parallel subagent task, keep implementing, and collect the results. This is the
+agent equivalent of a human opening several terminals; do not serialize long test runs behind
+typing.
+
+Older plans (pre-2026-08-13) lack the "Establish relevant tests" checkbox. When executing
+one, derive the subset yourself from the sub-section's feature and its Test Plan, and apply
+the same discipline.
+
 ---
 
 ## Task: Checkbox Lifecycle
@@ -296,3 +319,19 @@ cargo fmt --check
 7. **Cancelled plans** have `[x] Canceled` at top + `[-]` on every todo item.
 8. **Never start substantive work when tests are broken.** Fix first.
 9. **Never commit from inside this skill** unless the user explicitly asks.
+10. **Run the sub-section test subset frequently.** Each sub-section's "Establish relevant tests" checkbox names a small test subset; run it after each increment, add new tests as they land, and run ALL tests (`just`) when the sub-section completes. Derive the subset yourself for older plans that lack the checkbox.
+
+---
+
+## Last Updated
+
+**Date**: 2026-08-13
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Added **§"Running the sub-section test subset"** under Task: Execute an EIMP Plan:
+each sub-section's "Establish relevant tests" checkbox (installed by the `eimp-write-plan`
+skill per its rule 8) names the sub-section's small test subset and links to `README.md`
+§"Running specific tests"; the implementer builds the commands from that central reference,
+runs the subset frequently during the sub-section, runs ALL tests when the sub-section
+completes, and runs tests through parallel subagents where available (the agent equivalent of
+several terminals). Includes the fallback for pre-2026-08-13 plans that lack the checkbox.
+Added **safety invariant 10**. Mirrors the new §"Sub-Section Test Subsets" in `eimp.md`.

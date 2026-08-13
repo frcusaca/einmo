@@ -431,6 +431,66 @@ For setup instructions, `just` recipes, the toolchain pin rationale, and
 troubleshooting, see the **Developer Guide** section in
 [`rust_instructions.md`](rust_instructions.md).
 
+## Running specific tests
+
+**The central reference for running ONE test or a SUBSET of tests** — the
+fast-iteration loop while developing a feature. EIMP plan checkboxes link here
+and name their tests; the command forms live ONLY in this section, so when the
+tooling changes, this one section is what gets updated.
+
+A subset run is a development-loop ANALYSIS tool — it never replaces the full
+suite. At every sub-section and phase boundary, the canonical judgment is:
+
+```bash
+just                                     # fmt + lint + full suite (~6 min)
+just test                                # all tests only
+```
+
+### Select by name filter
+
+`just test <filter>` (and underlying `cargo nextest run`) selects tests by
+name substring. nextest runs each test in its own process — no mutex-poison
+cascade across tests (see `rust_instructions.md` §"Things that will bite you").
+
+```bash
+# One test (every test whose name contains "verify"):
+just test verify
+
+# Several filters in ONE invocation — a test matching ANY filter runs:
+just test verify stamp roundtrip
+
+# Exact test name (no substring matching):
+just test -- --exact signature::stamp_chain::append_only_integrity
+
+# Discover test names to filter on:
+just test -- --list promotion
+```
+
+### Scoping by crate or module
+
+einmo is a workspace with two crates (`einmo` and `zweimomo`). Scope to one
+crate when you don't need the full workspace:
+
+```bash
+just test -p einmo verify                  # only einmo crate tests matching "verify"
+just test -p zweimomo evaluator            # only zweimomo tests matching "evaluator"
+```
+
+### Combining filters with crate scope
+
+```bash
+# Batch — crate-scoped, several name filters (OR semantics):
+just test -p einmo promote flag retract
+```
+
+Note: subset runs never replace the full suite. At sub-section and phase
+boundaries, run `just` (the full gate) — not just the subset.
+
+If a subset run reveals a failure, that is broken code — fix it; do not ignore
+it because "the full suite might pass."
+
+---
+
 ## Quick Start
 
 ```rust
@@ -1492,6 +1552,15 @@ configuration.
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-13
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Added **§"Running specific tests"** — the CENTRAL reference for
+running one test or a subset of tests (what EIMP plan checkboxes link to):
+test selection by name filter (`just test <filter>`, single filter, multi-filter
+batch with OR semantics, `--exact`, `--list`), crate scoping (`-p einmo`), and
+combined crate+filter batch examples. Command forms live ONLY in this section;
+EIMP plans name tests, not commands — so tooling evolution touches one place.
 
 **Date**: 2026-08-11
 **Updated By**: Claude Code (Opus 5)

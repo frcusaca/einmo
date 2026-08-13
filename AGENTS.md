@@ -68,6 +68,13 @@ small enough that plans execute directly on `jia` with regular commits.
 - `eimp.md` at the repository root is the authoritative reference; if a
   skill and `eimp.md` appear to disagree, `eimp.md` wins.
 
+Plans install, at the start of every sub-section (and every undivided phase), an **"Establish
+relevant tests" checkbox** naming that sub-section's small test subset — the old unit tests
+its work must not break, plus new tests as they are written — with a link to
+`README.md` §"Running specific tests", the CENTRAL reference for running one test or a subset.
+The subset runs frequently during development; all tests run when the sub-section completes
+(see `eimp.md` §"Sub-Section Test Subsets").
+
 ## Skills
 
 | Skill | Scope | Load when… |
@@ -91,7 +98,12 @@ cargo build --release                            # Release build (LTO, stripped)
 cargo test                                        # All tests
 cargo clippy --all-targets -- -D warnings         # Lint gate
 cargo fmt --check                                 # Format gate
+just test verify                                 # Tests matching "verify" (fast inner loop)
+just test promote flag retract                    # Batch: tests matching ANY filter run
 ```
+
+See `README.md` §"Running specific tests" — the central reference for running ONE test or a
+SUBSET (name filters, `--exact`, `--list`, crate scoping with `-p`).
 
 Binaries after release: `target/release/einmo` and `target/release/cargo-einmo`.
 
@@ -150,6 +162,14 @@ instructions to your self. Dump code snippets in code fences if code or pseudo c
 is more clear.
 
 ## Last Updated
+
+**Date**: 2026-08-13
+**Updated By**: Sisyphus (mimo-v2.5-pro)
+**Changes**: Pointed the §Build Commands test sections at the new CENTRAL reference —
+`README.md` §"Running specific tests" (running one test or a subset: name filters,
+batch filters, `--exact`, `--list`, crate scoping). Added the batch-filter example
+to §Build Commands. Noted in §EIMP the per-sub-section "Establish relevant tests"
+checkbox discipline (`eimp.md` §"Sub-Section Test Subsets").
 
 **Date**: 2026-08-09
 **Updated By**: Sisyphus (mimo-v2.5-pro)
