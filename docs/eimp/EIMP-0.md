@@ -112,11 +112,13 @@ Body sections (use `##` headings, in this order):
 
 1. **Abstract** — one paragraph, what this EIMP proposes
 2. **Motivation** — why this matters; the problem being solved
-3. **Specification** — the design itself, in detail
-4. **Test Plan** — how this is verified; new unit/integration tests
-5. **Rejected Alternatives** — at least one; designs considered and not chosen
-6. **Open Questions** — known unknowns; what's left to decide
-7. **References** — links to prior EIMPs, external docs, prior art
+3. **Impact Overview** — document-wide Library User Experience, Integration,
+   Development, and Migration consequences
+4. **Specification** — the design itself, in detail
+5. **Test Plan** — how this is verified; new unit/integration tests
+6. **Rejected Alternatives** — at least one; designs considered and not chosen
+7. **Open Questions** — known unknowns; what's left to decide
+8. **References** — links to prior EIMPs, external docs, prior art
 
 An EIMP without **Motivation** and **Rejected Alternatives** is incomplete.
 The rejected-alternatives section is the single most valuable historical
@@ -127,6 +129,36 @@ Note the omission relative to FOOP: einmo has no FIR, no UBC evaluator, and
 no `phase` targeting — so EIMP drops FOOP's "FIR Impact," "UBC Step Impact,"
 and `phase` frontmatter field entirely, rather than carrying them forward as
 always-"None" boilerplate.
+
+The **Impact Overview** is different: it is substantive einmo impact analysis,
+not inherited FOOP boilerplate. It appears after Motivation and covers:
+
+- **Einmo Library User Experience changes** — public API, accepted inputs,
+  errors, compatibility, migration, and observable embedding semantics;
+- **Einmo Integration changes** — CLI/configuration/formats, evaluator and
+  external-tool behavior, documentation, packaging, tests, fixtures, and CI;
+- **Einmo Development changes** — all developer notices, including architecture,
+  ownership, affected/new tests and CI gates, invariants, unfamiliar mechanisms
+  contributors must learn, workflow, extension rules, diagnostics, and
+  maintenance/release.
+- **Migration** — always present. Write **None** when compatibility is preserved;
+  otherwise give one ordered procedure covering affected versions/artifacts,
+  prerequisites, backup, exact commands/code edits, validation, rollback, and
+  compatibility-bridge removal.
+
+Each significant Specification sub-section should include or link to these
+aspects when its consequences are not obvious from the overview. Plans preserve
+the same traceability, and human gates present every aspect before requesting a
+decision. A reasoned “No change” is required for an unaffected impact aspect;
+Migration deliberately uses the explicit value “None” when no steps exist.
+
+A new subsystem, abstraction, vocabulary, or significant refactor also requires
+one forward-facing **Proposed steady state** narrative. It defines new terms and
+walks from caller/operator intent through API entry, internal authority and
+processing, visible success, failure/conflict, recovery/rollback, CI evidence,
+and ongoing developer maintenance. Later sections may cite that established
+vocabulary instead of repeating it; small changes need not restate an existing
+subsystem's lifecycle.
 
 ### 3. EIMP Types
 
@@ -288,3 +320,11 @@ in part.
 - [PEP 1 — PEP Purpose and Guidelines](https://peps.python.org/pep-0001/)
 - [JEP 1 — JDK Enhancement-Proposal & Roadmap Process](https://openjdk.org/jeps/1)
 - [IETF RFC Editor Style Guide](https://www.rfc-editor.org/styleguide/)
+
+## Last Updated
+
+**Date**: 2026-08-27
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Required one start-to-finish Proposed steady state narrative for
+new subsystems, abstractions, vocabulary, and significant refactors, while
+allowing subsequent sections to cite established definitions.

@@ -171,6 +171,26 @@ whether to read the rest.
 Why does this matter? What's the problem being solved? What does the world
 look like today, and what does it look like after this EIMP is implemented?
 
+## Impact Overview
+
+### Einmo Library User Experience changes
+Public Rust API, accepted-input/error behavior, compatibility, migration, and
+observable embedding semantics.
+
+### Einmo Integration changes
+CLI/configuration/file-format/evaluator/HTTP/TUI/external-tool behavior;
+documentation, packaging, fixtures, tests, and CI changes.
+
+### Einmo Development changes
+All developer notices: internal architecture/ownership, affected and new
+tests/fixtures/CI gates, invariants, unusual machinery or terminology to learn,
+workflow, extension rules, diagnostics, maintenance, and release consequences.
+
+### Migration
+None by default. If incompatible, replace None with one ordered procedure for
+affected versions/artifacts, prerequisites, backup, exact commands/code edits,
+validation, rollback, and compatibility-bridge removal.
+
 ## Specification
 
 The design itself. Be precise. If it adds or changes a public API, give the
@@ -214,7 +234,21 @@ EIMP is `Implementing`, the design is frozen.
 - Code locations: ...
 ```
 
-Note: EIMP deliberately has **no "FIR Impact" / "UBC Step Impact" / `phase` field** — those are Foolish-VM-specific concepts with no einmo analogue. Do not add always-"None" boilerplate sections; the template above is the full set.
+The Impact Overview is mandatory and appears near the front. Use a reasoned “No
+change” when an impact aspect is inapplicable. Migration is always present and
+deliberately says “None” when no migration exists. Significant
+Specification sub-sections must include or link to the same impact analysis and
+Migration when their API, integration/test/CI/documentation, development, or
+compatibility consequences are not obvious from the overview.
+
+For a new subsystem, abstraction, vocabulary, or significant refactor, write one
+forward-facing `Proposed steady state — ...` section describing the complete
+lifecycle: caller/operator intent, API entry, internal authority/processing,
+visible success, failure/conflict, recovery/rollback, CI evidence, and ongoing
+developer maintenance. Define new terms before relying on them. Later sections
+may cite established vocabulary instead of repeating it.
+
+Note: EIMP deliberately has **no "FIR Impact" / "UBC Step Impact" / `phase` field** — those are Foolish-VM-specific concepts with no einmo analogue. The three einmo impact aspects above are substantive descriptions, not always-"None" boilerplate.
 
 ---
 
@@ -238,6 +272,8 @@ Build the plan so that:
     - [ ] Establish relevant tests for this sub-section. Use [these instructions](../../README.md#running-specific-tests) to run: <test_name_1>, <test_name_2>, <module>::<test_a>.
     ```
     The implementer runs this subset frequently while the sub-section is developed (after each increment, each new test — adding each new test to the list), and runs ALL tests when the sub-section completes (the full `just` gate). Test invocations should go through subagents in parallel where available — the agent equivalent of a human opening several terminals.
+9. **Preserve impact and migration traceability.** Each implementation sub-section links to the applicable Impact Overview/sub-section analysis or contains concrete tasks for affected public APIs; commands/configuration/formats/docs/tests/CI; developer notices including affected tests and unfamiliar concepts; and any ordered migration/rollback. Human gates present Library User Experience, Integration, Development, and Migration consequences before requesting approval.
+10. **For a new subsystem or significant refactor, link plan tasks and human gates to its complete Proposed steady state narrative.** The plan must implement and test the lifecycle as a whole, not leave its architecture implicit across disconnected tasks.
 
 ### No Worktree Stage
 
@@ -327,10 +363,18 @@ $EDITOR docs/eimp/EIMP-<NUMBER>.plan.md             # write from spec, expand al
 5. **Never start substantive work when tests are broken.** Fix first.
 6. **Never commit from inside this skill** unless the user explicitly asks.
 7. **Every sub-section (and undivided phase) starts with the "Establish relevant tests" checkbox** — the small subset of old + new unit tests, named by test, linking to `README.md` §"Running specific tests". The subset runs frequently during the sub-section; ALL tests run when it completes. Plans name tests, never command forms — the commands live only in the README section.
+8. **Every specification has a front-loaded Impact Overview, and significant specification/plan sub-sections preserve its traceability.** Cover Library User Experience, Integration, Development, and the always-present Migration heading; human gates present every aspect before asking for approval.
+9. **Every new subsystem, abstraction, vocabulary, or significant refactor has one start-to-finish Proposed steady state narrative.** Plans and gates link to it; established vocabulary may be cited without repetition.
 
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-27
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Added the mandatory start-to-finish Proposed steady state narrative
+for new subsystems, abstractions, vocabulary, and significant refactors, plus
+plan and human-gate traceability to that lifecycle.
 
 **Date**: 2026-08-13
 **Updated By**: Sisyphus (mimo-v2.5-pro)

@@ -116,6 +116,78 @@ you, and excludes `EIMP-0` from the consecutive-sequence check.
 
 ---
 
+## Three-Axis Impact Description
+
+Every EIMP specification includes a document-wide **Impact Overview near the
+front**, after Motivation and before the detailed Specification. It explains
+the proposal through three named impact aspects plus a mandatory Migration
+section:
+
+1. **Einmo Library User Experience changes** — public Rust API additions,
+   removals, signature or type changes, accepted-input and error behavior,
+   compatibility/migration effects, and observable semantics for applications
+   embedding einmo.
+2. **Einmo Integration changes** — CLI commands and exit behavior,
+   configuration and file-format effects, test/evaluator behavior, HTTP/TUI or
+   external-tool contracts, documentation updates, deployment/packaging
+   consequences, and tests or CI gates that must be added or changed.
+3. **Einmo Development changes** — all notices developers of einmo need before
+   coding or reviewing the change: internal architecture and ownership,
+   affected and newly required tests/fixtures/CI gates, invariants future code
+   must preserve, new or unusual mechanisms and terminology contributors must
+   learn, contributor workflow, planning and extension rules,
+   debugging/observability needs, and maintenance/release consequences.
+4. **Migration** — a uniform, ordered migration procedure for incompatible
+   changes: affected versions/artifacts/callers, prerequisites, backup, exact
+   commands or code edits, validation, rollback, and removal date for any
+   compatibility bridge.
+
+The overview is concrete, not an always-“None” form. It describes the largest
+document-wide consequences and says **No change** with a short reason when an
+axis genuinely does not apply. “No public Rust signature changes; the existing
+method now returns `IllegalTransition` for two formerly accepted pairs” is
+useful, while a bare “None” is not.
+
+Migration is the deliberate exception: it is **always present** and is expected
+to say **None** for most EIMPs. If any proposed change is incompatible for a
+library caller, CLI/configuration user, stored artifact, external integration,
+test fixture, deployment, or contributor workflow, replace None with the full
+ordered migration procedure. Do not scatter required migration steps across
+other sections without collecting them here.
+
+Each significant Specification sub-section should also be explainable through
+the same impact aspects. Include explicit paragraphs or subheadings
+inside the sub-section when its consequences are not already obvious from the
+document-wide overview. At minimum, name:
+
+- the exact public/library behavior before and after;
+- commands, integrations, documentation, tests, fixtures, and CI jobs that stop
+  working, change meaning, or must be added;
+- the architectural rule, affected tests, unfamiliar concepts, and contributor
+  obligations created for future work;
+- any subsection-specific migration steps, also consolidated in Migration.
+
+An EIMP plan preserves this traceability. Each implementation sub-section either
+links to the applicable impact description or includes tasks covering all
+affected axes and Migration. Human-decision tasks present the proposed choice
+together with its consequences; they do not ask a human to approve an abstract
+policy without showing which APIs, commands, tests, documents, and development
+rules it changes.
+
+This is einmo-specific impact analysis, not the Foolish-VM “FIR Impact” or “UBC
+Step Impact” fields. Do not add those unrelated fields or duplicate boilerplate.
+
+When an EIMP proposes a new subsystem, abstraction, vocabulary, or significant
+refactor, it must state the complete proposed steady state at least once. Give
+the reader the “way it will work from start to finish”: caller or operator
+intent, API entry, internal processing and authority, externally visible
+success, failure/conflict behavior, recovery or rollback, tests/CI evidence, and
+ongoing developer maintenance. Define new terms before using them. Later
+subsections may use established vocabulary without repeating the narrative;
+small changes using already-established standards may simply cite them.
+
+---
+
 ## Plan Files for EIMP Implementation
 
 When implementing an EIMP, write a detailed plan to
@@ -155,6 +227,13 @@ ordered list of checkbox tasks. Build the plan so that:
 - Once work begins on an EIMP, updates to the `docs/eimp/` folder track the
   same commits as the implementation — there is no separate worktree stage
   to gate them (see "Plan execution" below).
+- Each implementation sub-section links to or expands the specification's
+  Library User Experience, Integration, Development, and Migration impacts.
+  Tasks cover
+  affected APIs; commands/configuration/formats/docs/tests/CI; and internal
+  architecture/developer notices. Incompatible changes include ordered
+  migration and rollback tasks. A human gate presents every aspect before
+  requesting a decision.
 - Every sub-section (and every phase that is not subdivided) STARTS with the
   "Establish relevant tests" checkbox naming that sub-section's test subset
   (see "Sub-Section Test Subsets" below).
@@ -295,6 +374,12 @@ approval-test corpus in this repository the way there is in Foolish.
 ---
 
 ## Last Updated
+
+**Date**: 2026-08-27
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Required every new subsystem, abstraction, vocabulary, or major
+refactor to include one forward-facing start-to-finish proposed steady-state
+narrative; later sections may rely on established vocabulary without repetition.
 
 **Date**: 2026-08-13
 **Updated By**: Sisyphus (mimo-v2.5-pro)
