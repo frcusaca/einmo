@@ -217,11 +217,25 @@ unambiguous.
     repair.
 - [x] **[SEQ 0.2]** Begin work: commit `EIMP-11.md`, `EIMP-11.plan.md`, and the index update; set `begun: [x]` and `status: Implementing` only when implementation actually starts.
       (2026-09-01 13:31)
-- [ ] **[PAR finding-audit]** Re-audit EIMP 11's P0/P1/P2 findings against current `jia`; record changed locations, already-fixed findings, and new regression-test names without weakening invariants.
-- [ ] **[PAR prior-eimp-audit]** Map EIMP 11 sections to EIMP 8 accepted unresolved findings and EIMP 9 tasks; include owner, status, overlap, and migration constraint.
-- [ ] **[PAR public-surface-audit]** Capture current public API, CLI help/exit codes, stage graph, config behavior, and filesystem capability as a before-state artifact.
-- [ ] **[JOIN 0.3]** Reconcile the three audits; ensure every planned change has one owner and no accepted EIMP 8/EIMP 9 task disappears.
-- [ ] **[SEQ 0.4]** Commit: `EIMP-11 Phase 0: baseline and finding traceability`.
+- [x] **[PAR finding-audit]** Re-audit EIMP 11's P0/P1/P2 findings against current `jia`; record changed locations, already-fixed findings, and new regression-test names without weakening invariants.
+      (2026-09-01 13:34)
+  Recorded in
+  [`EIMP-11.workfile.phase0-baseline-and-traceability.md`](EIMP-11.workfile.phase0-baseline-and-traceability.md#critical-finding-audit).
+- [x] **[PAR prior-eimp-audit]** Map EIMP 11 sections to EIMP 8 accepted unresolved findings and EIMP 9 tasks; include owner, status, overlap, and migration constraint.
+      (2026-09-01 13:34)
+  Recorded in the workfile's
+  [prior-EIMP ownership ledger](EIMP-11.workfile.phase0-baseline-and-traceability.md#prior-eimp-ownership-ledger).
+- [x] **[PAR public-surface-audit]** Capture current public API, CLI help/exit codes, stage graph, config behavior, and filesystem capability as a before-state artifact.
+      (2026-09-01 13:34)
+  Recorded in the workfile's
+  [public before-state](EIMP-11.workfile.phase0-baseline-and-traceability.md#public-before-state).
+- [x] **[JOIN 0.3]** Reconcile the three audits; ensure every planned change has one owner and no accepted EIMP 8/EIMP 9 task disappears.
+      (2026-09-01 13:34)
+  The workfile's [reconciliation](EIMP-11.workfile.phase0-baseline-and-traceability.md#reconciliation)
+  retains EIMP 8 and EIMP 9 requirements and assigns each Phase 1 boundary
+  exactly once.
+- [x] **[SEQ 0.4]** Commit: `EIMP-11 Phase 0: baseline and finding traceability`.
+      (2026-09-01 13:34)
 
 ## Phase 1 — Critical integrity defects
 
@@ -608,6 +622,11 @@ unambiguous.
 - [ ] Commit: `EIMP-11 complete: transactional hardening and documentation reset`.
 
 ## Last Updated
+
+**Date**: 2026-09-01
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Completed Phase 0's critical-finding, prior-EIMP, and public
+surface audits and linked the reconciled traceability workfile.
 
 **Date**: 2026-09-01
 **Updated By**: OpenAI Codex (GPT-5)
