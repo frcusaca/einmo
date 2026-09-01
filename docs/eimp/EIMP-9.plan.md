@@ -62,11 +62,20 @@ through the repaired commands.
 - [ ] `justfile`: add `--workspace` to `ci-test` (T3)
 - [ ] `.config/nextest.toml`: `[profile.ci]` sets `fail-fast = false` (T4) —
       a consumed artifact must describe the whole suite
-- [ ] `.config/nextest.toml`: raise `[profile.default] slow-timeout`
+- [x] `.config/nextest.toml`: raise `[profile.default] slow-timeout`
       `terminate-after` from 4 to 8 (T5). Re-measure
       `suite::tests::update_corpus_signature_re_signs_when_stale` and record
       the new figure here — the baseline was **116.053s against a 120s
       kill**
+      (2026-09-01 14:49)
+      Reproduced twice during EIMP-11's required full gate at 120.013s and
+      120.011s after a Phase 0 run took 119.525s. The exact test passed in
+      100.303s between those failures, confirming inadequate timeout headroom
+      rather than a functional failure. With the ceiling raised to 240s, the
+      exact test passed in 100.048s (nextest run
+      `daab2e2a-e05c-4ce7-a61c-396b69ec02fa`). The following complete gate
+      passed all 430 tests; the same test completed in 122.914s, safely below
+      the new 240s ceiling.
 - [ ] `rust_instructions.md`: correct "`just pr` already scopes to your
       diff" (T1/T2) — on `jia` the diff is empty by construction, so
       mutation testing is scheduled per-EIMP, not incidental to `just pr`
@@ -157,3 +166,11 @@ execution of every repaired command, checked mechanically rather than by eye.
 - **Phase B changes what the gates mean.** After it lands, a plan checkbox
   reading "tests pass" is a claim about 394 tests across two packages, not
   55 across one. Re-run anything ticked earlier in the session.
+
+## Last Updated
+
+**Date**: 2026-09-01
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Completed the already-specified T5 timeout-headroom repair after
+two required EIMP-11 full gates reproduced the 120-second kill; recorded the
+failed and isolated measurements pending a post-change full-gate result.
