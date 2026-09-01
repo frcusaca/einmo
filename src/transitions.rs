@@ -18,6 +18,7 @@ use crate::error::{EinmoError, Result};
 use crate::format::{EinmoFile, Metadata, Section, Status};
 use crate::signature::{Stamps, derive_keypair, now_iso8601};
 use crate::stage::{Stage, ensure_parent_dir, mirror_input_path, walk_input_tree};
+use crate::verify::{ReadState, classify_optional_bytes};
 
 /// One promoted file's outcome.
 #[derive(Debug, Clone, PartialEq)]
@@ -206,6 +207,14 @@ pub fn promote_flag_to_note(
         file.set_stamps(stamps);
 
         let dst = notes_dir.join(&rel);
+        let destination_bytes = match std::fs::read(&dst) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(EinmoError::io(&dst, error)),
+        };
+        if let ReadState::Invalid(invalid) = classify_optional_bytes(destination_bytes) {
+            return Err(invalid.into_error(format_args!("{} note destination", dst.display())));
+        }
         ensure_parent_dir(&dst)?;
         let bytes = file.serialize()?;
         std::fs::write(&dst, &bytes).map_err(|e| EinmoError::io(&dst, e))?;
@@ -564,6 +573,51 @@ mod tests {
                 .exists(),
             "promoting to a note must not remove the flag -- resolving the flag is a separate action"
         );
+    }
+
+    #[test]
+    fn promote_flag_to_note_refuses_malformed_destination() {
+        let (_tmp, config) = suite();
+        write_output(&config, "a.foo", "5");
+        flag_output(&config, "a.foo", "needs a second look");
+        let note_path = config.stage_dir_for_notes().join("a.foo.einmo");
+        ensure_parent_dir(&note_path).unwrap();
+        let destination = b"not a valid einmo envelope";
+        fs::write(&note_path, destination).unwrap();
+
+        let err = promote_flag_to_note(
+            &config,
+            Stage::Output,
+            &KeySource::from_passphrase("note signer"),
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, EinmoError::Parse(_)));
+        assert!(err.to_string().contains("a.foo.einmo"));
+        assert_eq!(fs::read(&note_path).unwrap(), destination);
+    }
+
+    #[test]
+    fn promote_flag_to_note_refuses_tampered_destination() {
+        let (_tmp, config) = suite();
+        write_output(&config, "a.foo", "5");
+        flag_output(&config, "a.foo", "needs a second look");
+        let key = KeySource::from_passphrase("note signer");
+        promote_flag_to_note(&config, Stage::Output, &key, None, None).unwrap();
+        let note_path = config.stage_dir_for_notes().join("a.foo.einmo");
+        let mut destination = fs::read(&note_path).unwrap();
+        let note = destination
+            .windows(4)
+            .position(|window| window == b"NOTE")
+            .expect("fixture contains NOTE text");
+        destination[note] = b'X';
+        fs::write(&note_path, &destination).unwrap();
+
+        let err = promote_flag_to_note(&config, Stage::Output, &key, None, None).unwrap_err();
+        assert!(matches!(err, EinmoError::Verification(_)));
+        assert!(err.to_string().contains("a.foo.einmo"));
+        assert_eq!(fs::read(&note_path).unwrap(), destination);
     }
 
     #[test]

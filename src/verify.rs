@@ -23,6 +23,49 @@ use crate::transitions::normalize_file_path;
 /// Per-stamp verification verdict for an [`EinmoFile`].
 pub type StampVerification = StampCheck;
 
+/// The result of observing an optional artifact at a mutation boundary.
+///
+/// Keeping invalid bytes distinct from absence prevents callers from turning
+/// verification failure into permission to overwrite an existing artifact.
+pub(crate) enum ReadState<T> {
+    Absent,
+    Verified(T),
+    Invalid(ArtifactInvalidity),
+}
+
+/// Why bytes present at an artifact location failed verify-on-inspect.
+pub(crate) enum ArtifactInvalidity {
+    Malformed(String),
+    SignatureInvalid(String),
+}
+
+impl ArtifactInvalidity {
+    pub(crate) fn into_error(self, context: impl std::fmt::Display) -> EinmoError {
+        match self {
+            Self::Malformed(detail) => EinmoError::Parse(format!("{context}: {detail}")),
+            Self::SignatureInvalid(detail) => {
+                EinmoError::Verification(format!("{context}: {detail}"))
+            }
+        }
+    }
+}
+
+/// Verify optional artifact bytes without collapsing invalid content into
+/// absence.
+pub(crate) fn classify_optional_bytes(bytes: Option<Vec<u8>>) -> ReadState<EinmoFile> {
+    let Some(bytes) = bytes else {
+        return ReadState::Absent;
+    };
+    match verify_bytes(&bytes) {
+        Ok(file) => ReadState::Verified(file),
+        Err(EinmoError::Verification(detail)) => {
+            ReadState::Invalid(ArtifactInvalidity::SignatureInvalid(detail))
+        }
+        Err(EinmoError::Parse(detail)) => ReadState::Invalid(ArtifactInvalidity::Malformed(detail)),
+        Err(other) => ReadState::Invalid(ArtifactInvalidity::Malformed(other.to_string())),
+    }
+}
+
 /// Verify every stamp of an already-parsed file against its own signed prefix.
 #[must_use]
 pub fn verify_all(file: &EinmoFile) -> Vec<StampVerification> {

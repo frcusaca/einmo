@@ -11,7 +11,7 @@ use crate::format::EinmoFile;
 use crate::signature::{StageKeypair, is_computer_key, now_iso8601};
 use crate::stage::{EinmoId, Stage};
 use crate::storage::{ArtifactLocation, EinmoStorage};
-use crate::verify::verify_bytes;
+use crate::verify::{ReadState, classify_optional_bytes, verify_bytes};
 
 /// One case's full cross-stage bundle: its id, and every operation
 /// performable on it. Borrows its [`EinmoStorage`] rather than owning it —
@@ -327,12 +327,17 @@ impl<'s, S: EinmoStorage> EinmoCase<'s, S> {
             })?;
         let src_file = verify_bytes(&src_bytes)?; // verify-on-inspect the source
 
-        // Absent OR corrupt (tampered/unparsable) destination is treated
-        // as absent, matching promote_one_accumulating's own `.ok()`.
-        let existing = self
-            .storage
-            .read(&self.id, ArtifactLocation::Stage(to))?
-            .and_then(|bytes| verify_bytes(&bytes).ok());
+        let existing = match classify_optional_bytes(
+            self.storage.read(&self.id, ArtifactLocation::Stage(to))?,
+        ) {
+            ReadState::Absent => None,
+            ReadState::Verified(file) => Some(file),
+            ReadState::Invalid(invalid) => {
+                return Err(
+                    invalid.into_error(format_args!("{} at {to} promotion destination", self.id))
+                );
+            }
+        };
 
         if let Some(existing) = existing {
             let sections_same = crate::einmo_suite::body_sections(&existing, None)
@@ -364,8 +369,8 @@ impl<'s, S: EinmoStorage> EinmoCase<'s, S> {
             }
         }
 
-        // Absent, corrupt, or genuinely different content: a fresh
-        // baseline — carry the source's own (already verified) stamp
+        // Absent or genuinely different content: a fresh baseline — carry
+        // the source's own (already verified) stamp
         // chain forward and append exactly one new destination stamp.
         let mut file = src_file;
         file.append_stage_stamp_with(to.stamp_key(), key);
@@ -401,11 +406,18 @@ impl<'s, S: EinmoStorage> EinmoCase<'s, S> {
         let mut file = verify_bytes(&src_bytes)?; // verify-on-inspect before moving
         let new_block = format!("# flagged: {reason} {}", now_iso8601());
 
-        let existing_advisory = self
-            .storage
-            .read(&self.id, ArtifactLocation::Flagged(stage))?
-            .and_then(|bytes| verify_bytes(&bytes).ok())
-            .and_then(|existing| existing.advisory().map(str::to_string));
+        let existing_advisory = match classify_optional_bytes(
+            self.storage
+                .read(&self.id, ArtifactLocation::Flagged(stage))?,
+        ) {
+            ReadState::Absent => None,
+            ReadState::Verified(existing) => existing.advisory().map(str::to_string),
+            ReadState::Invalid(invalid) => {
+                return Err(
+                    invalid.into_error(format_args!("{} at {stage}/flagged destination", self.id))
+                );
+            }
+        };
         let advisory = match existing_advisory {
             Some(existing) => format!("{new_block}\n{existing}"),
             None => new_block,
@@ -750,6 +762,20 @@ mod tests {
         StageKeypair::derive(passphrase)
     }
 
+    fn signature_invalid_bytes(rel: &str) -> Vec<u8> {
+        let mut bytes = signed_bytes(rel, "5", "");
+        let output = bytes
+            .windows(1)
+            .position(|window| window == b"5")
+            .expect("fixture contains its OUTPUT body");
+        bytes[output] = b'6';
+        assert!(matches!(
+            verify_bytes(&bytes),
+            Err(EinmoError::Verification(_))
+        ));
+        bytes
+    }
+
     #[test]
     fn promote_writes_a_fresh_baseline_when_destination_absent() {
         let storage = InMemoryStorage::new();
@@ -787,6 +813,75 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["compiled", "configured", "stage:output", "stage:checked"]
         );
+    }
+
+    #[test]
+    fn promote_refuses_malformed_destination() {
+        for (from, to) in [
+            (Stage::Generated, Stage::Output),
+            (Stage::Output, Stage::Checked),
+            (Stage::Checked, Stage::Verified),
+        ] {
+            let storage = InMemoryStorage::new();
+            let case_id = id("a.foo");
+            storage
+                .write(
+                    &case_id,
+                    ArtifactLocation::Stage(from),
+                    &signed_bytes("a.foo", "5", ""),
+                )
+                .unwrap();
+            let destination = b"not a valid einmo envelope".to_vec();
+            storage
+                .write(&case_id, ArtifactLocation::Stage(to), &destination)
+                .unwrap();
+
+            let case = EinmoCase::new(case_id.clone(), &storage);
+            let err = case.promote(from, to, &derive("reviewer")).unwrap_err();
+            assert!(matches!(err, EinmoError::Parse(_)), "{from} -> {to}: {err}");
+            assert!(err.to_string().contains("a.foo"), "{from} -> {to}: {err}");
+            assert_eq!(
+                storage.read(&case_id, ArtifactLocation::Stage(to)).unwrap(),
+                Some(destination),
+                "{from} -> {to} must preserve malformed destination bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn promote_refuses_tampered_destination() {
+        for (from, to) in [
+            (Stage::Generated, Stage::Output),
+            (Stage::Output, Stage::Checked),
+            (Stage::Checked, Stage::Verified),
+        ] {
+            let storage = InMemoryStorage::new();
+            let case_id = id("a.foo");
+            storage
+                .write(
+                    &case_id,
+                    ArtifactLocation::Stage(from),
+                    &signed_bytes("a.foo", "5", ""),
+                )
+                .unwrap();
+            let destination = signature_invalid_bytes("a.foo");
+            storage
+                .write(&case_id, ArtifactLocation::Stage(to), &destination)
+                .unwrap();
+
+            let case = EinmoCase::new(case_id.clone(), &storage);
+            let err = case.promote(from, to, &derive("reviewer")).unwrap_err();
+            assert!(
+                matches!(err, EinmoError::Verification(_)),
+                "{from} -> {to}: {err}"
+            );
+            assert!(err.to_string().contains("a.foo"), "{from} -> {to}: {err}");
+            assert_eq!(
+                storage.read(&case_id, ArtifactLocation::Stage(to)).unwrap(),
+                Some(destination),
+                "{from} -> {to} must preserve signature-invalid destination bytes"
+            );
+        }
     }
 
     #[test]
@@ -1093,6 +1188,78 @@ mod tests {
         let advisory = flagged.advisory().unwrap();
         assert!(advisory.starts_with("# flagged: second"));
         assert!(advisory.contains("# flagged: first"));
+    }
+
+    #[test]
+    fn flag_refuses_malformed_flagged_destination() {
+        let storage = InMemoryStorage::new();
+        let case_id = id("a.foo");
+        let source = signed_bytes("a.foo", "5", "");
+        let destination = b"not a valid einmo envelope".to_vec();
+        storage
+            .write(&case_id, ArtifactLocation::Stage(Stage::Output), &source)
+            .unwrap();
+        storage
+            .write(
+                &case_id,
+                ArtifactLocation::Flagged(Stage::Output),
+                &destination,
+            )
+            .unwrap();
+
+        let case = EinmoCase::new(case_id.clone(), &storage);
+        let err = case.flag(Stage::Output, "again").unwrap_err();
+        assert!(matches!(err, EinmoError::Parse(_)));
+        assert!(err.to_string().contains("a.foo"));
+        assert_eq!(
+            storage
+                .read(&case_id, ArtifactLocation::Flagged(Stage::Output))
+                .unwrap(),
+            Some(destination)
+        );
+        assert_eq!(
+            storage
+                .read(&case_id, ArtifactLocation::Stage(Stage::Output))
+                .unwrap(),
+            Some(source),
+            "refusal must not consume the source"
+        );
+    }
+
+    #[test]
+    fn flag_refuses_tampered_flagged_destination() {
+        let storage = InMemoryStorage::new();
+        let case_id = id("a.foo");
+        let source = signed_bytes("a.foo", "5", "");
+        let destination = signature_invalid_bytes("a.foo");
+        storage
+            .write(&case_id, ArtifactLocation::Stage(Stage::Output), &source)
+            .unwrap();
+        storage
+            .write(
+                &case_id,
+                ArtifactLocation::Flagged(Stage::Output),
+                &destination,
+            )
+            .unwrap();
+
+        let case = EinmoCase::new(case_id.clone(), &storage);
+        let err = case.flag(Stage::Output, "again").unwrap_err();
+        assert!(matches!(err, EinmoError::Verification(_)));
+        assert!(err.to_string().contains("a.foo"));
+        assert_eq!(
+            storage
+                .read(&case_id, ArtifactLocation::Flagged(Stage::Output))
+                .unwrap(),
+            Some(destination)
+        );
+        assert_eq!(
+            storage
+                .read(&case_id, ArtifactLocation::Stage(Stage::Output))
+                .unwrap(),
+            Some(source),
+            "refusal must not consume the source"
+        );
     }
 
     #[test]

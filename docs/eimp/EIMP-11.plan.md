@@ -241,19 +241,44 @@ unambiguous.
 
 ### Phase 1A — Refuse invalid destinations (§S.1)
 
-- [ ] Establish relevant tests for this sub-section. Use [these instructions](../../README.md#running-specific-tests) to run: `promote_refuses_tampered_source`, `agreement_tampered_is_never_folded_into_differ`, `promote_refuses_tampered_destination`, `flag_refuses_tampered_flagged_destination`, `promote_flag_to_note_refuses_tampered_destination`.
-- [ ] **[SEQ 1A.1]** Write failing destination-preservation tests first.
-  - [ ] Malformed destination at each ordinary stage.
-  - [ ] Signature-invalid destination at each ordinary stage.
-  - [ ] Invalid existing nested flagged artifact during re-flag.
-  - [ ] Invalid existing note destination during flag-to-note promotion.
-  - [ ] Assert error class/path and byte-identical destination preservation.
-- [ ] **[SEQ 1A.2]** Introduce one internal read-state type distinguishing absent, verified, malformed, and signature-invalid observations; keep path/context with invalid states.
-- [ ] **[PAR promote-path]** Replace promotion/co-sign destination `.ok()` collapse; test absent, matching, co-signable, differing, malformed, and tampered branches.
-- [ ] **[PAR flag-note-path]** Replace flagged/note destination `.ok()` collapse; test advisory accumulation and invalid-destination refusal.
-- [ ] **[PAR fail-open-audit]** Inventory every `verify_bytes(...).ok()`, `EinmoFile::from_file(...).ok()`, and default-on-error use; classify as fail-safe optional cache, explicit diagnostic probe, or prohibited state collapse.
-- [ ] **[JOIN 1A.3]** Route prohibited paths through the shared read-state/error mapping; ensure CLI, review, and server preserve the typed failure.
-- [ ] **[SEQ 1A.4]** Run focused tests, full `just`, scoped mutants for invalid/absent branch swaps, then commit: `EIMP-11 Phase 1A: refuse invalid destinations`.
+- [x] Establish relevant tests for this sub-section. Use [these instructions](../../README.md#running-specific-tests) to run: `promote_refuses_tampered_source`, `agreement_tampered_is_never_folded_into_differ`, `promote_refuses_tampered_destination`, `flag_refuses_tampered_flagged_destination`, `promote_flag_to_note_refuses_tampered_destination`.
+      (2026-09-01 14:22)
+  The subset includes malformed and signature-invalid variants for promotion,
+  nested flagged destinations, and notes destinations. All eight old/new
+  targets pass in nextest run `01700ad2-5f73-4f89-bff0-bffeea9caf53`.
+- [x] **[SEQ 1A.1]** Write failing destination-preservation tests first.
+      (2026-09-01 14:22)
+  - [x] Malformed destination at each ordinary stage.
+        (2026-09-01 14:22)
+  - [x] Signature-invalid destination at each ordinary stage.
+        (2026-09-01 14:22)
+  - [x] Invalid existing nested flagged artifact during re-flag.
+        (2026-09-01 14:22)
+  - [x] Invalid existing note destination during flag-to-note promotion.
+        (2026-09-01 14:22)
+  - [x] Assert error class/path and byte-identical destination preservation.
+        (2026-09-01 14:22)
+- [x] **[SEQ 1A.2]** Introduce one internal read-state type distinguishing absent, verified, malformed, and signature-invalid observations; keep path/context with invalid states.
+      (2026-09-01 14:22)
+- [x] **[PAR promote-path]** Replace promotion/co-sign destination `.ok()` collapse; test absent, matching, co-signable, differing, malformed, and tampered branches.
+      (2026-09-01 14:22)
+- [x] **[PAR flag-note-path]** Replace flagged/note destination `.ok()` collapse; test advisory accumulation and invalid-destination refusal.
+      (2026-09-01 14:22)
+- [x] **[PAR fail-open-audit]** Inventory every `verify_bytes(...).ok()`, `EinmoFile::from_file(...).ok()`, and default-on-error use; classify as fail-safe optional cache, explicit diagnostic probe, or prohibited state collapse.
+      (2026-09-01 14:22)
+  Recorded in
+  [`EIMP-11.workfile.phase1a-fail-open-audit.md`](EIMP-11.workfile.phase1a-fail-open-audit.md).
+- [x] **[JOIN 1A.3]** Route prohibited paths through the shared read-state/error mapping; ensure CLI, review, and server preserve the typed failure.
+      (2026-09-01 14:22)
+  CLI, review, and server delegate mutation to `EinmoSuite`/`EinmoCase`, so
+  the shared typed error crosses those surfaces without a second collapse.
+- [x] **[SEQ 1A.4]** Run focused tests, full `just`, scoped mutants for invalid/absent branch swaps, then commit: `EIMP-11 Phase 1A: refuse invalid destinations`.
+      (2026-09-01 14:54)
+  Focused tests, strict clippy, formatting, and doctests passed. The initial
+  full gates exposed EIMP 9 T5 twice at its old 120s ceiling; after applying
+  EIMP 9's already-specified 240s repair, all 430 tests passed in nextest run
+  `20a4c609-9be3-4e68-b4e0-716d2bd7091a`. Scoped mutation evidence is in the
+  Phase 1A workfile.
 
 ### Phase 1B — Evaluate every verified stamp (§S.2)
 
@@ -622,6 +647,12 @@ unambiguous.
 - [ ] Commit: `EIMP-11 complete: transactional hardening and documentation reset`.
 
 ## Last Updated
+
+**Date**: 2026-09-01
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Completed Phase 1A's test-first invalid-destination behavior,
+shared read-state routing, fail-open inventory, scoped mutation run, and full
+repository gate; recorded the EIMP 9 T5 prerequisite repair it exposed.
 
 **Date**: 2026-09-01
 **Updated By**: OpenAI Codex (GPT-5)
