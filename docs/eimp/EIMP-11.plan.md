@@ -282,19 +282,45 @@ unambiguous.
 
 ### Phase 1B — Evaluate every verified stamp (§S.2)
 
-- [ ] Establish relevant tests for this sub-section. Use [these instructions](../../README.md#running-specific-tests) to run: `verified_level_rejects_empty_passphrase_key`, `verified_attestation_human_then_computer_fails`, `verified_attestation_computer_then_human_fails`, `verified_attestation_expected_reviewer_among_cosigners_passes`, `verified_attestation_missing_expected_reviewer_fails`.
-- [ ] **[SEQ 1B.1]** Write order/permutation tests first.
-  - [ ] Human only; expected human among multiple humans; expected human absent.
-  - [ ] Human→computer and computer→human.
-  - [ ] Duplicate identical verified stamps.
-  - [ ] Zero verified stamps in a verified artifact.
-  - [ ] Unexpected human co-signer is reported but does not independently fail.
-- [ ] **[SEQ 1B.2]** Introduce an internal attestation-policy result containing all verified signer observations, computer-key offenders, expected-reviewer match, and final verdict.
-- [ ] **[PAR gate-policy]** Replace first-match gate logic with order-independent all-stamps evaluation.
-- [ ] **[PAR reporting]** Add stable prose and JSON diagnostics for missing expected reviewer and every computer-key offender; redact secret inputs.
-- [ ] **[PAR review-surface]** Make review/server summaries consume the same policy result instead of re-deriving signer meaning.
-- [ ] **[JOIN 1B.3]** Confirm all surfaces agree on every permutation and duplicated stamp case.
-- [ ] **[SEQ 1B.4]** Mutation-test `any`/`all`, first/last, empty-set, and computer-key branches; run full `just`; commit: `EIMP-11 Phase 1B: verify the complete attestation set`.
+- [x] Establish relevant tests for this sub-section. Use [these instructions](../../README.md#running-specific-tests) to run: `verified_level_rejects_empty_passphrase_key`, `verified_attestation_human_then_computer_fails`, `verified_attestation_computer_then_human_fails`, `verified_attestation_expected_reviewer_among_cosigners_passes`, `verified_attestation_missing_expected_reviewer_fails`.
+      (2026-09-01 16:50)
+  Expanded to ten tests covering all required permutations, duplicates, the
+  empty set, and stable diagnostics; focused run
+  `7a47fb65-576a-40d3-a030-86503c1dbe36` passed.
+- [x] **[SEQ 1B.1]** Write order/permutation tests first.
+      (2026-09-01 16:50)
+  - [x] Human only; expected human among multiple humans; expected human absent.
+        (2026-09-01 16:50)
+  - [x] Human→computer and computer→human.
+        (2026-09-01 16:50)
+  - [x] Duplicate identical verified stamps.
+        (2026-09-01 16:50)
+  - [x] Zero verified stamps in a verified artifact.
+        (2026-09-01 16:50)
+  - [x] Unexpected human co-signer is reported but does not independently fail.
+        (2026-09-01 16:50)
+- [x] **[SEQ 1B.2]** Introduce an internal attestation-policy result containing all verified signer observations, computer-key offenders, expected-reviewer match, and final verdict.
+      (2026-09-01 16:50)
+- [x] **[PAR gate-policy]** Replace first-match gate logic with order-independent all-stamps evaluation.
+      (2026-09-01 16:50)
+- [x] **[PAR reporting]** Add stable prose and JSON diagnostics for missing expected reviewer and every computer-key offender; redact secret inputs.
+      (2026-09-01 16:50)
+  `Problem::kind` supplies stable identifiers, and CLI JSON is constructed
+  with `serde_json` rather than interpolated strings.
+- [x] **[PAR review-surface]** Make review/server summaries consume the same policy result instead of re-deriving signer meaning.
+      (2026-09-01 16:50)
+  The audit found no independent stored-attestation verdict in review/server;
+  their `non_human` field describes only the just-executed promotion. Gate
+  consumers already share `check_suite_integrity`.
+- [x] **[JOIN 1B.3]** Confirm all surfaces agree on every permutation and duplicated stamp case.
+      (2026-09-01 16:50)
+  Evidence and the surface audit are recorded in
+  [`EIMP-11.workfile.phase1b-attestation-policy.md`](EIMP-11.workfile.phase1b-attestation-policy.md).
+- [x] **[SEQ 1B.4]** Mutation-test `any`/`all`, first/last, empty-set, and computer-key branches; run full `just`; commit: `EIMP-11 Phase 1B: verify the complete attestation set`.
+      (2026-09-01 16:50)
+  All five viable scoped policy mutations were caught. Full nextest run
+  `19aa472b-dd5b-4323-9558-321cb23d0c1f` passed all 440 tests; formatting,
+  strict workspace clippy, and workspace doctests passed.
 
 ### Phase 1C — Enforce one transition graph (§S.3)
 
@@ -647,6 +673,12 @@ unambiguous.
 - [ ] Commit: `EIMP-11 complete: transactional hardening and documentation reset`.
 
 ## Last Updated
+
+**Date**: 2026-09-01
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Completed Phase 1B's order-independent all-stamp attestation
+policy, missing-attestation/reviewer diagnostics, stable JSON kinds,
+review/server surface audit, mutation testing, and full repository gate.
 
 **Date**: 2026-09-01
 **Updated By**: OpenAI Codex (GPT-5)

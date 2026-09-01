@@ -13,7 +13,7 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 
 use crate::config::{KeyCascadeInputs, KeySource, MatchSections, TestConfig, resolve_stage_key};
-use crate::einmo_suite::{FailurePolicy, ValidationLevel};
+use crate::einmo_suite::{FailurePolicy, Problem, ValidationLevel};
 use crate::error::{EinmoError, Result};
 use crate::format::EinmoFile;
 use crate::stage::{EinmoId, Stage};
@@ -721,26 +721,16 @@ fn cmd_verify(args: VerifyArgs) -> Result<ExitCode> {
         Vec::new()
     };
     if args.json {
-        let violations: Vec<String> = integrity
-            .problems
-            .iter()
-            .map(|p| {
-                format!(
-                    "{{\"level\":\"{}\",\"path\":\"{}\",\"problem\":\"{}\",\"remedy\":\"{}\"}}",
-                    p.level(),
-                    p.path()
-                        .map_or_else(String::new, |x| x.display().to_string()),
-                    p,
-                    p.remedy()
-                )
-            })
-            .collect();
+        let violations: Vec<serde_json::Value> =
+            integrity.problems.iter().map(problem_json).collect();
         println!(
-            "{{\"files\":{},\"failures\":{},\"integrity_violations\":[{}],\"flagged\":{}}}",
-            report.files.len(),
-            report.failures(),
-            violations.join(","),
-            flagged.len()
+            "{}",
+            serde_json::json!({
+                "files": report.files.len(),
+                "failures": report.failures(),
+                "integrity_violations": violations,
+                "flagged": flagged.len(),
+            })
         );
     } else {
         println!(
@@ -783,6 +773,18 @@ fn cmd_verify(args: VerifyArgs) -> Result<ExitCode> {
             ExitCode::FAILURE
         },
     )
+}
+
+fn problem_json(problem: &Problem) -> serde_json::Value {
+    serde_json::json!({
+        "kind": problem.kind(),
+        "level": problem.level().to_string(),
+        "path": problem
+            .path()
+            .map_or_else(String::new, |path| path.display().to_string()),
+        "problem": problem.to_string(),
+        "remedy": problem.remedy(),
+    })
 }
 
 /// Whether flagged artifacts should fail `einmo verify`'s gate (`EIMP-1`
@@ -1198,6 +1200,39 @@ fn cmd_generate(args: EvaluateArgs) -> Result<ExitCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verified_attestation_json_diagnostics_have_stable_kinds_and_prose() {
+        let missing = problem_json(&Problem::MissingVerifiedAttestation {
+            path: PathBuf::from("a.foo.einmo"),
+        });
+        assert_eq!(missing["kind"], "missing-verified-attestation");
+        assert_eq!(missing["level"], "verified");
+        assert!(
+            missing["problem"]
+                .as_str()
+                .unwrap()
+                .contains("no stage:verified stamp")
+        );
+
+        let reviewer = problem_json(&Problem::MissingExpectedReviewer {
+            path: PathBuf::from("a.foo.einmo"),
+            expected_prefix: "abcd".into(),
+            found: vec!["1234".into()],
+        });
+        assert_eq!(reviewer["kind"], "missing-expected-reviewer");
+        assert!(
+            reviewer["problem"]
+                .as_str()
+                .unwrap()
+                .contains("expected reviewer is absent")
+        );
+
+        let computer = problem_json(&Problem::KeyDerivedFromEmptyPassphrase {
+            path: PathBuf::from("a.foo.einmo"),
+        });
+        assert_eq!(computer["kind"], "key-derived-from-empty-passphrase");
+    }
 
     #[test]
     fn parse_transition_ok_and_errors() {

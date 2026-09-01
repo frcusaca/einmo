@@ -269,7 +269,7 @@ pub enum Problem {
         detail: String,
     },
 
-    // ── Verified level only: three distinct facts about the signer ──────
+    // ── Verified level only: distinct facts about the signer set ───────
     //
     // These are deliberately separate. A signature can verify perfectly and
     // still be wrong, in two different ways — and the reader needs to know
@@ -282,12 +282,24 @@ pub enum Problem {
     //                           computer key — an AI attested where a human
     //                           was required
     //
-    /// V6 — the `stage:verified` stamp **verifies**, but its public key is not
-    /// the configured reviewer's: the right bytes signed by the wrong person.
+    /// Legacy V6 diagnostic retained for API compatibility. New gate results
+    /// use [`Problem::MissingExpectedReviewer`] so an unexpected human
+    /// co-signer does not fail when the expected reviewer is also present.
     SignedByUnexpectedKey {
         path: PathBuf,
         expected_prefix: String,
         found: String,
+    },
+    /// The artifact exists at `verified/`, but carries no `stage:verified`
+    /// attestation at all.
+    MissingVerifiedAttestation { path: PathBuf },
+    /// A reviewer prefix was configured, but no verified signer matched it.
+    /// `found` contains every distinct verified signer for diagnosis; their
+    /// order does not affect the verdict.
+    MissingExpectedReviewer {
+        path: PathBuf,
+        expected_prefix: String,
+        found: Vec<String>,
     },
     /// V7 — the `stage:verified` stamp's public key **was generated from the
     /// empty passphrase**: the well-known computer/AI key.
@@ -301,6 +313,25 @@ pub enum Problem {
 }
 
 impl Problem {
+    /// Stable machine-readable identifier for this diagnostic kind.
+    #[must_use]
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Problem::ExtraneousInputFile { .. } => "extraneous-input-file",
+            Problem::EmptySuite => "empty-suite",
+            Problem::ArtifactUnsound { .. } => "artifact-unsound",
+            Problem::OrphanedStageArtifact { .. } => "orphaned-stage-artifact",
+            Problem::LeftMissingEntirely { .. } => "left-missing-entirely",
+            Problem::RightMissingEntirely { .. } => "right-missing-entirely",
+            Problem::SectionDifference { .. } => "section-difference",
+            Problem::SignatureDoesNotVerify { .. } => "signature-does-not-verify",
+            Problem::SignedByUnexpectedKey { .. } => "signed-by-unexpected-key",
+            Problem::MissingVerifiedAttestation { .. } => "missing-verified-attestation",
+            Problem::MissingExpectedReviewer { .. } => "missing-expected-reviewer",
+            Problem::KeyDerivedFromEmptyPassphrase { .. } => "key-derived-from-empty-passphrase",
+        }
+    }
+
     /// The level whose requirements this problem violates.
     #[must_use]
     pub fn level(&self) -> ValidationLevel {
@@ -331,6 +362,8 @@ impl Problem {
                 Stage::Generated | Stage::Output => ValidationLevel::Output,
             },
             Problem::SignedByUnexpectedKey { .. }
+            | Problem::MissingVerifiedAttestation { .. }
+            | Problem::MissingExpectedReviewer { .. }
             | Problem::KeyDerivedFromEmptyPassphrase { .. } => ValidationLevel::Verified,
         }
     }
@@ -348,6 +381,8 @@ impl Problem {
             | Problem::SectionDifference { path, .. }
             | Problem::SignatureDoesNotVerify { path, .. }
             | Problem::SignedByUnexpectedKey { path, .. }
+            | Problem::MissingVerifiedAttestation { path }
+            | Problem::MissingExpectedReviewer { path, .. }
             | Problem::KeyDerivedFromEmptyPassphrase { path } => Some(path),
         }
     }
@@ -379,6 +414,12 @@ impl Problem {
                 "the artifact is tampered or corrupt: regenerate and re-promote"
             }
             Problem::SignedByUnexpectedKey { .. } => "re-sign with the reviewer's key",
+            Problem::MissingVerifiedAttestation { .. } => {
+                "promote the checked artifact to verified with a human signing key"
+            }
+            Problem::MissingExpectedReviewer { .. } => {
+                "have the configured reviewer inspect and co-sign this artifact"
+            }
             Problem::KeyDerivedFromEmptyPassphrase { .. } => {
                 "a human must sign: `einmo promote checked to verified <suite> --interactive`"
             }
@@ -449,12 +490,68 @@ impl std::fmt::Display for Problem {
                 "{}: stage:verified verifies, but is signed by key {found} — expected a key starting {expected_prefix}",
                 path.display()
             ),
+            Problem::MissingVerifiedAttestation { path } => write!(
+                f,
+                "{}: verified artifact has no stage:verified stamp",
+                path.display()
+            ),
+            Problem::MissingExpectedReviewer {
+                path,
+                expected_prefix,
+                found,
+            } => write!(
+                f,
+                "{}: expected reviewer is absent — no stage:verified signer matches {expected_prefix}; found [{}]",
+                path.display(),
+                found.join(", ")
+            ),
             Problem::KeyDerivedFromEmptyPassphrase { path } => write!(
                 f,
                 "{}: stage:verified is signed by the well-known key generated from the empty passphrase — an AI attested where a human was required",
                 path.display()
             ),
         }
+    }
+}
+
+/// Order-independent interpretation of every `stage:verified` stamp on one
+/// verified artifact.
+struct AttestationPolicyResult {
+    verified_signers: Vec<String>,
+    computer_key_offenders: Vec<String>,
+    expected_reviewer_match: Option<bool>,
+    final_verdict: bool,
+}
+
+fn evaluate_verified_attestation(
+    file: &EinmoFile,
+    expected_prefix: Option<&str>,
+) -> AttestationPolicyResult {
+    let verified_signers: Vec<String> = file
+        .stamps()
+        .entries()
+        .iter()
+        .filter(|stamp| stamp.key() == Stage::Verified.stamp_key())
+        .map(|stamp| stamp.pubkey_hex().to_string())
+        .collect();
+    let computer_key_offenders = verified_signers
+        .iter()
+        .filter(|pubkey| crate::signature::is_computer_key(pubkey))
+        .cloned()
+        .collect::<Vec<_>>();
+    let expected_reviewer_match = expected_prefix.map(|prefix| {
+        verified_signers
+            .iter()
+            .any(|pubkey| pubkey.starts_with(prefix))
+    });
+    let final_verdict = !verified_signers.is_empty()
+        && computer_key_offenders.is_empty()
+        && expected_reviewer_match.unwrap_or(true);
+    AttestationPolicyResult {
+        verified_signers,
+        computer_key_offenders,
+        expected_reviewer_match,
+        final_verdict,
     }
 }
 
@@ -781,26 +878,32 @@ impl EinmoTestRunner {
             let Ok(file) = EinmoFile::from_file(&path) else {
                 continue; // SignatureInvalid is reported by the stage-pair check
             };
-            let Some(stamp) = file
-                .stamps()
-                .entries()
-                .iter()
-                .find(|s| s.key() == Stage::Verified.stamp_key())
-            else {
-                continue; // no verified stamp: MissingCounterpart/compare covers it
-            };
-            let pubkey = stamp.pubkey_hex().to_string();
-            if crate::signature::is_computer_key(&pubkey) {
-                out.push(Problem::KeyDerivedFromEmptyPassphrase { path: rel.clone() });
-            } else if let Some(prefix) = &expected_prefix
-                && !pubkey.starts_with(prefix.as_str())
+            let policy = evaluate_verified_attestation(&file, expected_prefix.as_deref());
+            let mut artifact_problems = Vec::new();
+            if policy.verified_signers.is_empty() {
+                artifact_problems.push(Problem::MissingVerifiedAttestation { path: rel.clone() });
+            }
+            for _pubkey in &policy.computer_key_offenders {
+                // The computer key is well-known and deterministic. One
+                // problem per offending stamp makes duplicates visible while
+                // leaving the boolean verdict unchanged.
+                artifact_problems
+                    .push(Problem::KeyDerivedFromEmptyPassphrase { path: rel.clone() });
+            }
+            if let (Some(false), Some(prefix)) =
+                (policy.expected_reviewer_match, expected_prefix.as_ref())
             {
-                out.push(Problem::SignedByUnexpectedKey {
+                let mut found = policy.verified_signers.clone();
+                found.sort();
+                found.dedup();
+                artifact_problems.push(Problem::MissingExpectedReviewer {
                     path: rel.clone(),
                     expected_prefix: prefix.clone(),
-                    found: pubkey,
+                    found,
                 });
             }
+            debug_assert_eq!(policy.final_verdict, artifact_problems.is_empty());
+            out.extend(artifact_problems);
         }
         out.sort_by(|x, y| x.path().cmp(&y.path()));
         Ok(out)
@@ -1861,12 +1964,179 @@ mod tests {
             .unwrap();
     }
 
+    fn promote_with(config: &TestConfig, from: Stage, to: Stage, passphrase: &str) {
+        crate::suite::EinmoSuite::scan(crate::storage::EinmoDirectory::new(config.clone()), None)
+            .unwrap()
+            .promote(
+                from,
+                to,
+                &crate::config::KeySource::from_passphrase(passphrase),
+                None,
+                None,
+            )
+            .unwrap();
+    }
+
+    fn checked_case() -> (tempfile::TempDir, TestConfig) {
+        let (tmp, runner) = suite();
+        let config = runner
+            .config()
+            .clone()
+            .with_validation_level(ValidationLevel::Verified);
+        std::fs::write(config.input_path().join("a.foo"), "{5;}").unwrap();
+        runner.evaluate_all(&Echo).unwrap();
+        promote_generated_to_output(&config);
+        promote_with(&config, Stage::Output, Stage::Checked, "checker");
+        (tmp, config)
+    }
+
+    fn verified_problems(config: &TestConfig) -> Vec<Problem> {
+        check_suite_integrity(config, FailurePolicy::FailAtEnd)
+            .unwrap()
+            .problems
+    }
+
+    fn signer_prefix(passphrase: &str) -> String {
+        crate::signature::StageKeypair::derive(passphrase).pubkey_hex()[..16].to_string()
+    }
+
     fn suite() -> (tempfile::TempDir, EinmoTestRunner) {
         let tmp = tempfile::tempdir().unwrap();
         let config = TestConfig::new(tmp.path(), ValidationLevel::Output);
         config.ensure_stage_dirs().unwrap();
         std::fs::create_dir_all(config.input_path()).unwrap();
         (tmp, EinmoTestRunner::new(config))
+    }
+
+    #[test]
+    fn verified_level_rejects_empty_passphrase_key() {
+        let (_tmp, config) = checked_case();
+        promote_with(&config, Stage::Checked, Stage::Verified, "");
+
+        let problems = verified_problems(&config);
+        assert_eq!(
+            problems
+                .iter()
+                .filter(|problem| matches!(problem, Problem::KeyDerivedFromEmptyPassphrase { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn verified_attestation_human_then_computer_fails() {
+        let (_tmp, config) = checked_case();
+        promote_with(&config, Stage::Checked, Stage::Verified, "human");
+        promote_with(&config, Stage::Checked, Stage::Verified, "");
+
+        let problems = verified_problems(&config);
+        assert!(
+            problems
+                .iter()
+                .any(|problem| matches!(problem, Problem::KeyDerivedFromEmptyPassphrase { .. }))
+        );
+    }
+
+    #[test]
+    fn verified_attestation_computer_then_human_fails() {
+        let (_tmp, config) = checked_case();
+        promote_with(&config, Stage::Checked, Stage::Verified, "");
+        promote_with(&config, Stage::Checked, Stage::Verified, "human");
+
+        let problems = verified_problems(&config);
+        assert!(
+            problems
+                .iter()
+                .any(|problem| matches!(problem, Problem::KeyDerivedFromEmptyPassphrase { .. }))
+        );
+    }
+
+    #[test]
+    fn verified_attestation_expected_reviewer_among_cosigners_passes() {
+        let (_tmp, config) = checked_case();
+        promote_with(&config, Stage::Checked, Stage::Verified, "other-human");
+        promote_with(&config, Stage::Checked, Stage::Verified, "expected-human");
+        let config = config.with_reviewer_key_prefix(signer_prefix("expected-human"));
+
+        assert!(
+            verified_problems(&config).is_empty(),
+            "an unexpected human co-signer is visible in the stamp chain but does not invalidate an expected reviewer's attestation"
+        );
+    }
+
+    #[test]
+    fn verified_attestation_missing_expected_reviewer_fails() {
+        let (_tmp, config) = checked_case();
+        promote_with(&config, Stage::Checked, Stage::Verified, "other-human");
+        let config = config.with_reviewer_key_prefix(signer_prefix("expected-human"));
+
+        let report = SuiteIntegrity {
+            problems: verified_problems(&config),
+        }
+        .report();
+        assert!(report.contains("expected reviewer is absent"), "{report}");
+    }
+
+    #[test]
+    fn verified_attestation_duplicate_identical_stamp_does_not_change_verdict() {
+        let (_tmp, config) = checked_case();
+        promote_with(&config, Stage::Checked, Stage::Verified, "expected-human");
+        let path = config.stage_dir(Stage::Verified).join("a.foo.einmo");
+        let mut file = EinmoFile::from_file(&path).unwrap();
+        file.append_stage_stamp_with(
+            Stage::Verified.stamp_key(),
+            &crate::signature::StageKeypair::derive("expected-human"),
+        );
+        std::fs::write(&path, file.serialize().unwrap()).unwrap();
+        let config = config.with_reviewer_key_prefix(signer_prefix("expected-human"));
+
+        assert!(verified_problems(&config).is_empty());
+    }
+
+    #[test]
+    fn verified_attestation_human_only_passes() {
+        let (_tmp, config) = checked_case();
+        promote_with(&config, Stage::Checked, Stage::Verified, "human");
+
+        assert!(verified_problems(&config).is_empty());
+    }
+
+    #[test]
+    fn verified_attestation_reports_every_duplicate_computer_stamp() {
+        let (_tmp, config) = checked_case();
+        promote_with(&config, Stage::Checked, Stage::Verified, "");
+        let path = config.stage_dir(Stage::Verified).join("a.foo.einmo");
+        let mut file = EinmoFile::from_file(&path).unwrap();
+        file.append_stage_stamp_with(
+            Stage::Verified.stamp_key(),
+            &crate::signature::StageKeypair::derive(""),
+        );
+        std::fs::write(&path, file.serialize().unwrap()).unwrap();
+
+        assert_eq!(
+            verified_problems(&config)
+                .iter()
+                .filter(|problem| matches!(problem, Problem::KeyDerivedFromEmptyPassphrase { .. }))
+                .count(),
+            2,
+            "duplicate stamps do not change the failed verdict, but every offender remains visible"
+        );
+    }
+
+    #[test]
+    fn verified_attestation_zero_verified_stamps_fails() {
+        let (_tmp, config) = checked_case();
+        std::fs::copy(
+            config.stage_dir(Stage::Checked).join("a.foo.einmo"),
+            config.stage_dir(Stage::Verified).join("a.foo.einmo"),
+        )
+        .unwrap();
+
+        let report = SuiteIntegrity {
+            problems: verified_problems(&config),
+        }
+        .report();
+        assert!(report.contains("no stage:verified stamp"), "{report}");
     }
 
     #[test]
