@@ -2,11 +2,11 @@
 eimp: D11
 title: Reliability hardening, transactional persistence, and documentation reset
 author: OpenAI Codex (GPT-5) <noreply@openai.com>
-status: Draft
+status: Implementing
 type: Standards
 created: 2026-08-26
 supersedes: []
-begun: [ ]
+begun: [x]
 ---
 
 # EIMP-11: Reliability hardening, transactional persistence, and documentation reset
@@ -974,6 +974,11 @@ amend its concrete first pass.
   snapshot isolation.
 
 ## Last Updated
+
+**Date**: 2026-09-01
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Began EIMP 11 on `jia` after the focused subset, formatting,
+workspace clippy, all 424 nextest tests, and workspace doctests passed cleanly.
 
 **Date**: 2026-08-27
 **Updated By**: OpenAI Codex (GPT-5)

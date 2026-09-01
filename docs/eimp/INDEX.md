@@ -26,7 +26,7 @@ ls docs/eimp | rev | sort -V | rev
 | [EIMP-8](EIMP-8.md) | Code-review findings — einmo library, review server, and zweimomo | Draft | 2026-07-31 | opencode (z-ai/glm-5.2); Claude Code (Opus 5) |
 | [EIMP-9](EIMP-9.md) | The test-tooling contract — one reliable way to run einmo's tests and read the results | Implementing (paused) | 2026-08-01 | Claude Code (Opus 5) |
 | [EIMP-01](EIMP-01.md) | A separate generation phase writing an uncommitted `generated/` stage, and validation levels that compare only against their predecessor | Implementing | 2026-08-11 | Claude Code (Opus 5) |
-| [EIMP-11](EIMP-11.md) | Reliability hardening, transactional persistence, and documentation reset | Draft | 2026-08-26 | OpenAI Codex (GPT-5) |
+| [EIMP-11](EIMP-11.md) | Reliability hardening, transactional persistence, and documentation reset | Implementing | 2026-08-26 | OpenAI Codex (GPT-5) |
 | [EIMP-21](EIMP-21.md) | Paired Python and JavaScript Project Euler answer suites | Draft | 2026-08-27 | OpenAI Codex (GPT-5) |
 
 ---
@@ -145,6 +145,11 @@ nothing is dropped — both land after `EIMP-1`:
 ---
 
 ## Last Updated
+
+**Date**: 2026-09-01
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Marked EIMP 11 Implementing after its clean Phase 0 baseline and
+focused-test establishment on `jia`.
 
 **Date**: 2026-08-27
 **Updated By**: OpenAI Codex (GPT-5)

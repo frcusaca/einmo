@@ -190,12 +190,33 @@ unambiguous.
 
 ## Phase 0 — Begin and re-baseline
 
-- [ ] Establish relevant tests for this phase. Use [these instructions](../../README.md#running-specific-tests) to run: `metadata_whitespace_tamper_detected`, `promote_refuses_tampered_source`, `verified_level_rejects_empty_passphrase_key`, `generated_promotes_only_into_output`, `eimp01_output_gate_goes_red_on_divergence_and_green_after_promotion`.
-- [ ] **[SEQ 0.1]** Re-run the complete repository gates before substantive work; resolve any pre-existing failure first and record environment-only blockers without substituting `cargo test` for the required nextest contract.
-  - [ ] Record toolchain, clippy, nextest, Python-development-library, and target-directory state.
-  - [ ] Confirm fmt, workspace clippy, workspace nextest, and doctest outcomes separately.
-  - [ ] Preserve machine-readable failure output before repairing a real baseline failure.
-- [ ] **[SEQ 0.2]** Begin work: commit `EIMP-11.md`, `EIMP-11.plan.md`, and the index update; set `begun: [x]` and `status: Implementing` only when implementation actually starts.
+- [x] Establish relevant tests for this phase. Use [these instructions](../../README.md#running-specific-tests) to run: `metadata_whitespace_tamper_detected`, `promote_refuses_tampered_source`, `verified_level_rejects_empty_passphrase_key`, `generated_promotes_only_into_output`, `eimp01_output_gate_goes_red_on_divergence_and_green_after_promotion`.
+      (2026-09-01 13:31)
+  The four existing targets passed. `verified_level_rejects_empty_passphrase_key`
+  is intentionally absent and remains Phase 1B's test-first target; it was not
+  treated as passing or replaced by another test.
+- [x] **[SEQ 0.1]** Re-run the complete repository gates before substantive work; resolve any pre-existing failure first and record environment-only blockers without substituting `cargo test` for the required nextest contract.
+      (2026-09-01 13:31)
+  - [x] Record toolchain, clippy, nextest, Python-development-library, and target-directory state.
+        (2026-09-01 13:31)
+    Rust/Cargo/Clippy 1.98.0, just 1.58.0, and cargo-nextest 0.9.88.
+    Runs override ambient `CARGO_TARGET_DIR=/yolo/target` and
+    `RUSTC_WRAPPER=sccache` with `CARGO_TARGET_DIR=/yolo/einmo/target` and an
+    empty wrapper. Python linking uses
+    `LIBRARY_PATH=/usr/lib/python3.14/config-3.14-x86_64-linux-gnu`.
+  - [x] Confirm fmt, workspace clippy, workspace nextest, and doctest outcomes separately.
+        (2026-09-01 13:31)
+    `just` passed formatting, workspace clippy with warnings denied, and all
+    424 nextest tests (run `769d69f4-9c95-4073-8965-80a7089f458f`). Workspace
+    doctests passed separately for einmo, einmo-tools, and zweimomo, each with
+    zero doctests. The slowest existing corpus re-sign test took 119.525s
+    against the unchanged 120s nextest limit.
+  - [x] Preserve machine-readable failure output before repairing a real baseline failure.
+        (2026-09-01 13:31)
+    No baseline failure occurred, so there was no failure output to preserve or
+    repair.
+- [x] **[SEQ 0.2]** Begin work: commit `EIMP-11.md`, `EIMP-11.plan.md`, and the index update; set `begun: [x]` and `status: Implementing` only when implementation actually starts.
+      (2026-09-01 13:31)
 - [ ] **[PAR finding-audit]** Re-audit EIMP 11's P0/P1/P2 findings against current `jia`; record changed locations, already-fixed findings, and new regression-test names without weakening invariants.
 - [ ] **[PAR prior-eimp-audit]** Map EIMP 11 sections to EIMP 8 accepted unresolved findings and EIMP 9 tasks; include owner, status, overlap, and migration constraint.
 - [ ] **[PAR public-surface-audit]** Capture current public API, CLI help/exit codes, stage graph, config behavior, and filesystem capability as a before-state artifact.
@@ -587,6 +608,12 @@ unambiguous.
 - [ ] Commit: `EIMP-11 complete: transactional hardening and documentation reset`.
 
 ## Last Updated
+
+**Date**: 2026-09-01
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Established and recorded the clean Phase 0 focused/full baseline,
+tool environment, absent future test target, and commencement of EIMP 11 on
+`jia`.
 
 **Date**: 2026-08-27
 **Updated By**: OpenAI Codex (GPT-5)
