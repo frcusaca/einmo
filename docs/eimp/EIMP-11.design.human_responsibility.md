@@ -110,6 +110,19 @@ record is created.
 These choices implement contract 5.4. Permissions and presentation should
 make their different consequences unmistakable.
 
+## Escalation Is More Than Printing a Failure
+
+Einmo core should emit a typed attention event for validation failure, history
+divergence, uncovered change, or insufficient evidence. It should also return a
+conspicuous non-success result locally. This is what the library can guarantee.
+
+A deployment may route that event into an issue tracker, email, chat, a release
+dashboard, or another human workflow. “Event emitted,” “notification
+delivered,” and “human acknowledged” are three different states. The system
+must not claim that a human was alerted unless the configured integration can
+support that claim. This implements contract 5.9 while preserving offline and
+library-only use.
+
 ## Proposal Is Not Approval
 
 An agent may:
@@ -158,6 +171,8 @@ The interface should encourage responsible behavior through mechanics:
   evidence prominently;
 - require rationale proportional to the consequence of the action; and
 - make “stop and leave unsigned” an ordinary, non-punitive outcome.
+- distinguish local attention events, delivered notifications, and human
+  acknowledgements.
 
 These are product requirements, not merely documentation advice. They are
 grounded by contracts 5.4–5.8.
@@ -187,6 +202,8 @@ Every significant user story should answer:
 4. Which resolution choices are offered?
 5. Which actor may propose, approve, activate, and sign each choice?
 6. What exact claim exists after the choice—and what claim does not exist?
+7. How does the discrepancy reach the responsible human, and what delivery or
+   acknowledgement evidence actually exists?
 
 The removed-commit story is the first adversarial example of this framework.
 Future stories should include a legitimate behavior change, a necessary test
@@ -202,4 +219,5 @@ new code.
 defining correctness versus propriety, the protected-system and development-
 delta views, discrepancy packets, four explicit resolution paths, proposal/
 approval separation, review rationale, safe interaction defaults, honest
-limits, and questions every user story must answer.
+limits, actionable escalation with separate event/delivery/acknowledgement
+states, and questions every user story must answer.

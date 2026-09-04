@@ -33,7 +33,8 @@ discovery, selection, start, and completion. **Contracts relied upon:
 
 All cases pass. Einmo creates `R2`, bound to `S2 + V1 + I1` and the new tested
 artifact. `R1` remains evidence about `S1`; it is not overwritten or relabeled.
-**Contracts relied upon: 3.3–3.6.**
+Appending `R2` does not redefine verifier content `V1`. **Contracts relied
+upon: 3.3–3.7.**
 
 ## Failing Path
 
@@ -89,6 +90,7 @@ diagnostic aid and follows its own retention policy.
 | Preserve fresh failure output without changing baselines | 3.1 |
 | Do not sign or store a failed run | 3.2, 3.5 |
 | Bind a passing result to the new commit | 3.3, 3.4 |
+| Append success without changing verifier identity | 3.7 |
 | Prevent yesterday's success from satisfying today's SHA | 3.6, 4.5 |
 
 ## Questions Exposed by This Story
@@ -106,5 +108,5 @@ diagnostic aid and follows its own retention policy.
 **Updated By**: OpenAI Codex (GPT-5)  
 **Changes**: Created the Day 2 EIMP 11 user story, covering an unchanged
 inventory against a new subject SHA, both passing and failing paths,
-infrastructure interruption, unsigned diagnostics, retry with a new commit,
-and replay prevention.
+infrastructure interruption, diagnostics carrying no assurance claim, retry with a new commit,
+replay prevention, and non-circular result storage.

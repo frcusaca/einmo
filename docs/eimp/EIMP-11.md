@@ -221,6 +221,18 @@ snapshots, promote stages, or run ordinary gates.
   version through an independently authorized, recorded action.
 - **1.5 Fail closed:** missing, malformed, unauthenticated, or incompatible
   inventory prevents validation success.
+- **1.6 Selection resists rollback:** active-inventory and compatibility
+  metadata MUST be authenticated. An older valid inventory cannot silently
+  replace the version required by policy. Offline use is permitted only when
+  the exact required inventory and enough policy state to accept it are
+  available locally.
+- **1.7 Requirement meaning is versioned:** changing a requirement, oracle,
+  expected behavior, hierarchy, or sequence MUST create a reviewed versioned
+  definition. Historical records retain the meaning that applied when signed.
+- **1.8 Activation does not depend on passing:** once an independently
+  authorized obligation becomes active, its failure prevents a current success.
+  Activation MUST NOT be delayed automatically until the subject happens to
+  pass. Transitional policy, if supported, must be explicit and conspicuous.
 
 The detailed rationale and acceptance implications live in
 [the contract catalogue](EIMP-11.contract.assurance_validation.md).
@@ -243,14 +255,23 @@ The detailed rationale and acceptance implications live in
   or zero-test execution cannot produce success.
 - **2.7 Authoring is not assurance:** development runs remain available, but
   they cannot create successful validation records.
+- **2.8 Invocation is independently accountable:** an official validation
+  entry point MUST be invoked outside subject-controlled test discovery, and a
+  consuming gate MUST require its fresh successful record. Einmo cannot report
+  an ignored suite from inside a process that was never started.
+- **2.9 Execution inputs are immutable:** official execution MUST use a sealed
+  snapshot or enforce equivalent write denial for subject, verifier, inventory,
+  policy, dependencies, and tested artifacts. Writes are confined to declared
+  generated and scratch areas. Pre/post cleanliness checks supplement but do
+  not replace execution-time immutability.
 
 ### S.4 — Contract 3: results and assurance
 
 - **3.1 Generated output is work material:** execution materializes results
   for comparison and diagnosis without changing reviewed expectations.
-- **3.2 Failure remains unsigned:** failed or incomplete validation produces
-  diagnostic generated output but no assurance signature or validation-
-  repository result.
+- **3.2 Failure receives no assurance signature:** failed or incomplete
+  validation produces diagnostic generated output but no assurance signature
+  or validation-repository result.
 - **3.3 Only complete success is signed:** successful evidence is created only
   after inventory reconciliation, comparison, and execution invariants pass.
 - **3.4 The signature binds the whole claim:** the record identifies the exact
@@ -261,6 +282,14 @@ The detailed rationale and acceptance implications live in
 - **3.6 Applicability is exact:** a record applies only to the identities and
   policy it names. A historically valid record may be insufficient for current
   policy.
+- **3.7 Result storage is non-circular:** storing a successful record MUST NOT
+  change the meaning of the validation-repository revision named by that same
+  record. Verifier content and appended evidence require distinct identities,
+  trees, or storage domains.
+- **3.8 Evidence selection is deterministic:** policy MUST determine which
+  successful records are required and which prior result supplies comparison
+  context. The tool MUST display the selection and MUST NOT silently choose a
+  convenient older success.
 
 ### S.5 — Contract 4: security acceptance
 
@@ -304,6 +333,11 @@ appropriate controls for weakened assertions.
 - **5.8 Reproduction before authority:** a human or agent SHOULD be able to
   reproduce and inspect evidence without receiving credentials that authorize
   promotion, inventory activation, or assurance signing.
+- **5.9 Actionable escalation:** validation failure, history divergence,
+  uncovered change, or insufficient evidence MUST produce a typed,
+  machine-readable attention event and conspicuous local result. Notification
+  integrations MAY route that event to a human; no delivery claim may be made
+  without configured delivery and acknowledgement evidence.
 
 The human-factors rationale and candidate interaction model are expanded in
 [the human-responsibility design supplement](EIMP-11.design.human_responsibility.md).
@@ -392,7 +426,17 @@ specification gap rather than merely a documentation problem.
 | [Day 2](EIMP-11.user_story.day_2_regression_and_failure.md) | What happens on an ordinary pass, a regression, and a retry? |
 | [Week 2](EIMP-11.user_story.week_2_expand_coverage.md) | How are old obligations checked before coverage expands for new code? |
 | [Removed commit and patched tests](EIMP-11.user_story.detected_many_broken_cases.md) | How does independent validation focus human attention when subject-owned tests were made green? |
+| [Ignored suite](EIMP-11.user_story.detected_ignored_suite.md) | Who detects an ignored inner case, outer suite wrapper, or entire validation job? |
+| [Sequential failure cascade](EIMP-11.user_story.sequential_failure_cascade.md) | How do hierarchy and sequence turn many red leaves into truthful causal context? |
+| [Unavailable or stale inventory](EIMP-11.user_story.inventory_unavailable_or_stale.md) | When may an authenticated local inventory be used offline, and how is rollback refused? |
+| [Inputs mutate during execution](EIMP-11.user_story.checkout_mutated_during_run.md) | Why are clean pre/post checks insufficient, and which paths may remain writable? |
+| [Store a successful result](EIMP-11.user_story.store_success_without_changing_verifier.md) | How can good evidence be appended without recursively changing the verifier identity it names? |
+| [Intentional behavior change](EIMP-11.user_story.intentional_behavior_change.md) | How does a legitimate new requirement replace old expectations without rewriting history or bypassing staged review? |
 | [Year 2](EIMP-11.user_story.year_2_evidence_evolution.md) | How do old evidence, new policy, key changes, platforms, and archives coexist? |
+
+[The contract-to-story matrix](EIMP-11.traceability.contract_story_matrix.md)
+audits every numbered contract against these stories and records the design
+gaps they exposed.
 
 ## Test Plan
 
@@ -405,11 +449,17 @@ cover:
 - exact commit resolution with offline reuse of locally available objects;
 - tracked, untracked, ignored-file, and submodule dirtiness in both versioned
   repositories before and after execution;
+- attempted transient mutation and restoration of source, verifier, inventory,
+  dependency, and tested-binary inputs during execution;
 - complete set reconciliation for every required test lifecycle state;
 - ignored, filtered, zero-test, timeout, abort, and evaluator-crash outcomes;
+- ignored inner cases, an ignored outer suite wrapper, and a validation job
+  omitted entirely;
 - unsigned failure diagnostics and absence of a stored success record;
 - signed successful records and verification of every bound identity;
 - replay attempts across each identity dimension;
+- non-circular storage of a record that itself names the verifier revision;
+- deterministic prior-success and current-policy evidence selection;
 - inventory activation and policy rejection of stale-but-authentic records;
 - direct `.approved` and signed-stage tampering; and
 - change summaries that expose removed commits and divergent ancestry;
@@ -418,6 +468,7 @@ cover:
 - distinct repair, verifier-change, and inventory-change resolution paths;
 - separation and attribution of agent proposals and human approvals;
 - honest display of previous-coverage success versus new-code coverage gaps;
+- typed local escalation and truthful notification-delivery status;
 - hierarchical inventory validation, truthful group rollups, explicit
   sequence dependencies, cycle detection, and blocked descendants;
 - comprehensive end-to-end Day 1, Day 2, and Week 2 workflows.
@@ -475,7 +526,16 @@ claims.
 - Which environment fields are identity-bearing versus diagnostic?
 - How do platform profiles express legitimate non-applicability without
   turning it into an invisible skip?
-- How long and where is unsigned generated failure output retained?
+- How long and where is generated failure output carrying no assurance claim
+  retained?
+- Does the validation repository store result records in a separate tree,
+  branch, or content-addressed ledger so appending a result does not redefine
+  the verifier revision it names?
+- What deterministic rule selects the last relevant success for change
+  briefing when profiles and inventories branch?
+- Which notification integrations, if any, belong in core einmo, and how is
+  delivery or acknowledgement represented without making a hosted service
+  mandatory?
 - How do assurance-key rotation, revocation, and historical trust evaluation
   work?
 - Which source, dependency, toolchain, and binary materials must be archived
@@ -490,6 +550,7 @@ claims.
 - [Contract catalogue](EIMP-11.contract.assurance_validation.md)
 - [Human understanding and responsible action](EIMP-11.design.human_responsibility.md)
 - [Structured tests](EIMP-11.design.structured_tests.md)
+- [Contract-to-story traceability](EIMP-11.traceability.contract_story_matrix.md)
 - [Motivation, failure catalogue, and prior-art research](EIMP-11.research.motivation_and_prior_art.md)
 - [Repository tutorial](../tutorial.md)
 - Root `README.md`, especially the stage model and specific-test guidance
@@ -501,7 +562,10 @@ claims.
 **Updated By**: OpenAI Codex (GPT-5)  
 **Changes**: Created Draft EIMP 11, preserving existing colocated and four-stage
 einmo behavior while specifying the initial extra-repository authority model,
-contracts 1.1–6.8, lifecycle, successful validation claim, test obligations,
-rejected alternatives, and open design questions. Added Phase 2 human-
-understanding and responsible-action goals, structured hierarchical/sequential
-tests, and links to the first five user-story supplements.
+six contract families, lifecycle, successful validation claim, test
+obligations, rejected alternatives, and open design questions. Added Phase 2
+human-understanding and responsible-action goals, structured hierarchical and
+sequential tests, independent invocation, non-circular result storage,
+deterministic evidence selection, rollback-resistant inventory selection,
+immutable execution inputs, actionable escalation, eleven user stories,
+and contract-to-story traceability.

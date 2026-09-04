@@ -112,8 +112,12 @@ short. **Contracts relied upon: 3.1, 5.1–5.3, 6.1–6.6.**
 The command and any policy gate return failure. The validation repository gets
 no successful record for `S42 + V7 + I7`. Generated output remains available
 for diagnosis, but the failed run receives no assurance signature. The older
-`R31` cannot be replayed for `S42`. **Contracts relied upon: 3.2, 3.5, 3.6,
-4.5.**
+`R31` cannot be replayed for `S42`.
+
+Einmo also emits a typed attention event. In local use, the failing result and
+discrepancy packet are the alert. In a configured deployment, an adapter may
+route the event to the responsible human and separately report delivery or
+acknowledgement. **Contracts relied upon: 3.2, 3.5, 3.6, 4.5, 5.9.**
 
 ## The Human's Decision
 
@@ -185,6 +189,7 @@ claim. **Contracts relied upon: 2.4–2.6, 3.2, 5.1–5.3, 6.1–6.7.**
 | Every protected case must execute | 2.5, 2.6 |
 | Many failures are grouped without hiding leaves | 5.1, 5.3, 6.1–6.6 |
 | Failure leaves diagnostics but no signed success | 3.1, 3.2, 3.5 |
+| Typed failure is routed to human attention | 5.3, 5.9 |
 | Prior green record cannot validate the new SHA | 3.4, 3.6, 4.5 |
 | Human chooses subject repair or deliberate verifier change | 5.4, 5.8 |
 | Agent proposal remains distinct from approval | 5.5, 5.6 |
@@ -213,6 +218,8 @@ and explicit human resolution is the intended assurance mechanism.
   summary identifies the earliest structured failure.
 - A blocked sequential descendant cannot be counted as passed.
 - The failure path cannot invoke assurance signing.
+- Local failure always emits a typed attention event; notification delivery is
+  claimed only when a configured integration provides evidence of it.
 - Choosing “repair subject” preserves verifier and inventory identities.
 - Choosing “revise verifier” requires a new clean validation commit and review.
 - Choosing “change policy” requires a new independently authorized inventory.
@@ -239,4 +246,5 @@ and explicit human resolution is the intended assurance mechanism.
 commit, patches colocated tests, and produces a green subject repository while
 independent structured cases fail. Defined the human discrepancy packet,
 subject-repair and intentional-verifier-change paths, contract trace,
-guarantees, limits, and derived acceptance scenarios.
+guarantees, limits, actionable human escalation, and derived acceptance
+scenarios.

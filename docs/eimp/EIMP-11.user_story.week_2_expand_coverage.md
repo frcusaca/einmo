@@ -66,8 +66,8 @@ cannot create a successful result. **Contracts relied upon: 4.1, 4.2,
 ### 4. Interpret the first pass honestly
 
 The suite passes. Einmo signs and stores `R17-I4`, bound to `S17 + V4 + I4`
-and the exact tested artifact and environment profile. **Contracts relied upon:
-3.3–3.5.**
+and the exact tested artifact and environment profile. Appending the result
+does not redefine `V4`. **Contracts relied upon: 3.3–3.5, 3.7.**
 
 The human has learned:
 
@@ -157,7 +157,7 @@ S8 passed V4 + I4
         │                                  │                     │
         │                                fail                  pass
         │                                  │                     │
-        │                       unsigned diagnostics       R17-I4 signed
+        │                     diagnostics; no assurance    R17-I4 signed
         │                                                        │
         │                                             author/review V5
         │                                             activate I5
@@ -168,7 +168,7 @@ S8 passed V4 + I4
         │                                  │                            │
         │                                fail                         pass
         │                                  │                            │
-        └────────────────────── unsigned diagnostics              R17-I5 signed
+        └──────────────────── diagnostics; no assurance            R17-I5 signed
 ```
 
 ## Contract Trace
@@ -198,6 +198,8 @@ S8 passed V4 + I4
   signer separated in small teams?
 - Can the same subject have several simultaneous successful records for
   different platforms and profiles?
+- Where are good results appended so they do not recursively change the
+  verifier content identity?
 
 ## Last Updated
 
@@ -206,4 +208,5 @@ S8 passed V4 + I4
 **Changes**: Created the central Week 2 EIMP 11 user story. Defined the
 two-pass workflow of validating old obligations first, then authoring,
 reviewing, protecting, and validating new structured coverage, with explicit
-contract references and honest intermediate claims.
+contract references, honest intermediate claims, and non-circular success
+storage.

@@ -44,10 +44,11 @@ Three decisions are already made:
    when the working tree contains uncommitted or untracked changes.
 2. **The protected inventory lives in a separately secured location.** The
    subject-writing agent cannot redefine which suites and cases are required.
-3. **Failed runs are not signed and are not stored as good validation
-   results.** Their generated output remains available for diagnosis. Only a
-   complete successful run can produce the signed record stored by the
-   validation repository.
+3. **Failed validation runs receive no assurance signature and are not stored
+   as good validation results.** Their generated output remains available for
+   diagnosis and may retain einmo's existing mechanical stage stamps. Only a
+   complete successful run can produce the signed assurance record stored by
+   the validation repository.
 
 The rest of this document explains the motivation, vocabulary, candidate
 design, threats, and relevant existing systems. Read through **Candidate
@@ -284,9 +285,11 @@ protected-inventory: sha256:<separately secured inventory digest>
 run-id: <unique identifier>
 ```
 
-Generated output should carry the same identity as unsigned diagnostic
-metadata so a developer knows exactly what failed. After success, these fields
-are covered by the successful validation record's assurance signature.
+Generated output should carry the same identity as diagnostic metadata so a
+developer knows exactly what failed. Existing `.einmo` stage stamps remain
+mechanical integrity/provenance evidence, not an assurance signature on the
+validation run. After success, these fields are covered by the successful
+validation record's assurance signature.
 Individual successful case artifacts may reference that record by digest so
 the full claim need not be repeated in every case. That normalization must not
 permit cases from different runs or subjects to be mixed silently.
@@ -465,8 +468,8 @@ oracle changes; retain before/after evidence and reviewer justification.
 - Allow missing reports to mean “no failures” rather than “no evidence.”
 
 Design pressure: use typed terminal outcomes and require inventory
-reconciliation before success. A failure produces unsigned generated output
-for diagnosis, never an assurance signature or good validation record.
+reconciliation before success. A failure produces generated output for
+diagnosis but never an assurance signature or good validation record.
 Absence, truncation, and parser failure are hard failures. A retry is a new
 attempt; only a complete passing attempt can enter the validation repository.
 
@@ -1317,8 +1320,8 @@ upstream tests + external hardware lab + downstream integration suite
    need platform-specific exclusions; strict profiles can then require zero
    skips while ordinary runs remain usable.
 6. Keep the assurance meaning narrow: the validation repository contains
-   signed successful results. A failure leaves unsigned generated output for
-   diagnosis and contributes no assurance evidence. The absence of a current
+   signed successful results. A failure leaves generated output carrying no
+   assurance claim and contributes no successful assurance evidence. The absence of a current
    successful record means “not validated,” never “passed.”
 7. Distinguish continuous evidence from point-in-time audit/certification and
    encode expiration or applicable version ranges.
@@ -1386,7 +1389,9 @@ upstream tests + external hardware lab + downstream integration suite
 **Updated By**: OpenAI Codex (GPT-5)  
 **Changes**: Moved the existing motivation, failure catalogue, and prior-art
 survey into the EIMP 11 supplemental naming scheme without discarding its
-research; identified `EIMP-11.md` as the governing Draft.
+research; identified `EIMP-11.md` as the governing Draft; and distinguished
+existing mechanical `.einmo` stage stamps from the assurance signature that a
+failed validation run never receives.
 
 **Date**: 2026-09-03  
 **Updated By**: OpenAI Codex (GPT-5)  

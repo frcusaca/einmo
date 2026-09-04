@@ -87,6 +87,42 @@ ambiguous, or incompatible with the selected validation-repository revision.
 It MUST NOT substitute an empty inventory, an older cached inventory, or a
 best-effort discovery result and then report success.
 
+### 1.6 — Selection resists rollback
+
+Inventory content authentication proves “this inventory was authorized,” not
+“this is the inventory current policy requires.” Activation, supersession, and
+compatibility metadata must also be authenticated so an older, valid but less
+demanding inventory cannot be substituted during an outage or attack.
+
+Offline validation is allowed when the exact policy-required inventory and
+enough authenticated policy state to establish its applicability are already
+available locally. A cached mutable label such as `current`, without the state
+needed to prove what it resolved to, is insufficient.
+
+### 1.7 — Requirement meaning is versioned
+
+A stable identifier is not permission to rewrite a requirement's meaning.
+Changing its specification link, oracle, reviewed expectation, hierarchical
+placement, or sequence relationship creates a reviewed versioned definition.
+Successful records retain enough verifier and inventory identity to recover the
+meaning that applied when they were signed.
+
+The eventual schema may use an identifier plus definition digest, explicit
+semantic version, or a new identifier for breaking changes. It must make a
+meaning change conspicuous rather than presenting it as the same unchanged
+obligation.
+
+### 1.8 — Activation does not depend on passing
+
+Once independent review establishes that a new or changed obligation is
+required, activation cannot be conditioned automatically on the subject first
+passing it. Otherwise a difficult new case could remain indefinitely outside
+the active gate.
+
+If coordinated rollout, known defects, or temporary exceptions are supported,
+they require explicit scoped policy with visible consequence. The ordinary
+complete-success claim must not conceal that an active obligation failed.
+
 ## Contract 2 — Validation Execution
 
 ### 2.1 — Exact subject selection
@@ -142,6 +178,41 @@ debug failures. Those development actions use the established einmo workflow.
 Only a clean official validation over fixed identities may progress to an
 assurance signature.
 
+### 2.8 — Invocation is independently accountable
+
+The official extra-repository validation entry point is invoked by authority
+outside subject-controlled test discovery. A subject-side `#[ignore]`, changed
+workspace member, or deleted CI step therefore cannot redefine whether the
+external validation is required.
+
+There are three distinct completeness levels:
+
+1. **Case invocation:** contract 2.5 detects a required case missing inside a
+   running suite.
+2. **Suite invocation:** the external runner reconciles the required suite set
+   and detects an outer wrapper that never invoked einmo.
+3. **Validation invocation:** a release/deployment gate requires a fresh
+   successful record and rejects its absence when the entire job never ran.
+
+No library can emit an alarm from a process that was never started. The
+guarantee comes from combining independently controlled invocation with a
+consumer that fails closed when evidence is absent.
+
+### 2.9 — Execution inputs are immutable
+
+Pre-run and post-run cleanliness checks cannot detect a file that was changed,
+used, and restored during execution. Official validation therefore executes
+from a sealed content snapshot or applies equivalent write denial to subject,
+verifier, inventory, policy, dependencies, and the tested artifact.
+
+Writes are permitted only in declared generated-output and scratch locations.
+Existing `generated/` behavior remains valid; it is an output, not a verifier
+input. Build products should be created in an isolated output location and the
+artifact actually invoked should remain immutable for the run.
+
+The final check still verifies that identities and clean source checkouts did
+not change. It is defense in depth, not the primary execution-time boundary.
+
 ## Contract 3 — Results and Assurance
 
 ### 3.1 — Generated output is work material
@@ -154,7 +225,7 @@ Existing generated `.einmo` artifacts may contain their normal mechanical
 integrity/provenance stamps. Such a stamp does not sign the validation run and
 does not turn a failed run into assurance evidence.
 
-### 3.2 — Failure remains unsigned
+### 3.2 — Failure receives no assurance signature
 
 If any required case fails or remains incomplete, the user receives a failing
 terminal result and generated diagnostic output. The run receives no assurance
@@ -194,6 +265,30 @@ or policy.
 An old record remains historically authentic after the inventory advances. A
 current gate may nevertheless reject it as insufficient. Cryptographic
 validity and present policy acceptance are distinct decisions.
+
+### 3.7 — Result storage is non-circular
+
+A successful record names the verifier content that produced it. Storing that
+record must not retroactively change the verifier identity inside the record or
+force the next run to treat appended evidence as a new test implementation.
+
+The eventual design may use a verifier-tree digest that excludes the result
+area, a separate results branch, a content-addressed evidence ledger, or another
+explicit separation. It must preserve two facts:
+
+1. the verifier content is immutable before execution; and
+2. appending the resulting success cannot alter what the record claims ran.
+
+### 3.8 — Evidence selection is deterministic
+
+A release or comparison request resolves required records by explicit policy:
+subject, inventory, verifier compatibility, profile, signer, and applicable
+time. When the user interface selects the “last relevant success” for a
+development briefing, it displays the selection and reason.
+
+The system must not search backward until it finds a convenient green result,
+quietly substitute a less demanding inventory, or compare against a prior
+profile merely because it is available.
 
 ## Contract 4 — Security Acceptance Tests
 
@@ -332,6 +427,18 @@ output without credentials for expectation promotion, inventory activation,
 or assurance signing. The system should make investigation easy while keeping
 judgment-changing actions explicit and separately authorized.
 
+### 5.9 — Actionable escalation
+
+Failure, incomplete execution, history divergence, known uncovered change, and
+insufficient current evidence produce typed attention events. Core einmo can
+guarantee a conspicuous local result, machine-readable event, and failing gate;
+it cannot guarantee that an absent human read them.
+
+A deployment may route events to email, an issue tracker, chat, or another
+human workflow. If policy claims notification or acknowledgement, the evidence
+must identify the configured destination, delivery outcome, and human
+acknowledgement rather than treating “event emitted” as “human informed.”
+
 ## Contract 6 — Structured Tests
 
 The protected test set is not flat. EIMP 11 preserves einmo's existing
@@ -360,25 +467,32 @@ The detailed semantics and their relationship to current `EinmoId` paths and
 | Agent patches colocated tests | 1.2, 2.4, 4.6 |
 | Agent removes a prior commit and patches colocated tests | 1.2, 2.1, 2.4, 5.2, 5.3 |
 | Required test gains `#[ignore]` | 1.1, 2.5, 2.6, 4.1 |
+| Outer suite or whole validation job is omitted | 1.1, 2.8, 3.8, 5.9 |
 | A prerequisite fails and descendants cannot run | 2.5, 2.6, 6.2, 6.4–6.6 |
 | Runner discovers zero tests | 2.5, 2.6, 4.2 |
 | `.approved` is edited directly | 2.2, 4.3 |
 | Run fails | 3.1, 3.2, 3.5 |
+| Human is alerted to a discrepancy | 5.3, 5.9 |
 | Human decides how to resolve a discrepancy | 5.1, 5.3–5.6, 5.8 |
 | Run passes completely | 3.3, 3.4, 3.5 |
+| Successful record is appended to its repository | 3.4, 3.5, 3.7 |
 | Inventory gains new cases | 1.3, 1.4, 3.6 |
 | A case moves or a sequence changes | 1.4, 6.1–6.3, 6.8 |
 | Old result is offered for a new SHA | 3.4, 3.6, 4.5 |
+| Tool selects a prior success for comparison | 3.6, 3.8, 5.2 |
 | Verifier key or policy changes | 3.4, 3.6 |
 
 ## Last Updated
 
 **Date**: 2026-09-04  
 **Updated By**: OpenAI Codex (GPT-5)  
-**Changes**: Created the detailed catalogue for EIMP 11 contracts 1.1–6.8,
+**Changes**: Created the detailed catalogue for EIMP 11's six contract families,
 including authority boundaries, exact guarantees, interaction with existing
 einmo stages and stamps, acceptance-test implications, and the explicit limit
 on recognizing semantically weakened assertions. Added human-understanding,
 development-delta, attention-routing, responsible-choice, attribution,
 rationale, honest-coverage, and reproduction-without-authority contracts.
-Added the structured-test contract index and links to its detailed supplement.
+Added independent invocation, non-circular result storage, deterministic
+evidence selection, rollback-resistant inventory selection, actionable
+escalation, immutable execution inputs, versioned requirement meaning,
+pass-independent activation, and the structured-test contract index.

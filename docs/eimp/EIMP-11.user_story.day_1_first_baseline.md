@@ -54,7 +54,8 @@ identifier sets. **Contracts relied upon: 1.5, 2.1–2.6.**
 
 If every case completes and passes, einmo creates successful validation record
 `R1`. Its assurance signature binds `S1`, `V1`, `I1`, the tested artifact, and
-the execution context. **Contracts relied upon: 3.3–3.5.**
+the execution context. Appending `R1` does not change the verifier content
+identity `V1` that the record names. **Contracts relied upon: 3.3–3.5, 3.7.**
 
 If anything fails, Mira receives generated diagnostic output instead. The run
 has no assurance signature and the validation repository gains no successful
@@ -86,6 +87,7 @@ future subject revision is valid.
 | Test development remains possible without producing assurance | 2.7, 3.1 |
 | Failure produces diagnostics only | 3.2 |
 | Complete success produces the first record | 3.3–3.5 |
+| Storing the record does not redefine `V1` | 3.7 |
 | Direct baseline editing is not acceptance | 4.3 |
 
 ## Questions Exposed by This Story
@@ -97,6 +99,8 @@ future subject revision is valid.
   range?
 - Can the official run consume a prebuilt artifact, and what provenance must
   accompany it?
+- Is the good-result store a distinct tree, branch, or content-addressed ledger
+  within the validation repository?
 
 ## Last Updated
 
@@ -106,3 +110,5 @@ future subject revision is valid.
 authoring, reviewed expectations, protected-inventory publication, clean
 official execution, and the first successful validation record in contracts
 1.1–4.6.
+Also exposed and grounded the requirement that storing the first successful
+record must not redefine the verifier content identity it names.
