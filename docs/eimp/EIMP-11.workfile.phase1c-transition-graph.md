@@ -20,7 +20,25 @@ The current README CLI table was the only current user-facing statement that
 advertised the shortcut. Historical EIMP discussion/plan text remains evidence
 of the former behavior and is not rewritten as current documentation.
 
+## Gate A — backward-edge removal
+
+The resolved Gate A removes `verified → checked`. The exhaustive transition
+matrix now allows only `generated → output`, `output → checked`, and `checked
+→ verified`. `retract verified` is the one backward operation: it removes the
+verified artifact while preserving the checked bytes and stamps beneath it.
+
+CLI validation reads the authoritative table before resolving configuration or
+a signing key. Review planning and the review server already use
+`forward_source_for`, so they accept only a physical adjacent forward source;
+there is no independent legal-pair list to update. The full source/fixture
+audit found no signed fixture or EIMP 01 test using the removed edge.
+
 ## Last Updated
+
+**Date**: 2026-09-05
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Recorded the approved Gate A removal of `verified → checked`, the
+exhaustive matrix, retraction preservation behavior, and surface/fixture audit.
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)

@@ -1240,24 +1240,26 @@ mod tests {
     }
 
     #[test]
-    fn output_to_verified_is_refused_by_cli_and_absent_from_help() {
+    fn non_adjacent_promotions_are_refused_by_cli_and_absent_from_help() {
         let tmp = tempfile::tempdir().unwrap();
-        let err = cmd_promote(PromoteArgs {
-            args: vec![
-                "output".into(),
-                "to".into(),
-                "verified".into(),
-                tmp.path().display().to_string(),
-            ],
-            filter: None,
-            passphrase: Some("human".into()),
-            stdin_passphrase: false,
-            interactive: false,
-            walk_depth_limit: None,
-            json: false,
-        })
-        .unwrap_err();
-        assert!(matches!(err, EinmoError::IllegalTransition { .. }));
+        for (from, to) in [("output", "verified"), ("verified", "checked")] {
+            let err = cmd_promote(PromoteArgs {
+                args: vec![
+                    from.into(),
+                    "to".into(),
+                    to.into(),
+                    tmp.path().display().to_string(),
+                ],
+                filter: None,
+                passphrase: Some("human".into()),
+                stdin_passphrase: false,
+                interactive: false,
+                walk_depth_limit: None,
+                json: false,
+            })
+            .unwrap_err();
+            assert!(matches!(err, EinmoError::IllegalTransition { .. }));
+        }
 
         let mut command = Cli::command();
         let help = command
@@ -1269,6 +1271,7 @@ mod tests {
         assert!(help.contains("are refused"), "{help}");
         assert!(!help.contains("Legal pairs:"), "{help}");
         assert!(help.contains("checked to verified"), "{help}");
+        assert!(!help.contains("verified to checked"), "{help}");
     }
 
     #[test]

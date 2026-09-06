@@ -324,7 +324,7 @@ unambiguous.
 
 ### Phase 1C — Enforce one transition graph (§S.3)
 
-- [x] Establish relevant tests for the autonomous forward-graph sub-section. Use [these instructions](../../README.md#running-specific-tests) to run: `generated_promotes_only_into_output`, `forward_transition_matrix_is_exact`, `output_to_verified_is_refused_by_library_cli_and_review`, `retract_output_cascades_through_checked_and_verified`.
+- [x] Establish relevant tests for the autonomous forward-graph sub-section. Use [these instructions](../../README.md#running-specific-tests) to run: `generated_promotes_only_into_output`, `legal_transition_matrix_is_exact`, `output_to_verified_is_refused_by_library_cli_and_review`, `retract_output_cascades_through_checked_and_verified`.
       (2026-09-04 10:20)
 - [x] **[SEQ 1C.1]** Write forward-only transition tests first: the three adjacent forward edges are legal and every forward skip is illegal; cover the accepted `verified → checked` removal separately in 1C.4 after the resolved-decision marker.
       (2026-09-04 10:20)
@@ -356,13 +356,25 @@ unambiguous.
 
 ### Phase 1C completion — Apply the backward-edge decision
 
-- [ ] Establish relevant tests for this sub-section. Use [these instructions](../../README.md#running-specific-tests) to run: `legal_transition_matrix_is_exact`, `verified_to_checked_matches_recorded_semantics`, `retract_output_cascades_through_checked_and_verified`.
-- [ ] **[SEQ 1C.4]** After Phase 1B is complete, expand the forward-only matrix into exhaustive `Stage × Stage` expectations incorporating resolved Gate A, including multiple checked signers followed by a human verified signer.
-- [ ] **[PAR core-backward]** Implement Gate A in the authoritative graph and retraction/transition APIs.
-- [ ] **[PAR surface-backward]** Implement Gate A in CLI help/parser, review planning, and server DTO behavior.
-- [ ] **[PAR fixture-migration]** Update affected EIMP 01 tests; regenerate/promote signed fixtures only through CLI in scratch after review.
-- [ ] **[JOIN 1C.5]** Run the exhaustive matrix at every surface and confirm no independent legal-pair list remains.
-- [ ] **[SEQ 1C.6]** Run full `just`; commit: `EIMP-11 Phase 1C: make the stage graph authoritative`.
+- [x] Establish relevant tests for this sub-section. Use [these instructions](../../README.md#running-specific-tests) to run: `legal_transition_matrix_is_exact`, `verified_to_checked_is_refused_and_retract_withdraws_attestation`, `retract_output_cascades_through_checked_and_verified`.
+      (2026-09-05 10:35)
+- [x] **[SEQ 1C.4]** After Phase 1B is complete, expand the forward-only matrix into exhaustive `Stage × Stage` expectations incorporating resolved Gate A, including multiple checked signers followed by a human verified signer.
+      (2026-09-05 10:35)
+  Phase 1B's `verified_attestation_accepts_expected_human_reviewer_among_multiple_cosigners` remains the complete-stamp/multi-signer evidence; the matrix now covers every stage pair.
+- [x] **[PAR core-backward]** Implement Gate A in the authoritative graph and retraction/transition APIs.
+      (2026-09-05 10:35)
+- [x] **[PAR surface-backward]** Implement Gate A in CLI help/parser, review planning, and server DTO behavior.
+      (2026-09-05 10:35)
+  The CLI rejects the removed edge before configuration/key lookup. Review planning and the server already derive promotion eligibility exclusively from `forward_source_for`, so the authoritative table removal also removes their eligibility.
+- [x] **[PAR fixture-migration]** Update affected EIMP 01 tests; regenerate/promote signed fixtures only through CLI in scratch after review.
+      (2026-09-05 10:35)
+  No signed fixture or EIMP 01 test used either removed edge. The one affected in-memory unit setup was migrated during the forward correction; no artifact was regenerated.
+- [x] **[JOIN 1C.5]** Run the exhaustive matrix at every surface and confirm no independent legal-pair list remains.
+      (2026-09-05 10:35)
+- [x] **[SEQ 1C.6]** Run full `just`; commit: `EIMP-11 Phase 1C: make the stage graph authoritative`.
+      (2026-09-05 10:38)
+  Full repository gate passed: formatting, strict workspace clippy, all 445
+  nextest tests, and workspace doctests.
 
 ## Phase 2 — Specify and prototype atomic persistence
 
@@ -689,6 +701,12 @@ unambiguous.
 **Changes**: Recorded EIMP-11 Phase 1C's completed test-first forward graph,
 surface enforcement, and shortcut audit; the required full-gate/commit remains
 the next sequential step.
+
+**Date**: 2026-09-05
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Applied resolved Gate A: the exhaustive graph now permits only
+adjacent forward promotions, while `retract verified` remains attestation
+withdrawal; recorded surface and fixture audit results and full-gate evidence.
 
 **Date**: 2026-09-01
 **Updated By**: OpenAI Codex (GPT-5)

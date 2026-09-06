@@ -1123,6 +1123,37 @@ mod tests {
         assert!(matches!(err, EinmoError::IllegalTransition { .. }));
     }
 
+    #[test]
+    fn verified_to_checked_is_refused_and_retract_withdraws_attestation() {
+        let storage = InMemoryStorage::new();
+        let case_id = id("a.foo");
+        let case = EinmoCase::new(case_id.clone(), &storage);
+        let bytes = signed_bytes("a.foo", "5", "");
+        storage
+            .write(&case_id, ArtifactLocation::Stage(Stage::Checked), &bytes)
+            .unwrap();
+        storage
+            .write(&case_id, ArtifactLocation::Stage(Stage::Verified), &bytes)
+            .unwrap();
+
+        let err = case
+            .promote(Stage::Verified, Stage::Checked, &derive(""))
+            .unwrap_err();
+        assert!(matches!(err, EinmoError::IllegalTransition { .. }));
+
+        assert_eq!(
+            case.retract(Stage::Verified).unwrap(),
+            vec![Stage::Verified]
+        );
+        assert_eq!(
+            storage
+                .read(&case_id, ArtifactLocation::Stage(Stage::Checked))
+                .unwrap(),
+            Some(bytes),
+            "retract verified is the sole backward operation and preserves checked"
+        );
+    }
+
     // ---- flag() / retract() ----
 
     #[test]

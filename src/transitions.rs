@@ -86,8 +86,6 @@ const LEGAL_TRANSITIONS: &[(Stage, Stage)] = &[
     (Stage::Generated, Stage::Output),
     (Stage::Output, Stage::Checked),
     (Stage::Checked, Stage::Verified),
-    // Retained only until EIMP-11 Phase 1C.4 applies resolved Gate A.
-    (Stage::Verified, Stage::Checked),
 ];
 
 pub(crate) fn is_legal_transition(from: Stage, to: Stage) -> bool {
@@ -457,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn forward_transition_matrix_is_exact() {
+    fn legal_transition_matrix_is_exact() {
         let stages = [
             Stage::Generated,
             Stage::Output,
@@ -466,20 +464,13 @@ mod tests {
         ];
         for (from_index, from) in stages.into_iter().enumerate() {
             for (to_index, to) in stages.into_iter().enumerate() {
-                if from_index >= to_index {
-                    continue;
-                }
                 assert_eq!(
                     is_legal_transition(from, to),
                     to_index == from_index + 1,
-                    "forward edge {from} -> {to}"
+                    "edge {from} -> {to}"
                 );
             }
         }
-        assert!(
-            is_legal_transition(Stage::Verified, Stage::Checked),
-            "the separately resolved backward edge remains until Phase 1C.4"
-        );
     }
 
     use crate::format::{DEFAULT_SEPARATOR, Metadata, Section, Status};
