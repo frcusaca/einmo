@@ -96,11 +96,9 @@ struct PromoteArgs {
     ///   `<from>:<to>` · `<from>..<to>`  (glued)
     /// then the work directory, then any specific `.einmo` files.
     ///
-    /// Legal pairs: `generated to output`, `output to checked`,
-    /// `output to verified`, `checked to verified`, and `verified to checked`
-    /// (a console-review demotion). `generated` reaches a reviewed stage only
-    /// by passing through the baseline — `generated to checked` and
-    /// `generated to verified` are refused (`EIMP-01` §S.3).
+    /// Legal promotions are exactly the three adjacent pipeline steps shown
+    /// above. A stage cannot be skipped: in particular, `output to verified`,
+    /// `generated to checked`, and `generated to verified` are refused.
     ///
     /// Parsed positionally by [`split_promote_args`].
     #[arg(required = true, num_args = 1..)]
@@ -515,6 +513,12 @@ fn split_promote_args(raw: &[String]) -> Result<(Stage, Stage, PathBuf, Vec<Path
 
 fn cmd_promote(args: PromoteArgs) -> Result<ExitCode> {
     let (from, to, work_dir, positional_files) = split_promote_args(&args.args)?;
+    if !crate::transitions::is_legal_transition(from, to) {
+        return Err(EinmoError::IllegalTransition {
+            from: from.to_string(),
+            to: to.to_string(),
+        });
+    }
     let mut config = TestConfig::new(&work_dir, ValidationLevel::Output);
     if let Some(limit) = args.walk_depth_limit {
         config = config.with_walk_depth_limit(limit);
@@ -1200,6 +1204,7 @@ fn cmd_generate(args: EvaluateArgs) -> Result<ExitCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
     #[test]
     fn verified_attestation_json_diagnostics_have_stable_kinds_and_prose() {
@@ -1232,6 +1237,38 @@ mod tests {
             path: PathBuf::from("a.foo.einmo"),
         });
         assert_eq!(computer["kind"], "key-derived-from-empty-passphrase");
+    }
+
+    #[test]
+    fn output_to_verified_is_refused_by_cli_and_absent_from_help() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = cmd_promote(PromoteArgs {
+            args: vec![
+                "output".into(),
+                "to".into(),
+                "verified".into(),
+                tmp.path().display().to_string(),
+            ],
+            filter: None,
+            passphrase: Some("human".into()),
+            stdin_passphrase: false,
+            interactive: false,
+            walk_depth_limit: None,
+            json: false,
+        })
+        .unwrap_err();
+        assert!(matches!(err, EinmoError::IllegalTransition { .. }));
+
+        let mut command = Cli::command();
+        let help = command
+            .find_subcommand_mut("promote")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(help.contains("output to verified"), "{help}");
+        assert!(help.contains("are refused"), "{help}");
+        assert!(!help.contains("Legal pairs:"), "{help}");
+        assert!(help.contains("checked to verified"), "{help}");
     }
 
     #[test]

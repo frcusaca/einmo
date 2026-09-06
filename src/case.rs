@@ -1076,8 +1076,10 @@ mod tests {
             .unwrap();
         let case = EinmoCase::new(case_id, &storage);
         // Empty passphrase derives the well-known computer key.
+        case.promote(Stage::Output, Stage::Checked, &derive(""))
+            .unwrap();
         let outcome = case
-            .promote(Stage::Output, Stage::Verified, &derive(""))
+            .promote(Stage::Checked, Stage::Verified, &derive(""))
             .unwrap();
         assert_eq!(
             outcome,

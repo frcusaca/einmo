@@ -324,13 +324,23 @@ unambiguous.
 
 ### Phase 1C — Enforce one transition graph (§S.3)
 
-- [ ] Establish relevant tests for the autonomous forward-graph sub-section. Use [these instructions](../../README.md#running-specific-tests) to run: `generated_promotes_only_into_output`, `forward_transition_matrix_is_exact`, `output_to_verified_is_refused_by_library_cli_and_review`, `retract_output_cascades_through_checked_and_verified`.
-- [ ] **[SEQ 1C.1]** Write forward-only transition tests first: the three adjacent forward edges are legal and every forward skip is illegal; cover the accepted `verified → checked` removal separately in 1C.4 after the resolved-decision marker.
-- [ ] **[PAR core-graph]** Remove `output → verified` from the authoritative library graph without changing the backward edge.
-- [ ] **[PAR surface-graph]** Add tests proving CLI parser/help, review planning, and server requests reject `output → verified`.
-- [ ] **[PAR fixture-audit]** Locate tests/docs/fixtures relying on the shortcut; classify each required migration without editing signed artifacts yet.
-- [ ] **[JOIN 1C.2]** Make all forward surfaces consume or test against the authoritative representation.
-- [ ] **[SEQ 1C.3]** Run full `just` and commit the forward-graph correction before applying the recorded backward-edge decision.
+- [x] Establish relevant tests for the autonomous forward-graph sub-section. Use [these instructions](../../README.md#running-specific-tests) to run: `generated_promotes_only_into_output`, `forward_transition_matrix_is_exact`, `output_to_verified_is_refused_by_library_cli_and_review`, `retract_output_cascades_through_checked_and_verified`.
+      (2026-09-04 10:20)
+- [x] **[SEQ 1C.1]** Write forward-only transition tests first: the three adjacent forward edges are legal and every forward skip is illegal; cover the accepted `verified → checked` removal separately in 1C.4 after the resolved-decision marker.
+      (2026-09-04 10:20)
+- [x] **[PAR core-graph]** Remove `output → verified` from the authoritative library graph without changing the backward edge.
+      (2026-09-04 10:20)
+- [x] **[PAR surface-graph]** Add tests proving CLI parser/help, review planning, and server requests reject `output → verified`.
+      (2026-09-04 10:20)
+- [x] **[PAR fixture-audit]** Locate tests/docs/fixtures relying on the shortcut; classify each required migration without editing signed artifacts yet.
+      (2026-09-04 10:20)
+  Recorded in [`EIMP-11.workfile.phase1c-transition-graph.md`](EIMP-11.workfile.phase1c-transition-graph.md#forward-correction-audit).
+- [x] **[JOIN 1C.2]** Make all forward surfaces consume or test against the authoritative representation.
+      (2026-09-04 10:20)
+- [x] **[SEQ 1C.3]** Run full `just` and commit the forward-graph correction before applying the recorded backward-edge decision.
+      (2026-09-04 10:23)
+  Full repository gate passed: formatting, strict workspace clippy, all 444
+  nextest tests, and workspace doctests.
 
 ## Resolved Gate A — Backward transition semantics
 
@@ -673,6 +683,12 @@ unambiguous.
 - [ ] Commit: `EIMP-11 complete: transactional hardening and documentation reset`.
 
 ## Last Updated
+
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Recorded EIMP-11 Phase 1C's completed test-first forward graph,
+surface enforcement, and shortcut audit; the required full-gate/commit remains
+the next sequential step.
 
 **Date**: 2026-09-01
 **Updated By**: OpenAI Codex (GPT-5)

@@ -473,7 +473,15 @@ async fn put_decision(
     Json(req): Json<DecisionRequest>,
 ) -> Result<StatusCode, ApiError> {
     let review = state.get(session)?;
-    review.decide(id.clone(), req.into());
+    let decision: Decision = req.into();
+    if let Decision::Promote { to } = &decision
+        && !review.can_promote_to(&id, *to)
+    {
+        return Err(ApiError::BadRequest(format!(
+            "{id} has no adjacent source for promotion to {to}"
+        )));
+    }
+    review.decide(id.clone(), decision);
     state.publish(
         session,
         ReviewEvent::DecisionMade {
@@ -1542,6 +1550,24 @@ mod tests {
         let resp = app.oneshot(req).await.unwrap();
         let detail: CaseSummary = body_json(resp).await;
         assert_eq!(detail.decision.as_deref(), Some("promote to checked"));
+    }
+
+    #[tokio::test]
+    async fn output_to_verified_is_refused_by_server() {
+        let tmp = seeded_suite();
+        let state = Arc::new(AppState::default());
+        let session = state.create_session(tmp.path());
+        let app = router(state);
+
+        let req = Request::put(format!("/einmo/{session}/cases/a.foo/decision"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"kind": "promote", "to": "verified"}))
+                    .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

@@ -82,20 +82,23 @@ impl SignatureReport {
 /// illegal pair itself, not rely on every caller having already screened
 /// it (this crate's own `cli.rs` promote command lets a user name any
 /// `--from`/`--to` pair directly).
+const LEGAL_TRANSITIONS: &[(Stage, Stage)] = &[
+    (Stage::Generated, Stage::Output),
+    (Stage::Output, Stage::Checked),
+    (Stage::Checked, Stage::Verified),
+    // Retained only until EIMP-11 Phase 1C.4 applies resolved Gate A.
+    (Stage::Verified, Stage::Checked),
+];
+
 pub(crate) fn is_legal_transition(from: Stage, to: Stage) -> bool {
-    matches!(
-        (from, to),
-        // EIMP-01 §S.3. Deliberately the ONLY pair out of `generated`:
-        // `(Generated, Checked)` and `(Generated, Verified)` stay illegal, so
-        // generated content reaches a reviewed stage only by passing through
-        // the baseline.
-        (Stage::Generated, Stage::Output)
-            | (Stage::Output, Stage::Checked)
-            | (Stage::Output, Stage::Verified)
-            | (Stage::Checked, Stage::Verified)
-            // console-review demotion (re-promotion appends another stamp)
-            | (Stage::Verified, Stage::Checked)
-    )
+    LEGAL_TRANSITIONS.contains(&(from, to))
+}
+
+/// The unique adjacent forward source for a promotion destination.
+pub(crate) fn forward_source_for(to: Stage) -> Option<Stage> {
+    LEGAL_TRANSITIONS
+        .iter()
+        .find_map(|&(from, destination)| (destination == to && from < to).then_some(from))
 }
 
 // promote/flag (the free functions) are retired as of EIMP-7 Phase F,
@@ -451,6 +454,32 @@ mod tests {
                 "{from} must not promote into generated/"
             );
         }
+    }
+
+    #[test]
+    fn forward_transition_matrix_is_exact() {
+        let stages = [
+            Stage::Generated,
+            Stage::Output,
+            Stage::Checked,
+            Stage::Verified,
+        ];
+        for (from_index, from) in stages.into_iter().enumerate() {
+            for (to_index, to) in stages.into_iter().enumerate() {
+                if from_index >= to_index {
+                    continue;
+                }
+                assert_eq!(
+                    is_legal_transition(from, to),
+                    to_index == from_index + 1,
+                    "forward edge {from} -> {to}"
+                );
+            }
+        }
+        assert!(
+            is_legal_transition(Stage::Verified, Stage::Checked),
+            "the separately resolved backward edge remains until Phase 1C.4"
+        );
     }
 
     use crate::format::{DEFAULT_SEPARATOR, Metadata, Section, Status};

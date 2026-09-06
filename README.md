@@ -740,7 +740,7 @@ Einmo ships a single CLI app with two binary targets sharing the same parser:
 | Subcommand | What it does |
 |---|---|
 | `einmo generate <work_dir> --command <evaluator>` | Run the evaluator over every input and write signed artifacts to `generated/`. Never writes `output/`. (Alias: `einmo evaluate`.) |
-| `einmo promote <from> to <to> <work_dir>` | Append the destination stage's stamp to every matching file. `* to flagged` delegates to `flag`. Legal pairs: `generated to output`, `output to checked`, `output to verified`, `checked to verified`, and `verified to checked`. |
+| `einmo promote <from> to <to> <work_dir>` | Append the destination stage's stamp to every matching file. `* to flagged` delegates to `flag`. Legal promotions are exactly `generated to output`, `output to checked`, and `checked to verified`; stages cannot be skipped. |
 | `einmo retract <work_dir> <stage>` | Withdraw artifacts from `output`, `checked`, or `verified`, cascading forward through everything promoted from them. `generated` is refused — it is rebuilt every run. |
 | `einmo flag <work_dir> <stage>` | Move matching files into that stage's own nested `flagged/` sink with an unsigned advisory line. No stamp. |
 | `einmo compare <a> <b> <work_dir>` | Per-section comparison of two stages over the mirrored tree. |
@@ -1775,6 +1775,11 @@ configuration.
 ---
 
 ## Last Updated
+
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: EIMP-11 Phase 1C forward-graph correction: documented the three
+adjacent promotions and removed the obsolete `output to verified` shortcut.
 
 **Date**: 2026-08-13 (3)
 **Updated By**: Claude Code (Opus 5)

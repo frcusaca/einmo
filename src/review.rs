@@ -655,6 +655,13 @@ impl EinmoReview {
             .decide(id, decision, basis)
     }
 
+    /// Whether `id` currently has the adjacent forward source required to
+    /// promote to `to`.
+    #[must_use]
+    pub fn can_promote_to(&self, id: &EinmoId, to: Stage) -> bool {
+        source_stage_for_promote(&self.config, id, to).is_some()
+    }
+
     /// Rescan for pending decisions whose basis content has changed on disk
     /// since `decide()` was called (`EIMP-1` §S.2/§S.5's fingerprint
     /// re-check). Returns the drifted cases' ids — **decisions are not
@@ -838,10 +845,15 @@ impl EinmoReview {
         let mut actions = Vec::new();
         for (id, decision) in decisions.iter() {
             match decision {
-                Decision::Promote { to } => actions.push(PlannedAction::Promote {
-                    id: id.clone(),
-                    to: *to,
-                }),
+                Decision::Promote { to }
+                    if source_stage_for_promote(&self.config, id, *to).is_some() =>
+                {
+                    actions.push(PlannedAction::Promote {
+                        id: id.clone(),
+                        to: *to,
+                    });
+                }
+                Decision::Promote { .. } => {}
                 Decision::Retract { from } => actions.push(PlannedAction::Retract {
                     id: id.clone(),
                     from: *from,
@@ -1165,20 +1177,12 @@ impl Drop for EinmoReview {
     }
 }
 
-/// The origin stage a promotion to `to` should read from: whichever of
-/// `checked`/`output` currently holds the artifact, preferring the higher
-/// stage (so a `checked → verified` promotion is chosen over `output →
-/// verified` when both exist).
+/// The adjacent forward origin stage a promotion to `to` must read from.
 fn source_stage_for_promote(config: &TestConfig, id: &EinmoId, to: Stage) -> Option<Stage> {
-    let candidates: &[Stage] = match to {
-        Stage::Checked => &[Stage::Output],
-        Stage::Verified => &[Stage::Checked, Stage::Output],
-        _ => &[],
-    };
-    candidates
-        .iter()
-        .find(|&&s| id.to_stage_path(config.work_dir(), s).exists())
-        .copied()
+    let source = crate::transitions::forward_source_for(to)?;
+    id.to_stage_path(config.work_dir(), source)
+        .exists()
+        .then_some(source)
 }
 
 /// The stage whose content a decision is based on — `None` for `Skip` (no
@@ -1299,6 +1303,23 @@ mod tests {
         write_input(ctx.path(), "b.foo", "{2+2;}");
         generate_and_accept(ctx.path());
         ctx
+    }
+
+    #[test]
+    fn output_to_verified_is_refused_by_review_planning() {
+        let tmp = seeded_suite();
+        let review = EinmoReview::open(tmp.path());
+        review.decide(
+            EinmoId::from_input_rel(std::path::Path::new("a.foo")).unwrap(),
+            Decision::Promote {
+                to: Stage::Verified,
+            },
+        );
+
+        assert!(
+            review.plan().actions.is_empty(),
+            "output-only content cannot produce a checked-skipping verified action"
+        );
     }
 
     /// Run the evaluator over the whole suite and accept the results as the
