@@ -702,9 +702,9 @@ EIMP 11 is presently an umbrella design. The following lettered names are
 **design-local aliases**, not assigned EIMP identifiers or filenames. If the
 maintainer approves an extraction, `eimp_check.py gen_next` assigns its real
 little-endian number when the specification is created. Chronological EIMP 12
-is already represented by filename `EIMP-21`; if no intervening EIMP is
-created, EIMP-A would therefore become chronological EIMP 13 with filename
-`EIMP-31`, not `EIMP-12` or a literal `EIMP-A.md`.
+and 13 are already used; if no intervening EIMP is created, EIMP-A would
+therefore become chronological EIMP 13 with filename
+`EIMP-41`, not `IMP-12` or a literal `EIMP-A.md`.
 
 Until a numbered specification and plan are created, every item below remains
 owned by EIMP 11. Extraction is permitted only where the work has its own
