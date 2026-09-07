@@ -1,0 +1,25 @@
+--- src/config.rs
++++ delete field collation from struct SigningConfig expression in merge_toml
+@@ -761,21 +761,17 @@
+ fn merge_toml(crate_wide: EinmoTomlConfig, per_suite: EinmoTomlConfig) -> EinmoTomlConfig {
+     EinmoTomlConfig {
+         signing: SigningConfig {
+             reviewer_key_prefix: per_suite
+                 .signing
+                 .reviewer_key_prefix
+                 .clone()
+                 .or(crate_wide.signing.reviewer_key_prefix),
+-            collation: per_suite
+-                .signing
+-                .collation
+-                .clone()
+-                .or(crate_wide.signing.collation),
++             /* ~ changed by cargo-mutants ~ */
+             ..per_suite.signing
+         },
+         suite: SuiteConfig {
+             walk_depth_limit: per_suite
+                 .suite
+                 .walk_depth_limit
+                 .or(crate_wide.suite.walk_depth_limit),
+             duration_limit: per_suite

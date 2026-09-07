@@ -1,0 +1,290 @@
+[
+  {
+    "diff": "--- src/config.rs\n+++ delete field reviewer_key_prefix from struct SigningConfig expression in merge_toml\n@@ -756,21 +756,17 @@\n         }\n         dir = dir.parent()?;\n     }\n }\n \n fn merge_toml(crate_wide: EinmoTomlConfig, per_suite: EinmoTomlConfig) -> EinmoTomlConfig {\n     EinmoTomlConfig {\n         signing: SigningConfig {\n-            reviewer_key_prefix: per_suite\n-                .signing\n-                .reviewer_key_prefix\n-                .clone()\n-                .or(crate_wide.signing.reviewer_key_prefix),\n+             /* ~ changed by cargo-mutants ~ */\n             collation: per_suite\n                 .signing\n                 .collation\n                 .clone()\n                 .or(crate_wide.signing.collation),\n             ..per_suite.signing\n         },\n         suite: SuiteConfig {\n",
+    "file": "src/config.rs",
+    "function": {
+      "function_name": "merge_toml",
+      "return_type": "-> EinmoTomlConfig",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 800
+        },
+        "start": {
+          "column": 1,
+          "line": 761
+        }
+      }
+    },
+    "genre": "StructField",
+    "name": "src/config.rs:764:13: delete field reviewer_key_prefix from struct SigningConfig expression in merge_toml",
+    "package": "einmo",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 61,
+        "line": 768
+      },
+      "start": {
+        "column": 13,
+        "line": 764
+      }
+    }
+  },
+  {
+    "diff": "--- src/config.rs\n+++ delete field collation from struct SigningConfig expression in merge_toml\n@@ -761,21 +761,17 @@\n fn merge_toml(crate_wide: EinmoTomlConfig, per_suite: EinmoTomlConfig) -> EinmoTomlConfig {\n     EinmoTomlConfig {\n         signing: SigningConfig {\n             reviewer_key_prefix: per_suite\n                 .signing\n                 .reviewer_key_prefix\n                 .clone()\n                 .or(crate_wide.signing.reviewer_key_prefix),\n-            collation: per_suite\n-                .signing\n-                .collation\n-                .clone()\n-                .or(crate_wide.signing.collation),\n+             /* ~ changed by cargo-mutants ~ */\n             ..per_suite.signing\n         },\n         suite: SuiteConfig {\n             walk_depth_limit: per_suite\n                 .suite\n                 .walk_depth_limit\n                 .or(crate_wide.suite.walk_depth_limit),\n             duration_limit: per_suite\n",
+    "file": "src/config.rs",
+    "function": {
+      "function_name": "merge_toml",
+      "return_type": "-> EinmoTomlConfig",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 800
+        },
+        "start": {
+          "column": 1,
+          "line": 761
+        }
+      }
+    },
+    "genre": "StructField",
+    "name": "src/config.rs:769:13: delete field collation from struct SigningConfig expression in merge_toml",
+    "package": "einmo",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 51,
+        "line": 773
+      },
+      "start": {
+        "column": 13,
+        "line": 769
+      }
+    }
+  },
+  {
+    "diff": "--- src/einmo_suite.rs\n+++ replace evaluate_verified_attestation -> AttestationPolicyResult with Default::default()\n@@ -522,42 +522,17 @@\n     expected_reviewer_match: Option<bool>,\n     final_verdict: bool,\n }\n \n fn evaluate_verified_attestation(\n     file: &EinmoFile,\n     expected_prefix: Option<&str>,\n ) -> AttestationPolicyResult {\n-    let verified_signers: Vec<String> = file\n-        .stamps()\n-        .entries()\n-        .iter()\n-        .filter(|stamp| stamp.key() == Stage::Verified.stamp_key())\n-        .map(|stamp| stamp.pubkey_hex().to_string())\n-        .collect();\n-    let computer_key_offenders = verified_signers\n-        .iter()\n-        .filter(|pubkey| crate::signature::is_computer_key(pubkey))\n-        .cloned()\n-        .collect::<Vec<_>>();\n-    let expected_reviewer_match = expected_prefix.map(|prefix| {\n-        verified_signers\n-            .iter()\n-            .any(|pubkey| pubkey.starts_with(prefix))\n-    });\n-    let final_verdict = !verified_signers.is_empty()\n-        && computer_key_offenders.is_empty()\n-        && expected_reviewer_match.unwrap_or(true);\n-    AttestationPolicyResult {\n-        verified_signers,\n-        computer_key_offenders,\n-        expected_reviewer_match,\n-        final_verdict,\n-    }\n+    Default::default() /* ~ changed by cargo-mutants ~ */\n }\n \n /// The outcome of validating a suite at a level: sound, or a list of problems.\n #[derive(Debug, Default, Clone, PartialEq, Eq)]\n pub struct SuiteIntegrity {\n     /// Every problem found, ordered by escalating level then path.\n     pub problems: Vec<Problem>,\n }\n",
+    "file": "src/einmo_suite.rs",
+    "function": {
+      "function_name": "evaluate_verified_attestation",
+      "return_type": "-> AttestationPolicyResult",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 556
+        },
+        "start": {
+          "column": 1,
+          "line": 526
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/einmo_suite.rs:530:5: replace evaluate_verified_attestation -> AttestationPolicyResult with Default::default()",
+    "package": "einmo",
+    "replacement": "Default::default()",
+    "span": {
+      "end": {
+        "column": 6,
+        "line": 555
+      },
+      "start": {
+        "column": 5,
+        "line": 530
+      }
+    }
+  },
+  {
+    "diff": "--- src/einmo_suite.rs\n+++ replace == with != in evaluate_verified_attestation\n@@ -526,17 +526,17 @@\n fn evaluate_verified_attestation(\n     file: &EinmoFile,\n     expected_prefix: Option<&str>,\n ) -> AttestationPolicyResult {\n     let verified_signers: Vec<String> = file\n         .stamps()\n         .entries()\n         .iter()\n-        .filter(|stamp| stamp.key() == Stage::Verified.stamp_key())\n+        .filter(|stamp| stamp.key() != /* ~ changed by cargo-mutants ~ */ Stage::Verified.stamp_key())\n         .map(|stamp| stamp.pubkey_hex().to_string())\n         .collect();\n     let computer_key_offenders = verified_signers\n         .iter()\n         .filter(|pubkey| crate::signature::is_computer_key(pubkey))\n         .cloned()\n         .collect::<Vec<_>>();\n     let expected_reviewer_match = expected_prefix.map(|prefix| {\n",
+    "file": "src/einmo_suite.rs",
+    "function": {
+      "function_name": "evaluate_verified_attestation",
+      "return_type": "-> AttestationPolicyResult",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 556
+        },
+        "start": {
+          "column": 1,
+          "line": 526
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/einmo_suite.rs:534:37: replace == with != in evaluate_verified_attestation",
+    "package": "einmo",
+    "replacement": "!=",
+    "span": {
+      "end": {
+        "column": 39,
+        "line": 534
+      },
+      "start": {
+        "column": 37,
+        "line": 534
+      }
+    }
+  },
+  {
+    "diff": "--- src/einmo_suite.rs\n+++ replace && with || in evaluate_verified_attestation\n@@ -541,17 +541,17 @@\n         .collect::<Vec<_>>();\n     let expected_reviewer_match = expected_prefix.map(|prefix| {\n         verified_signers\n             .iter()\n             .any(|pubkey| pubkey.starts_with(prefix))\n     });\n     let final_verdict = !verified_signers.is_empty()\n         && computer_key_offenders.is_empty()\n-        && expected_reviewer_match.unwrap_or(true);\n+        || /* ~ changed by cargo-mutants ~ */ expected_reviewer_match.unwrap_or(true);\n     AttestationPolicyResult {\n         verified_signers,\n         computer_key_offenders,\n         expected_reviewer_match,\n         final_verdict,\n     }\n }\n \n",
+    "file": "src/einmo_suite.rs",
+    "function": {
+      "function_name": "evaluate_verified_attestation",
+      "return_type": "-> AttestationPolicyResult",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 556
+        },
+        "start": {
+          "column": 1,
+          "line": 526
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/einmo_suite.rs:549:9: replace && with || in evaluate_verified_attestation",
+    "package": "einmo",
+    "replacement": "||",
+    "span": {
+      "end": {
+        "column": 11,
+        "line": 549
+      },
+      "start": {
+        "column": 9,
+        "line": 549
+      }
+    }
+  },
+  {
+    "diff": "--- src/einmo_suite.rs\n+++ replace && with || in evaluate_verified_attestation\n@@ -540,17 +540,17 @@\n         .cloned()\n         .collect::<Vec<_>>();\n     let expected_reviewer_match = expected_prefix.map(|prefix| {\n         verified_signers\n             .iter()\n             .any(|pubkey| pubkey.starts_with(prefix))\n     });\n     let final_verdict = !verified_signers.is_empty()\n-        && computer_key_offenders.is_empty()\n+        || /* ~ changed by cargo-mutants ~ */ computer_key_offenders.is_empty()\n         && expected_reviewer_match.unwrap_or(true);\n     AttestationPolicyResult {\n         verified_signers,\n         computer_key_offenders,\n         expected_reviewer_match,\n         final_verdict,\n     }\n }\n",
+    "file": "src/einmo_suite.rs",
+    "function": {
+      "function_name": "evaluate_verified_attestation",
+      "return_type": "-> AttestationPolicyResult",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 556
+        },
+        "start": {
+          "column": 1,
+          "line": 526
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/einmo_suite.rs:548:9: replace && with || in evaluate_verified_attestation",
+    "package": "einmo",
+    "replacement": "||",
+    "span": {
+      "end": {
+        "column": 11,
+        "line": 548
+      },
+      "start": {
+        "column": 9,
+        "line": 548
+      }
+    }
+  },
+  {
+    "diff": "--- src/einmo_suite.rs\n+++ delete ! in evaluate_verified_attestation\n@@ -539,17 +539,17 @@\n         .filter(|pubkey| crate::signature::is_computer_key(pubkey))\n         .cloned()\n         .collect::<Vec<_>>();\n     let expected_reviewer_match = expected_prefix.map(|prefix| {\n         verified_signers\n             .iter()\n             .any(|pubkey| pubkey.starts_with(prefix))\n     });\n-    let final_verdict = !verified_signers.is_empty()\n+    let final_verdict =  /* ~ changed by cargo-mutants ~ */verified_signers.is_empty()\n         && computer_key_offenders.is_empty()\n         && expected_reviewer_match.unwrap_or(true);\n     AttestationPolicyResult {\n         verified_signers,\n         computer_key_offenders,\n         expected_reviewer_match,\n         final_verdict,\n     }\n",
+    "file": "src/einmo_suite.rs",
+    "function": {
+      "function_name": "evaluate_verified_attestation",
+      "return_type": "-> AttestationPolicyResult",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 556
+        },
+        "start": {
+          "column": 1,
+          "line": 526
+        }
+      }
+    },
+    "genre": "UnaryOperator",
+    "name": "src/einmo_suite.rs:547:25: delete ! in evaluate_verified_attestation",
+    "package": "einmo",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 26,
+        "line": 547
+      },
+      "start": {
+        "column": 25,
+        "line": 547
+      }
+    }
+  },
+  {
+    "diff": "--- src/einmo_suite.rs\n+++ replace EinmoTestRunner::attestation_problems -> Result<Vec<Problem>> with Ok(vec![])\n@@ -863,55 +863,17 @@\n     }\n \n     /// Is every `verified/` artifact attested by the reviewer, and none by the\n     /// computer key? (V6/V7.)\n     ///\n     /// With no reviewer key configured, V6 cannot be judged — but V7 still can,\n     /// and must: an AI-signed `verified/` is detectable regardless.\n     fn attestation_problems(&self) -> Result<Vec<Problem>> {\n-        let dir = self.config.stage_dir(Stage::Verified);\n-        let (present, _) =\n-            crate::stage::walk_input_tree_reporting(&dir, self.config.walk_depth_limit())?;\n-        let expected_prefix = self.config.reviewer_key_prefix().map(str::to_string);\n-        let mut out = Vec::new();\n-        for rel in present {\n-            let path = dir.join(&rel);\n-            let Ok(file) = EinmoFile::from_file(&path) else {\n-                continue; // SignatureInvalid is reported by the stage-pair check\n-            };\n-            let policy = evaluate_verified_attestation(&file, expected_prefix.as_deref());\n-            let mut artifact_problems = Vec::new();\n-            if policy.verified_signers.is_empty() {\n-                artifact_problems.push(Problem::MissingVerifiedAttestation { path: rel.clone() });\n-            }\n-            for _pubkey in &policy.computer_key_offenders {\n-                // The computer key is well-known and deterministic. One\n-                // problem per offending stamp makes duplicates visible while\n-                // leaving the boolean verdict unchanged.\n-                artifact_problems\n-                    .push(Problem::KeyDerivedFromEmptyPassphrase { path: rel.clone() });\n-            }\n-            if let (Some(false), Some(prefix)) =\n-                (policy.expected_reviewer_match, expected_prefix.as_ref())\n-            {\n-                let mut found = policy.verified_signers.clone();\n-                found.sort();\n-                found.dedup();\n-                artifact_problems.push(Problem::MissingExpectedReviewer {\n-                    path: rel.clone(),\n-                    expected_prefix: prefix.clone(),\n-                    found,\n-                });\n-            }\n-            debug_assert_eq!(policy.final_verdict, artifact_problems.is_empty());\n-            out.extend(artifact_problems);\n-        }\n-        out.sort_by(|x, y| x.path().cmp(&y.path()));\n-        Ok(out)\n+        Ok(vec![]) /* ~ changed by cargo-mutants ~ */\n     }\n \n     fn is_catastrophe_crumb(&self, out_path: &Path) -> bool {\n         match EinmoFile::from_file(out_path) {\n             Ok(file) => file\n                 .metadata()\n                 .status_detail\n                 .starts_with(\"TEST IN PROGRESS\"),\n",
+    "file": "src/einmo_suite.rs",
+    "function": {
+      "function_name": "EinmoTestRunner::attestation_problems",
+      "return_type": "-> Result<Vec<Problem>>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 910
+        },
+        "start": {
+          "column": 5,
+          "line": 865
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/einmo_suite.rs:871:9: replace EinmoTestRunner::attestation_problems -> Result<Vec<Problem>> with Ok(vec![])",
+    "package": "einmo",
+    "replacement": "Ok(vec![])",
+    "span": {
+      "end": {
+        "column": 16,
+        "line": 909
+      },
+      "start": {
+        "column": 9,
+        "line": 871
+      }
+    }
+  },
+  {
+    "diff": "--- src/einmo_suite.rs\n+++ replace EinmoTestRunner::attestation_problems -> Result<Vec<Problem>> with Ok(vec![Default::default()])\n@@ -863,55 +863,17 @@\n     }\n \n     /// Is every `verified/` artifact attested by the reviewer, and none by the\n     /// computer key? (V6/V7.)\n     ///\n     /// With no reviewer key configured, V6 cannot be judged — but V7 still can,\n     /// and must: an AI-signed `verified/` is detectable regardless.\n     fn attestation_problems(&self) -> Result<Vec<Problem>> {\n-        let dir = self.config.stage_dir(Stage::Verified);\n-        let (present, _) =\n-            crate::stage::walk_input_tree_reporting(&dir, self.config.walk_depth_limit())?;\n-        let expected_prefix = self.config.reviewer_key_prefix().map(str::to_string);\n-        let mut out = Vec::new();\n-        for rel in present {\n-            let path = dir.join(&rel);\n-            let Ok(file) = EinmoFile::from_file(&path) else {\n-                continue; // SignatureInvalid is reported by the stage-pair check\n-            };\n-            let policy = evaluate_verified_attestation(&file, expected_prefix.as_deref());\n-            let mut artifact_problems = Vec::new();\n-            if policy.verified_signers.is_empty() {\n-                artifact_problems.push(Problem::MissingVerifiedAttestation { path: rel.clone() });\n-            }\n-            for _pubkey in &policy.computer_key_offenders {\n-                // The computer key is well-known and deterministic. One\n-                // problem per offending stamp makes duplicates visible while\n-                // leaving the boolean verdict unchanged.\n-                artifact_problems\n-                    .push(Problem::KeyDerivedFromEmptyPassphrase { path: rel.clone() });\n-            }\n-            if let (Some(false), Some(prefix)) =\n-                (policy.expected_reviewer_match, expected_prefix.as_ref())\n-            {\n-                let mut found = policy.verified_signers.clone();\n-                found.sort();\n-                found.dedup();\n-                artifact_problems.push(Problem::MissingExpectedReviewer {\n-                    path: rel.clone(),\n-                    expected_prefix: prefix.clone(),\n-                    found,\n-                });\n-            }\n-            debug_assert_eq!(policy.final_verdict, artifact_problems.is_empty());\n-            out.extend(artifact_problems);\n-        }\n-        out.sort_by(|x, y| x.path().cmp(&y.path()));\n-        Ok(out)\n+        Ok(vec![Default::default()]) /* ~ changed by cargo-mutants ~ */\n     }\n \n     fn is_catastrophe_crumb(&self, out_path: &Path) -> bool {\n         match EinmoFile::from_file(out_path) {\n             Ok(file) => file\n                 .metadata()\n                 .status_detail\n                 .starts_with(\"TEST IN PROGRESS\"),\n",
+    "file": "src/einmo_suite.rs",
+    "function": {
+      "function_name": "EinmoTestRunner::attestation_problems",
+      "return_type": "-> Result<Vec<Problem>>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 910
+        },
+        "start": {
+          "column": 5,
+          "line": 865
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/einmo_suite.rs:871:9: replace EinmoTestRunner::attestation_problems -> Result<Vec<Problem>> with Ok(vec![Default::default()])",
+    "package": "einmo",
+    "replacement": "Ok(vec![Default::default()])",
+    "span": {
+      "end": {
+        "column": 16,
+        "line": 909
+      },
+      "start": {
+        "column": 9,
+        "line": 871
+      }
+    }
+  }
+]

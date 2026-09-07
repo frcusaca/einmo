@@ -1,0 +1,21 @@
+--- src/einmo_suite.rs
++++ replace == with != in evaluate_verified_attestation
+@@ -526,17 +526,17 @@
+ fn evaluate_verified_attestation(
+     file: &EinmoFile,
+     expected_prefix: Option<&str>,
+ ) -> AttestationPolicyResult {
+     let verified_signers: Vec<String> = file
+         .stamps()
+         .entries()
+         .iter()
+-        .filter(|stamp| stamp.key() == Stage::Verified.stamp_key())
++        .filter(|stamp| stamp.key() != /* ~ changed by cargo-mutants ~ */ Stage::Verified.stamp_key())
+         .map(|stamp| stamp.pubkey_hex().to_string())
+         .collect();
+     let computer_key_offenders = verified_signers
+         .iter()
+         .filter(|pubkey| crate::signature::is_computer_key(pubkey))
+         .cloned()
+         .collect::<Vec<_>>();
+     let expected_reviewer_match = expected_prefix.map(|prefix| {

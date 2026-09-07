@@ -1,0 +1,257 @@
+
+*** src/einmo_suite.rs:871:9: replace EinmoTestRunner::attestation_problems -> Result<Vec<Problem>> with Ok(vec![Default::default()])
+
+*** mutation diff:
+--- src/einmo_suite.rs
++++ replace EinmoTestRunner::attestation_problems -> Result<Vec<Problem>> with Ok(vec![Default::default()])
+@@ -863,55 +863,17 @@
+     }
+ 
+     /// Is every `verified/` artifact attested by the reviewer, and none by the
+     /// computer key? (V6/V7.)
+     ///
+     /// With no reviewer key configured, V6 cannot be judged — but V7 still can,
+     /// and must: an AI-signed `verified/` is detectable regardless.
+     fn attestation_problems(&self) -> Result<Vec<Problem>> {
+-        let dir = self.config.stage_dir(Stage::Verified);
+-        let (present, _) =
+-            crate::stage::walk_input_tree_reporting(&dir, self.config.walk_depth_limit())?;
+-        let expected_prefix = self.config.reviewer_key_prefix().map(str::to_string);
+-        let mut out = Vec::new();
+-        for rel in present {
+-            let path = dir.join(&rel);
+-            let Ok(file) = EinmoFile::from_file(&path) else {
+-                continue; // SignatureInvalid is reported by the stage-pair check
+-            };
+-            let policy = evaluate_verified_attestation(&file, expected_prefix.as_deref());
+-            let mut artifact_problems = Vec::new();
+-            if policy.verified_signers.is_empty() {
+-                artifact_problems.push(Problem::MissingVerifiedAttestation { path: rel.clone() });
+-            }
+-            for _pubkey in &policy.computer_key_offenders {
+-                // The computer key is well-known and deterministic. One
+-                // problem per offending stamp makes duplicates visible while
+-                // leaving the boolean verdict unchanged.
+-                artifact_problems
+-                    .push(Problem::KeyDerivedFromEmptyPassphrase { path: rel.clone() });
+-            }
+-            if let (Some(false), Some(prefix)) =
+-                (policy.expected_reviewer_match, expected_prefix.as_ref())
+-            {
+-                let mut found = policy.verified_signers.clone();
+-                found.sort();
+-                found.dedup();
+-                artifact_problems.push(Problem::MissingExpectedReviewer {
+-                    path: rel.clone(),
+-                    expected_prefix: prefix.clone(),
+-                    found,
+-                });
+-            }
+-            debug_assert_eq!(policy.final_verdict, artifact_problems.is_empty());
+-            out.extend(artifact_problems);
+-        }
+-        out.sort_by(|x, y| x.path().cmp(&y.path()));
+-        Ok(out)
++        Ok(vec![Default::default()]) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn is_catastrophe_crumb(&self, out_path: &Path) -> bool {
+         match EinmoFile::from_file(out_path) {
+             Ok(file) => file
+                 .metadata()
+                 .status_detail
+                 .starts_with("TEST IN PROGRESS"),
+
+
+*** /home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --no-run --verbose --package=einmo@0.0.5
+warning: failed to save last-use data
+This may prevent cargo from accurately tracking what is being used in its global cache. This information is used for automatically removing unused data in the cache.
+
+attempt to write a readonly database
+
+Caused by:
+  Error code 8: attempt to write a readonly database
+       Fresh unicode-ident v1.0.24
+       Fresh cfg-if v1.0.4
+       Fresh version_check v0.9.5
+       Fresh typenum v1.20.1
+       Fresh subtle v2.6.1
+       Fresh pin-project-lite v0.2.17
+       Fresh futures-core v0.3.33
+       Fresh itoa v1.0.18
+       Fresh bytes v1.12.1
+       Fresh shlex v2.0.1
+       Fresh cpufeatures v0.2.17
+       Fresh find-msvc-tools v0.1.9
+       Fresh once_cell v1.21.4
+       Fresh pkg-config v0.3.33
+       Fresh log v0.4.33
+       Fresh libc v0.2.189
+       Fresh http v1.5.0
+       Fresh tracing-core v0.1.36
+       Fresh semver v1.0.28
+       Fresh futures-task v0.3.33
+       Fresh try-lock v0.2.5
+       Fresh slab v0.4.12
+       Fresh tower-service v0.3.3
+       Fresh futures-channel v0.3.33
+       Fresh smallvec v1.15.2
+       Fresh httpdate v1.0.3
+       Fresh utf8parse v0.2.2
+       Fresh atomic-waker v1.1.2
+       Fresh proc-macro2 v1.0.107
+       Fresh getrandom v0.2.17
+       Fresh errno v0.3.14
+       Fresh serde_core v1.0.229
+       Fresh socket2 v0.6.5
+       Fresh mio v1.2.2
+       Fresh jobserver v0.1.35
+       Fresh http-body v1.1.0
+       Fresh tracing v0.1.44
+       Fresh futures-util v0.3.33
+       Fresh rustc_version v0.4.1
+       Fresh httparse v1.10.1
+       Fresh want v0.3.1
+       Fresh anstyle-parse v1.0.0
+       Fresh anstyle v1.0.14
+       Fresh is_terminal_polyfill v1.70.2
+       Fresh hashbrown v0.17.1
+       Fresh sync_wrapper v1.0.2
+       Fresh colorchoice v1.0.5
+       Fresh quote v1.0.47
+       Fresh generic-array v0.14.7
+       Fresh rand_core v0.6.4
+       Fresh signal-hook-registry v1.4.8
+       Fresh cc v1.4.0
+       Fresh http-body-util v0.1.4
+       Fresh percent-encoding v2.3.2
+       Fresh tower-layer v0.3.3
+       Fresh anstyle-query v1.1.5
+       Fresh equivalent v1.0.2
+       Fresh zmij v1.0.23
+       Fresh strsim v0.11.1
+       Fresh opaque-debug v0.3.1
+       Fresh clap_lex v1.1.0
+       Fresh signature v2.2.0
+       Fresh keccak v0.1.6
+       Fresh time-core v0.1.9
+       Fresh winnow v0.7.15
+       Fresh syn v3.0.3
+       Fresh crypto-common v0.1.7
+       Fresh syn v2.0.119
+       Fresh block-buffer v0.10.4
+       Fresh inout v0.1.4
+       Fresh indexmap v2.14.0
+       Fresh anstream v1.0.0
+       Fresh form_urlencoded v1.2.2
+       Fresh num-conv v0.2.2
+       Fresh mime v0.3.17
+       Fresh heck v0.5.0
+       Fresh base64ct v1.8.3
+       Fresh memchr v2.8.3
+       Fresh futures-sink v0.3.33
+       Fresh ryu v1.0.23
+       Fresh toml_write v0.1.2
+       Fresh tokio-macros v2.7.2
+       Fresh zeroize_derive v1.5.0
+       Fresh serde_derive v1.0.229
+       Fresh digest v0.10.7
+       Fresh curve25519-dalek-derive v0.1.1
+       Fresh universal-hash v0.5.1
+       Fresh clap_derive v4.6.4
+       Fresh thiserror-impl v2.0.19
+       Fresh time-macros v0.2.32
+       Fresh password-hash v0.5.0
+       Fresh clap_builder v4.6.2
+       Fresh serde_json v1.0.151
+       Fresh axum-core v0.5.6
+       Fresh aead v0.5.2
+       Fresh ed25519 v2.2.3
+       Fresh serde_path_to_error v0.1.20
+       Fresh rtoolbox v0.0.5
+       Fresh tokio v1.53.1
+       Fresh zeroize v1.9.0
+       Fresh serde v1.0.229
+       Fresh zstd-sys v2.0.16+zstd.1.5.7
+       Fresh sha2 v0.10.9
+       Fresh sha3 v0.10.9
+       Fresh blake2 v0.10.6
+       Fresh poly1305 v0.8.0
+       Fresh hex v0.4.3
+       Fresh matchit v0.8.4
+       Fresh bitflags v2.13.1
+       Fresh linux-raw-sys v0.12.1
+       Fresh deranged v0.5.8
+       Fresh powerfmt v0.2.0
+       Fresh clap v4.6.4
+       Fresh rpassword v7.5.4
+       Fresh getrandom v0.4.3
+       Fresh thiserror v2.0.19
+       Fresh fastrand v2.5.0
+       Fresh base64 v0.22.1
+       Fresh hyper v1.11.0
+       Fresh serde_spanned v0.6.9
+       Fresh zstd-safe v7.2.4
+       Fresh toml_datetime v0.6.11
+       Fresh cipher v0.4.4
+       Fresh curve25519-dalek v4.1.3
+       Fresh tokio-util v0.7.19
+       Fresh serde_urlencoded v0.7.1
+       Fresh tower v0.5.3
+       Fresh argon2 v0.5.3
+       Fresh rustix v1.1.4
+       Fresh time v0.3.54
+       Fresh fips205 v0.4.1
+       Fresh similar v2.7.0
+       Fresh hyper-util v0.1.20
+       Fresh zstd v0.13.3
+       Fresh chacha20 v0.9.1
+       Fresh toml_edit v0.22.27
+       Fresh tokio-stream v0.1.19
+       Fresh ed25519-dalek v2.2.0
+       Fresh tempfile v3.27.0
+       Fresh axum v0.8.9
+       Fresh toml v0.8.23
+       Fresh chacha20poly1305 v0.10.1
+       Fresh einmo-tools v0.1.0 (/yolo/tmp/cargo-mutants-einmo-VsCVdb.tmp/einmo-tools)
+       Fresh hyperlocal v0.9.1
+       Dirty einmo v0.0.5 (/yolo/tmp/cargo-mutants-einmo-VsCVdb.tmp): the file `src/einmo_suite.rs` has changed (1788306210.213485882s, 20s after last build at 1788306190.266491362s)
+   Compiling einmo v0.0.5 (/yolo/tmp/cargo-mutants-einmo-VsCVdb.tmp)
+     Running `/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name einmo --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--deny=clippy::overly_complex_bool_expr' '--deny=clippy::nonminimal_bool' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3201e719900ac4a8 -C extra-filename=-bd073d6ca4491cf7 --out-dir /yolo/einmo/target/debug/deps -C linker=clang -C incremental=/yolo/einmo/target/debug/incremental -L dependency=/yolo/einmo/target/debug/deps --extern argon2=/yolo/einmo/target/debug/deps/libargon2-67042af25f49d38f.rlib --extern axum=/yolo/einmo/target/debug/deps/libaxum-03918b2d91b2b3b7.rlib --extern base64=/yolo/einmo/target/debug/deps/libbase64-3eb1f268f5e5659f.rlib --extern chacha20poly1305=/yolo/einmo/target/debug/deps/libchacha20poly1305-01fabb324ee72541.rlib --extern clap=/yolo/einmo/target/debug/deps/libclap-2006a1fc2235b639.rlib --extern ed25519_dalek=/yolo/einmo/target/debug/deps/libed25519_dalek-ae8ad3c642cfe387.rlib --extern einmo_tools=/yolo/einmo/target/debug/deps/libeinmo_tools-44c630663d563199.rlib --extern fips205=/yolo/einmo/target/debug/deps/libfips205-afcf6fccdaaed772.rlib --extern futures_util=/yolo/einmo/target/debug/deps/libfutures_util-ae51b80eed5dae75.rlib --extern hex=/yolo/einmo/target/debug/deps/libhex-9e871cdd0f7d8fa7.rlib --extern hyper=/yolo/einmo/target/debug/deps/libhyper-4f816d054471182b.rlib --extern hyper_util=/yolo/einmo/target/debug/deps/libhyper_util-4fcc3481f824169d.rlib --extern hyperlocal=/yolo/einmo/target/debug/deps/libhyperlocal-f269d0f47c19048a.rlib --extern rand_core=/yolo/einmo/target/debug/deps/librand_core-3f238acb7f0f6521.rlib --extern rpassword=/yolo/einmo/target/debug/deps/librpassword-e5fccdf4f8e370d2.rlib --extern serde=/yolo/einmo/target/debug/deps/libserde-197e9fd0e58d9718.rlib --extern serde_json=/yolo/einmo/target/debug/deps/libserde_json-a05d868f61aa77d4.rlib --extern sha2=/yolo/einmo/target/debug/deps/libsha2-89feaaf3e7c04a92.rlib --extern similar=/yolo/einmo/target/debug/deps/libsimilar-bb02fd74996218a8.rlib --extern tempfile=/yolo/einmo/target/debug/deps/libtempfile-3748a994fcfd883a.rlib --extern thiserror=/yolo/einmo/target/debug/deps/libthiserror-bb5e0037b0b8db71.rlib --extern time=/yolo/einmo/target/debug/deps/libtime-9bb968a1de85273c.rlib --extern tokio=/yolo/einmo/target/debug/deps/libtokio-55eea0f0ce478213.rlib --extern tokio_stream=/yolo/einmo/target/debug/deps/libtokio_stream-2485fb3373fc8597.rlib --extern toml=/yolo/einmo/target/debug/deps/libtoml-30f5bacfd43a6ad6.rlib --extern tower=/yolo/einmo/target/debug/deps/libtower-62dd0de22bd90fbd.rlib --extern zeroize=/yolo/einmo/target/debug/deps/libzeroize-d55c3c7f1716f728.rlib -C link-arg=-fuse-ld=mold -L native=/yolo/einmo/target/debug/build/zstd-sys-a2a33fe681d30a6b/out`
+     Running `/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name einmo --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--deny=clippy::overly_complex_bool_expr' '--deny=clippy::nonminimal_bool' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=7c3dd38eaad0af4c -C extra-filename=-a19dd0e69fa588ce --out-dir /yolo/einmo/target/debug/deps -C linker=clang -C incremental=/yolo/einmo/target/debug/incremental -L dependency=/yolo/einmo/target/debug/deps --extern argon2=/yolo/einmo/target/debug/deps/libargon2-67042af25f49d38f.rmeta --extern axum=/yolo/einmo/target/debug/deps/libaxum-03918b2d91b2b3b7.rmeta --extern base64=/yolo/einmo/target/debug/deps/libbase64-3eb1f268f5e5659f.rmeta --extern chacha20poly1305=/yolo/einmo/target/debug/deps/libchacha20poly1305-01fabb324ee72541.rmeta --extern clap=/yolo/einmo/target/debug/deps/libclap-2006a1fc2235b639.rmeta --extern ed25519_dalek=/yolo/einmo/target/debug/deps/libed25519_dalek-ae8ad3c642cfe387.rmeta --extern einmo_tools=/yolo/einmo/target/debug/deps/libeinmo_tools-44c630663d563199.rmeta --extern fips205=/yolo/einmo/target/debug/deps/libfips205-afcf6fccdaaed772.rmeta --extern futures_util=/yolo/einmo/target/debug/deps/libfutures_util-ae51b80eed5dae75.rmeta --extern hex=/yolo/einmo/target/debug/deps/libhex-9e871cdd0f7d8fa7.rmeta --extern rand_core=/yolo/einmo/target/debug/deps/librand_core-3f238acb7f0f6521.rmeta --extern rpassword=/yolo/einmo/target/debug/deps/librpassword-e5fccdf4f8e370d2.rmeta --extern serde=/yolo/einmo/target/debug/deps/libserde-197e9fd0e58d9718.rmeta --extern serde_json=/yolo/einmo/target/debug/deps/libserde_json-a05d868f61aa77d4.rmeta --extern sha2=/yolo/einmo/target/debug/deps/libsha2-89feaaf3e7c04a92.rmeta --extern similar=/yolo/einmo/target/debug/deps/libsimilar-bb02fd74996218a8.rmeta --extern thiserror=/yolo/einmo/target/debug/deps/libthiserror-bb5e0037b0b8db71.rmeta --extern time=/yolo/einmo/target/debug/deps/libtime-9bb968a1de85273c.rmeta --extern tokio=/yolo/einmo/target/debug/deps/libtokio-55eea0f0ce478213.rmeta --extern tokio_stream=/yolo/einmo/target/debug/deps/libtokio_stream-2485fb3373fc8597.rmeta --extern toml=/yolo/einmo/target/debug/deps/libtoml-30f5bacfd43a6ad6.rmeta --extern zeroize=/yolo/einmo/target/debug/deps/libzeroize-d55c3c7f1716f728.rmeta -C link-arg=-fuse-ld=mold -L native=/yolo/einmo/target/debug/build/zstd-sys-a2a33fe681d30a6b/out`
+error[E0277]: the trait bound `Problem: Default` is not satisfied
+   --> src/einmo_suite.rs:871:17
+    |
+871 |         Ok(vec![Default::default()]) /* ~ changed by cargo-mutants ~ */
+    |                 ^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+    |
+help: the trait `Default` is not implemented for `Problem`
+   --> src/einmo_suite.rs:207:1
+    |
+207 | pub enum Problem {
+    | ^^^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `einmo` (lib) due to 1 previous error
+
+Caused by:
+  process didn't exit successfully: `/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name einmo --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 '--deny=clippy::overly_complex_bool_expr' '--deny=clippy::nonminimal_bool' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=7c3dd38eaad0af4c -C extra-filename=-a19dd0e69fa588ce --out-dir /yolo/einmo/target/debug/deps -C linker=clang -C incremental=/yolo/einmo/target/debug/incremental -L dependency=/yolo/einmo/target/debug/deps --extern argon2=/yolo/einmo/target/debug/deps/libargon2-67042af25f49d38f.rmeta --extern axum=/yolo/einmo/target/debug/deps/libaxum-03918b2d91b2b3b7.rmeta --extern base64=/yolo/einmo/target/debug/deps/libbase64-3eb1f268f5e5659f.rmeta --extern chacha20poly1305=/yolo/einmo/target/debug/deps/libchacha20poly1305-01fabb324ee72541.rmeta --extern clap=/yolo/einmo/target/debug/deps/libclap-2006a1fc2235b639.rmeta --extern ed25519_dalek=/yolo/einmo/target/debug/deps/libed25519_dalek-ae8ad3c642cfe387.rmeta --extern einmo_tools=/yolo/einmo/target/debug/deps/libeinmo_tools-44c630663d563199.rmeta --extern fips205=/yolo/einmo/target/debug/deps/libfips205-afcf6fccdaaed772.rmeta --extern futures_util=/yolo/einmo/target/debug/deps/libfutures_util-ae51b80eed5dae75.rmeta --extern hex=/yolo/einmo/target/debug/deps/libhex-9e871cdd0f7d8fa7.rmeta --extern rand_core=/yolo/einmo/target/debug/deps/librand_core-3f238acb7f0f6521.rmeta --extern rpassword=/yolo/einmo/target/debug/deps/librpassword-e5fccdf4f8e370d2.rmeta --extern serde=/yolo/einmo/target/debug/deps/libserde-197e9fd0e58d9718.rmeta --extern serde_json=/yolo/einmo/target/debug/deps/libserde_json-a05d868f61aa77d4.rmeta --extern sha2=/yolo/einmo/target/debug/deps/libsha2-89feaaf3e7c04a92.rmeta --extern similar=/yolo/einmo/target/debug/deps/libsimilar-bb02fd74996218a8.rmeta --extern thiserror=/yolo/einmo/target/debug/deps/libthiserror-bb5e0037b0b8db71.rmeta --extern time=/yolo/einmo/target/debug/deps/libtime-9bb968a1de85273c.rmeta --extern tokio=/yolo/einmo/target/debug/deps/libtokio-55eea0f0ce478213.rmeta --extern tokio_stream=/yolo/einmo/target/debug/deps/libtokio_stream-2485fb3373fc8597.rmeta --extern toml=/yolo/einmo/target/debug/deps/libtoml-30f5bacfd43a6ad6.rmeta --extern zeroize=/yolo/einmo/target/debug/deps/libzeroize-d55c3c7f1716f728.rmeta -C link-arg=-fuse-ld=mold -L native=/yolo/einmo/target/debug/build/zstd-sys-a2a33fe681d30a6b/out` (exit status: 1)
+warning: build failed, waiting for other jobs to finish...
+error[E0277]: the trait bound `einmo_suite::Problem: Default` is not satisfied
+   --> src/einmo_suite.rs:871:17
+    |
+871 |         Ok(vec![Default::default()]) /* ~ changed by cargo-mutants ~ */
+    |                 ^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+    |
+help: the trait `Default` is not implemented for `einmo_suite::Problem`
+   --> src/einmo_suite.rs:207:1
+    |
+207 | pub enum Problem {
+    | ^^^^^^^^^^^^^^^^
+
+error: could not compile `einmo` (lib test) due to 1 previous error
+
+Caused by:
+  process didn't exit successfully: `/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name einmo --edition=2024 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 '--deny=clippy::overly_complex_bool_expr' '--deny=clippy::nonminimal_bool' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=3201e719900ac4a8 -C extra-filename=-bd073d6ca4491cf7 --out-dir /yolo/einmo/target/debug/deps -C linker=clang -C incremental=/yolo/einmo/target/debug/incremental -L dependency=/yolo/einmo/target/debug/deps --extern argon2=/yolo/einmo/target/debug/deps/libargon2-67042af25f49d38f.rlib --extern axum=/yolo/einmo/target/debug/deps/libaxum-03918b2d91b2b3b7.rlib --extern base64=/yolo/einmo/target/debug/deps/libbase64-3eb1f268f5e5659f.rlib --extern chacha20poly1305=/yolo/einmo/target/debug/deps/libchacha20poly1305-01fabb324ee72541.rlib --extern clap=/yolo/einmo/target/debug/deps/libclap-2006a1fc2235b639.rlib --extern ed25519_dalek=/yolo/einmo/target/debug/deps/libed25519_dalek-ae8ad3c642cfe387.rlib --extern einmo_tools=/yolo/einmo/target/debug/deps/libeinmo_tools-44c630663d563199.rlib --extern fips205=/yolo/einmo/target/debug/deps/libfips205-afcf6fccdaaed772.rlib --extern futures_util=/yolo/einmo/target/debug/deps/libfutures_util-ae51b80eed5dae75.rlib --extern hex=/yolo/einmo/target/debug/deps/libhex-9e871cdd0f7d8fa7.rlib --extern hyper=/yolo/einmo/target/debug/deps/libhyper-4f816d054471182b.rlib --extern hyper_util=/yolo/einmo/target/debug/deps/libhyper_util-4fcc3481f824169d.rlib --extern hyperlocal=/yolo/einmo/target/debug/deps/libhyperlocal-f269d0f47c19048a.rlib --extern rand_core=/yolo/einmo/target/debug/deps/librand_core-3f238acb7f0f6521.rlib --extern rpassword=/yolo/einmo/target/debug/deps/librpassword-e5fccdf4f8e370d2.rlib --extern serde=/yolo/einmo/target/debug/deps/libserde-197e9fd0e58d9718.rlib --extern serde_json=/yolo/einmo/target/debug/deps/libserde_json-a05d868f61aa77d4.rlib --extern sha2=/yolo/einmo/target/debug/deps/libsha2-89feaaf3e7c04a92.rlib --extern similar=/yolo/einmo/target/debug/deps/libsimilar-bb02fd74996218a8.rlib --extern tempfile=/yolo/einmo/target/debug/deps/libtempfile-3748a994fcfd883a.rlib --extern thiserror=/yolo/einmo/target/debug/deps/libthiserror-bb5e0037b0b8db71.rlib --extern time=/yolo/einmo/target/debug/deps/libtime-9bb968a1de85273c.rlib --extern tokio=/yolo/einmo/target/debug/deps/libtokio-55eea0f0ce478213.rlib --extern tokio_stream=/yolo/einmo/target/debug/deps/libtokio_stream-2485fb3373fc8597.rlib --extern toml=/yolo/einmo/target/debug/deps/libtoml-30f5bacfd43a6ad6.rlib --extern tower=/yolo/einmo/target/debug/deps/libtower-62dd0de22bd90fbd.rlib --extern zeroize=/yolo/einmo/target/debug/deps/libzeroize-d55c3c7f1716f728.rlib -C link-arg=-fuse-ld=mold -L native=/yolo/einmo/target/debug/build/zstd-sys-a2a33fe681d30a6b/out` (exit status: 1)
+
+*** result: Failure(101)

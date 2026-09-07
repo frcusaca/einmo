@@ -1,0 +1,25 @@
+--- src/config.rs
++++ delete field reviewer_key_prefix from struct SigningConfig expression in merge_toml
+@@ -756,21 +756,17 @@
+         }
+         dir = dir.parent()?;
+     }
+ }
+ 
+ fn merge_toml(crate_wide: EinmoTomlConfig, per_suite: EinmoTomlConfig) -> EinmoTomlConfig {
+     EinmoTomlConfig {
+         signing: SigningConfig {
+-            reviewer_key_prefix: per_suite
+-                .signing
+-                .reviewer_key_prefix
+-                .clone()
+-                .or(crate_wide.signing.reviewer_key_prefix),
++             /* ~ changed by cargo-mutants ~ */
+             collation: per_suite
+                 .signing
+                 .collation
+                 .clone()
+                 .or(crate_wide.signing.collation),
+             ..per_suite.signing
+         },
+         suite: SuiteConfig {

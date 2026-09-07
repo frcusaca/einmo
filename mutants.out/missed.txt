@@ -1,0 +1,2 @@
+src/config.rs:764:13: delete field reviewer_key_prefix from struct SigningConfig expression in merge_toml
+src/config.rs:769:13: delete field collation from struct SigningConfig expression in merge_toml

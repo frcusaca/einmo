@@ -1,0 +1,21 @@
+--- src/einmo_suite.rs
++++ replace && with || in evaluate_verified_attestation
+@@ -540,17 +540,17 @@
+         .cloned()
+         .collect::<Vec<_>>();
+     let expected_reviewer_match = expected_prefix.map(|prefix| {
+         verified_signers
+             .iter()
+             .any(|pubkey| pubkey.starts_with(prefix))
+     });
+     let final_verdict = !verified_signers.is_empty()
+-        && computer_key_offenders.is_empty()
++        || /* ~ changed by cargo-mutants ~ */ computer_key_offenders.is_empty()
+         && expected_reviewer_match.unwrap_or(true);
+     AttestationPolicyResult {
+         verified_signers,
+         computer_key_offenders,
+         expected_reviewer_match,
+         final_verdict,
+     }
+ }

@@ -1,0 +1,21 @@
+--- src/einmo_suite.rs
++++ delete ! in evaluate_verified_attestation
+@@ -539,17 +539,17 @@
+         .filter(|pubkey| crate::signature::is_computer_key(pubkey))
+         .cloned()
+         .collect::<Vec<_>>();
+     let expected_reviewer_match = expected_prefix.map(|prefix| {
+         verified_signers
+             .iter()
+             .any(|pubkey| pubkey.starts_with(prefix))
+     });
+-    let final_verdict = !verified_signers.is_empty()
++    let final_verdict =  /* ~ changed by cargo-mutants ~ */verified_signers.is_empty()
+         && computer_key_offenders.is_empty()
+         && expected_reviewer_match.unwrap_or(true);
+     AttestationPolicyResult {
+         verified_signers,
+         computer_key_offenders,
+         expected_reviewer_match,
+         final_verdict,
+     }

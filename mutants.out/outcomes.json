@@ -1,0 +1,619 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 11.88095724,
+          "process_status": "Success",
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=einmo@0.0.5"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 14.983307236,
+          "process_status": "Success",
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=einmo@0.0.5",
+            "--lib",
+            "verified_attestation"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/config.rs:764:13: delete field reviewer_key_prefix from struct SigningConfig expression in merge_toml",
+          "package": "einmo",
+          "file": "src/config.rs",
+          "function": {
+            "function_name": "merge_toml",
+            "return_type": "-> EinmoTomlConfig",
+            "span": {
+              "start": {
+                "line": 761,
+                "column": 1
+              },
+              "end": {
+                "line": 800,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 764,
+              "column": 13
+            },
+            "end": {
+              "line": 768,
+              "column": 61
+            }
+          },
+          "replacement": "",
+          "genre": "StructField"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__config.rs_line_764_col_13.log",
+      "diff_path": "diff/src__config.rs_line_764_col_13.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 2.45876906,
+          "process_status": "Success",
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=einmo@0.0.5"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 14.934999365,
+          "process_status": "Success",
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=einmo@0.0.5",
+            "--lib",
+            "verified_attestation"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/config.rs:769:13: delete field collation from struct SigningConfig expression in merge_toml",
+          "package": "einmo",
+          "file": "src/config.rs",
+          "function": {
+            "function_name": "merge_toml",
+            "return_type": "-> EinmoTomlConfig",
+            "span": {
+              "start": {
+                "line": 761,
+                "column": 1
+              },
+              "end": {
+                "line": 800,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 769,
+              "column": 13
+            },
+            "end": {
+              "line": 773,
+              "column": 51
+            }
+          },
+          "replacement": "",
+          "genre": "StructField"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__config.rs_line_769_col_13.log",
+      "diff_path": "diff/src__config.rs_line_769_col_13.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 2.312597186,
+          "process_status": "Success",
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=einmo@0.0.5"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 14.989072068,
+          "process_status": "Success",
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=einmo@0.0.5",
+            "--lib",
+            "verified_attestation"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/einmo_suite.rs:530:5: replace evaluate_verified_attestation -> AttestationPolicyResult with Default::default()",
+          "package": "einmo",
+          "file": "src/einmo_suite.rs",
+          "function": {
+            "function_name": "evaluate_verified_attestation",
+            "return_type": "-> AttestationPolicyResult",
+            "span": {
+              "start": {
+                "line": 526,
+                "column": 1
+              },
+              "end": {
+                "line": 556,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 530,
+              "column": 5
+            },
+            "end": {
+              "line": 555,
+              "column": 6
+            }
+          },
+          "replacement": "Default::default()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/src__einmo_suite.rs_line_530_col_5.log",
+      "diff_path": "diff/src__einmo_suite.rs_line_530_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.606059248,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=einmo@0.0.5"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/einmo_suite.rs:534:37: replace == with != in evaluate_verified_attestation",
+          "package": "einmo",
+          "file": "src/einmo_suite.rs",
+          "function": {
+            "function_name": "evaluate_verified_attestation",
+            "return_type": "-> AttestationPolicyResult",
+            "span": {
+              "start": {
+                "line": 526,
+                "column": 1
+              },
+              "end": {
+                "line": 556,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 534,
+              "column": 37
+            },
+            "end": {
+              "line": 534,
+              "column": 39
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__einmo_suite.rs_line_534_col_37.log",
+      "diff_path": "diff/src__einmo_suite.rs_line_534_col_37.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 2.561052591,
+          "process_status": "Success",
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=einmo@0.0.5"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 14.48545526,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=einmo@0.0.5",
+            "--lib",
+            "verified_attestation"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/einmo_suite.rs:549:9: replace && with || in evaluate_verified_attestation",
+          "package": "einmo",
+          "file": "src/einmo_suite.rs",
+          "function": {
+            "function_name": "evaluate_verified_attestation",
+            "return_type": "-> AttestationPolicyResult",
+            "span": {
+              "start": {
+                "line": 526,
+                "column": 1
+              },
+              "end": {
+                "line": 556,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 549,
+              "column": 9
+            },
+            "end": {
+              "line": 549,
+              "column": 11
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__einmo_suite.rs_line_549_col_9.log",
+      "diff_path": "diff/src__einmo_suite.rs_line_549_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 2.310603697,
+          "process_status": "Success",
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=einmo@0.0.5"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 14.837212567,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=einmo@0.0.5",
+            "--lib",
+            "verified_attestation"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/einmo_suite.rs:548:9: replace && with || in evaluate_verified_attestation",
+          "package": "einmo",
+          "file": "src/einmo_suite.rs",
+          "function": {
+            "function_name": "evaluate_verified_attestation",
+            "return_type": "-> AttestationPolicyResult",
+            "span": {
+              "start": {
+                "line": 526,
+                "column": 1
+              },
+              "end": {
+                "line": 556,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 548,
+              "column": 9
+            },
+            "end": {
+              "line": 548,
+              "column": 11
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__einmo_suite.rs_line_548_col_9.log",
+      "diff_path": "diff/src__einmo_suite.rs_line_548_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 2.309519739,
+          "process_status": "Success",
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=einmo@0.0.5"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 14.986671955,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=einmo@0.0.5",
+            "--lib",
+            "verified_attestation"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/einmo_suite.rs:547:25: delete ! in evaluate_verified_attestation",
+          "package": "einmo",
+          "file": "src/einmo_suite.rs",
+          "function": {
+            "function_name": "evaluate_verified_attestation",
+            "return_type": "-> AttestationPolicyResult",
+            "span": {
+              "start": {
+                "line": 526,
+                "column": 1
+              },
+              "end": {
+                "line": 556,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 547,
+              "column": 25
+            },
+            "end": {
+              "line": 547,
+              "column": 26
+            }
+          },
+          "replacement": "",
+          "genre": "UnaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__einmo_suite.rs_line_547_col_25.log",
+      "diff_path": "diff/src__einmo_suite.rs_line_547_col_25.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 2.308900198,
+          "process_status": "Success",
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=einmo@0.0.5"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 15.086505132,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=einmo@0.0.5",
+            "--lib",
+            "verified_attestation"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/einmo_suite.rs:871:9: replace EinmoTestRunner::attestation_problems -> Result<Vec<Problem>> with Ok(vec![])",
+          "package": "einmo",
+          "file": "src/einmo_suite.rs",
+          "function": {
+            "function_name": "EinmoTestRunner::attestation_problems",
+            "return_type": "-> Result<Vec<Problem>>",
+            "span": {
+              "start": {
+                "line": 865,
+                "column": 5
+              },
+              "end": {
+                "line": 910,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 871,
+              "column": 9
+            },
+            "end": {
+              "line": 909,
+              "column": 16
+            }
+          },
+          "replacement": "Ok(vec![])",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__einmo_suite.rs_line_871_col_9.log",
+      "diff_path": "diff/src__einmo_suite.rs_line_871_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 5.165007558,
+          "process_status": "Success",
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=einmo@0.0.5"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 14.986166057,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=einmo@0.0.5",
+            "--lib",
+            "verified_attestation"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/einmo_suite.rs:871:9: replace EinmoTestRunner::attestation_problems -> Result<Vec<Problem>> with Ok(vec![Default::default()])",
+          "package": "einmo",
+          "file": "src/einmo_suite.rs",
+          "function": {
+            "function_name": "EinmoTestRunner::attestation_problems",
+            "return_type": "-> Result<Vec<Problem>>",
+            "span": {
+              "start": {
+                "line": 865,
+                "column": 5
+              },
+              "end": {
+                "line": 910,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 871,
+              "column": 9
+            },
+            "end": {
+              "line": 909,
+              "column": 16
+            }
+          },
+          "replacement": "Ok(vec![Default::default()])",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/src__einmo_suite.rs_line_871_col_9_001.log",
+      "diff_path": "diff/src__einmo_suite.rs_line_871_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.255245982,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/home/agent/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=einmo@0.0.5"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 9,
+  "missed": 2,
+  "caught": 5,
+  "timeout": 0,
+  "unviable": 2,
+  "success": 0,
+  "start_time": "2026-09-01T23:40:57.797664013Z",
+  "end_time": "2026-09-01T23:43:31.537411329Z",
+  "cargo_mutants_version": "27.1.0"
+}

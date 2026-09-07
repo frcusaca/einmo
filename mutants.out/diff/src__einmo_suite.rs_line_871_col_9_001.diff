@@ -1,0 +1,59 @@
+--- src/einmo_suite.rs
++++ replace EinmoTestRunner::attestation_problems -> Result<Vec<Problem>> with Ok(vec![Default::default()])
+@@ -863,55 +863,17 @@
+     }
+ 
+     /// Is every `verified/` artifact attested by the reviewer, and none by the
+     /// computer key? (V6/V7.)
+     ///
+     /// With no reviewer key configured, V6 cannot be judged — but V7 still can,
+     /// and must: an AI-signed `verified/` is detectable regardless.
+     fn attestation_problems(&self) -> Result<Vec<Problem>> {
+-        let dir = self.config.stage_dir(Stage::Verified);
+-        let (present, _) =
+-            crate::stage::walk_input_tree_reporting(&dir, self.config.walk_depth_limit())?;
+-        let expected_prefix = self.config.reviewer_key_prefix().map(str::to_string);
+-        let mut out = Vec::new();
+-        for rel in present {
+-            let path = dir.join(&rel);
+-            let Ok(file) = EinmoFile::from_file(&path) else {
+-                continue; // SignatureInvalid is reported by the stage-pair check
+-            };
+-            let policy = evaluate_verified_attestation(&file, expected_prefix.as_deref());
+-            let mut artifact_problems = Vec::new();
+-            if policy.verified_signers.is_empty() {
+-                artifact_problems.push(Problem::MissingVerifiedAttestation { path: rel.clone() });
+-            }
+-            for _pubkey in &policy.computer_key_offenders {
+-                // The computer key is well-known and deterministic. One
+-                // problem per offending stamp makes duplicates visible while
+-                // leaving the boolean verdict unchanged.
+-                artifact_problems
+-                    .push(Problem::KeyDerivedFromEmptyPassphrase { path: rel.clone() });
+-            }
+-            if let (Some(false), Some(prefix)) =
+-                (policy.expected_reviewer_match, expected_prefix.as_ref())
+-            {
+-                let mut found = policy.verified_signers.clone();
+-                found.sort();
+-                found.dedup();
+-                artifact_problems.push(Problem::MissingExpectedReviewer {
+-                    path: rel.clone(),
+-                    expected_prefix: prefix.clone(),
+-                    found,
+-                });
+-            }
+-            debug_assert_eq!(policy.final_verdict, artifact_problems.is_empty());
+-            out.extend(artifact_problems);
+-        }
+-        out.sort_by(|x, y| x.path().cmp(&y.path()));
+-        Ok(out)
++        Ok(vec![Default::default()]) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn is_catastrophe_crumb(&self, out_path: &Path) -> bool {
+         match EinmoFile::from_file(out_path) {
+             Ok(file) => file
+                 .metadata()
+                 .status_detail
+                 .starts_with("TEST IN PROGRESS"),

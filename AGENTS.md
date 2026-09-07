@@ -59,6 +59,18 @@ EIMPs progress through statuses: `Draft` → `Brewing` → `Final` →
 Unlike FOOP, EIMP has **no worktree/per-feature-branch stage** — einmo is
 small enough that plans execute directly on `jia` with regular commits.
 
+When the maintainer explicitly directs an EIMP to use a worktree, create it
+relative to the main repository directory at:
+
+```text
+$MAIN_REPO/../einmo_worktrees/EIMP-xxx-some-descriptors
+```
+
+Here `$MAIN_REPO` is the main einmo repository directory (for example,
+`/yolo/einmo`), `xxx` is the assigned EIMP filename number, and the descriptor
+is a concise lowercase hyphenated description. Do not place EIMP worktrees in
+`/tmp`.
+
 > **Primary branch is `jia`, not `main`.** The `main` branch has no meaning
 > in this repository. All work, commits, and EIMP execution happen on `jia`.
 
@@ -194,6 +206,12 @@ instructions to your self. Dump code snippets in code fences if code or pseudo c
 is more clear.
 
 ## Last Updated
+
+**Date**: 2026-08-27
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Defined the mandatory location for maintainer-directed EIMP
+worktrees: `$MAIN_REPO/../einmo_worktrees/EIMP-xxx-some-descriptors`; EIMP
+worktrees must not be created in `/tmp`.
 
 **Date**: 2026-08-13
 **Updated By**: Claude Code (Opus 5)

@@ -1,0 +1,46 @@
+--- src/einmo_suite.rs
++++ replace evaluate_verified_attestation -> AttestationPolicyResult with Default::default()
+@@ -522,42 +522,17 @@
+     expected_reviewer_match: Option<bool>,
+     final_verdict: bool,
+ }
+ 
+ fn evaluate_verified_attestation(
+     file: &EinmoFile,
+     expected_prefix: Option<&str>,
+ ) -> AttestationPolicyResult {
+-    let verified_signers: Vec<String> = file
+-        .stamps()
+-        .entries()
+-        .iter()
+-        .filter(|stamp| stamp.key() == Stage::Verified.stamp_key())
+-        .map(|stamp| stamp.pubkey_hex().to_string())
+-        .collect();
+-    let computer_key_offenders = verified_signers
+-        .iter()
+-        .filter(|pubkey| crate::signature::is_computer_key(pubkey))
+-        .cloned()
+-        .collect::<Vec<_>>();
+-    let expected_reviewer_match = expected_prefix.map(|prefix| {
+-        verified_signers
+-            .iter()
+-            .any(|pubkey| pubkey.starts_with(prefix))
+-    });
+-    let final_verdict = !verified_signers.is_empty()
+-        && computer_key_offenders.is_empty()
+-        && expected_reviewer_match.unwrap_or(true);
+-    AttestationPolicyResult {
+-        verified_signers,
+-        computer_key_offenders,
+-        expected_reviewer_match,
+-        final_verdict,
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// The outcome of validating a suite at a level: sound, or a list of problems.
+ #[derive(Debug, Default, Clone, PartialEq, Eq)]
+ pub struct SuiteIntegrity {
+     /// Every problem found, ordered by escalating level then path.
+     pub problems: Vec<Problem>,
+ }

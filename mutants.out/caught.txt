@@ -1,0 +1,5 @@
+src/einmo_suite.rs:534:37: replace == with != in evaluate_verified_attestation
+src/einmo_suite.rs:549:9: replace && with || in evaluate_verified_attestation
+src/einmo_suite.rs:548:9: replace && with || in evaluate_verified_attestation
+src/einmo_suite.rs:547:25: delete ! in evaluate_verified_attestation
+src/einmo_suite.rs:871:9: replace EinmoTestRunner::attestation_problems -> Result<Vec<Problem>> with Ok(vec![])
