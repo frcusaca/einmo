@@ -1,8 +1,8 @@
-# EIMP-11 Design Supplement: Structured Tests
+# EIMP-21 Design Supplement: Structured Tests
 
 ## Purpose
 
-EIMP 11 needs more than a flat inventory of case identifiers. Humans understand
+EIMP 21 needs more than a flat inventory of case identifiers. Humans understand
 systems through parts, capabilities, scenarios, and change over time. Einmo's
 inputs already have two useful kinds of structure:
 
@@ -13,7 +13,7 @@ inputs already have two useful kinds of structure:
    before dependents and records deterministic differences from the reference
    result.
 
-EIMP 11 preserves those mechanisms and makes their assurance meaning explicit.
+EIMP 21 preserves those mechanisms and makes their assurance meaning explicit.
 It may add authenticated structural metadata, but it must not flatten or
 replace the existing directory and dependent-case model.
 
@@ -56,7 +56,7 @@ can be displayed alongside “new capability has no protected coverage.”
 Directory nesting currently provides organization; it does not automatically
 mean that a parent directory is an executable case. Likewise, current
 dependent ordering and reference differences do not automatically create a
-shared mutable, stateful test session. EIMP 11 must not claim stronger sequence
+shared mutable, stateful test session. EIMP 21 must not claim stronger sequence
 semantics than the evaluator actually implements.
 
 ## Proposed Structural Model
@@ -143,7 +143,7 @@ Discrepancy views use hierarchy and sequence to show:
 - unaffected sibling capabilities; and
 - the exact leaf evidence behind every summary.
 
-This implements EIMP 11 contracts 5.1 and 5.3 without relying on a language
+This implements EIMP 21 contracts 5.1 and 5.3 without relying on a language
 model to invent the system organization at report time.
 
 ### 6.7 — Structure supports coverage accounting
@@ -219,6 +219,10 @@ either design, the assurance signer must bind the resolved graph digest.
   descendants from forty independent regressions?
 
 ## Last Updated
+
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Renumbered this document from EIMP 11 to EIMP 21 and updated its internal references because EIMP 11 collided with another proposal.
 
 **Date**: 2026-09-04  
 **Updated By**: OpenAI Codex (GPT-5)  

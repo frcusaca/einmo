@@ -1,14 +1,14 @@
-# EIMP-11 Contract Catalogue: Assurance Validation
+# EIMP-21 Contract Catalogue: Assurance Validation
 
-This supplement expands EIMP 11's numbered contracts. The specification in
-`EIMP-11.md` governs if the two documents disagree. The contract numbers are
+This supplement expands EIMP 21's numbered contracts. The specification in
+`EIMP-21.md` governs if the two documents disagree. The contract numbers are
 used by the user stories so a reader can see which proposed guarantee makes
 each real-world step work.
 
 ## What Is Being Guaranteed
 
 Given independently controlled assurance authority and uncompromised execution,
-a successful EIMP 11 validation record is intended to guarantee:
+a successful EIMP 21 validation record is intended to guarantee:
 
 > The exact required inventory identified by this record was completely run by
 > this exact verifier against this exact subject and tested artifact, under the
@@ -76,7 +76,7 @@ new inventory version through an independently authorized operation. The old
 version remains available to interpret historical records.
 
 The activation event defines when policy begins requiring the new version.
-Whether an inventory may have a staged activation is an open EIMP 11 question;
+Whether an inventory may have a staged activation is an open EIMP 21 question;
 whatever mechanism is selected must not hide a period in which new behavior is
 known but unprotected.
 
@@ -441,7 +441,7 @@ acknowledgement rather than treating “event emitted” as “human informed.�
 
 ## Contract 6 — Structured Tests
 
-The protected test set is not flat. EIMP 11 preserves einmo's existing
+The protected test set is not flat. EIMP 21 preserves einmo's existing
 arbitrary-depth input hierarchy and dependent-case ordering, then makes the
 resolved structure part of assurance:
 
@@ -457,7 +457,7 @@ resolved structure part of assurance:
 
 The detailed semantics and their relationship to current `EinmoId` paths and
 `++` dependent chains live in
-[the structured-test supplement](EIMP-11.design.structured_tests.md).
+[the structured-test supplement](EIMP-21.design.structured_tests.md).
 
 ## Contract Interaction Summary
 
@@ -484,9 +484,13 @@ The detailed semantics and their relationship to current `EinmoId` paths and
 
 ## Last Updated
 
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Renumbered this document from EIMP 11 to EIMP 21 and updated its internal references because EIMP 11 collided with another proposal.
+
 **Date**: 2026-09-04  
 **Updated By**: OpenAI Codex (GPT-5)  
-**Changes**: Created the detailed catalogue for EIMP 11's six contract families,
+**Changes**: Created the detailed catalogue for EIMP 21's six contract families,
 including authority boundaries, exact guarantees, interaction with existing
 einmo stages and stamps, acceptance-test implications, and the explicit limit
 on recognizing semantically weakened assertions. Added human-understanding,

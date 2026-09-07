@@ -1,4 +1,4 @@
-# EIMP-11 User Story: A Legitimate Behavior Change Fails the Old Expectation
+# EIMP-21 User Story: A Legitimate Behavior Change Fails the Old Expectation
 
 ## Story
 
@@ -176,10 +176,14 @@ pretending to replace it.
   expectation change?
 - Can one subject legitimately hold simultaneous success records for current
   and future policy profiles?
-- Does EIMP 11 need an explicit exception/transitional-result model, or should
+- Does EIMP 21 need an explicit exception/transitional-result model, or should
   that be a later proposal?
 
 ## Last Updated
+
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Renumbered this document from EIMP 11 to EIMP 21 and updated its internal references because EIMP 11 collided with another proposal.
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)

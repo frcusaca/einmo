@@ -1,4 +1,4 @@
-# EIMP-11 User Story: Day 1 — Establish the First Baseline
+# EIMP-21 User Story: Day 1 — Establish the First Baseline
 
 ## Story
 
@@ -104,9 +104,13 @@ future subject revision is valid.
 
 ## Last Updated
 
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Renumbered this document from EIMP 11 to EIMP 21 and updated its internal references because EIMP 11 collided with another proposal.
+
 **Date**: 2026-09-04  
 **Updated By**: OpenAI Codex (GPT-5)  
-**Changes**: Created the Day 1 EIMP 11 user story, grounding initial test
+**Changes**: Created the Day 1 EIMP 21 user story, grounding initial test
 authoring, reviewed expectations, protected-inventory publication, clean
 official execution, and the first successful validation record in contracts
 1.1–4.6.

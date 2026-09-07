@@ -1,4 +1,4 @@
-# EIMP-11 User Story: Day 2 — Routine Regression and Failure
+# EIMP-21 User Story: Day 2 — Routine Regression and Failure
 
 ## Story
 
@@ -104,9 +104,13 @@ diagnostic aid and follows its own retention policy.
 
 ## Last Updated
 
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Renumbered this document from EIMP 11 to EIMP 21 and updated its internal references because EIMP 11 collided with another proposal.
+
 **Date**: 2026-09-04  
 **Updated By**: OpenAI Codex (GPT-5)  
-**Changes**: Created the Day 2 EIMP 11 user story, covering an unchanged
+**Changes**: Created the Day 2 EIMP 21 user story, covering an unchanged
 inventory against a new subject SHA, both passing and failing paths,
 infrastructure interruption, diagnostics carrying no assurance claim, retry with a new commit,
 replay prevention, and non-circular result storage.

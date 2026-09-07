@@ -1,7 +1,7 @@
-# EIMP-11 Research: Motivation, Failure Modes, and Prior Art
+# EIMP-21 Research: Motivation, Failure Modes, and Prior Art
 
-These are non-normative research notes supporting EIMP 11. The normative Draft
-is [`EIMP-11.md`](EIMP-11.md); if these older exploratory notes disagree with
+These are non-normative research notes supporting EIMP 21. The normative Draft
+is [`EIMP-21.md`](EIMP-21.md); if these older exploratory notes disagree with
 it, the EIMP governs.
 
 ## Start Here
@@ -1385,11 +1385,15 @@ upstream tests + external hardware lab + downstream integration suite
 
 ## Last Updated
 
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Renumbered this document from EIMP 11 to EIMP 21 and updated its internal references because EIMP 11 collided with another proposal.
+
 **Date**: 2026-09-04  
 **Updated By**: OpenAI Codex (GPT-5)  
 **Changes**: Moved the existing motivation, failure catalogue, and prior-art
-survey into the EIMP 11 supplemental naming scheme without discarding its
-research; identified `EIMP-11.md` as the governing Draft; and distinguished
+survey into the EIMP 21 supplemental naming scheme without discarding its
+research; identified `EIMP-21.md` as the governing Draft; and distinguished
 existing mechanical `.einmo` stage stamps from the assurance signature that a
 failed validation run never receives.
 

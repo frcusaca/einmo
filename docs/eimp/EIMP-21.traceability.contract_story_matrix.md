@@ -1,8 +1,8 @@
-# EIMP-11 Traceability: Contracts to User Stories
+# EIMP-21 Traceability: Contracts to User Stories
 
 ## Purpose
 
-This supplement audits whether EIMP 11's contracts are grounded in realistic
+This supplement audits whether EIMP 21's contracts are grounded in realistic
 use. It does **not** report implementation status. “Grounded” means a story
 demonstrates why the contract is needed and what a user expects to observe.
 
@@ -12,17 +12,17 @@ The EIMP specification governs if this matrix disagrees with it.
 
 | Key | Story |
 |---|---|
-| D1 | [Day 1 — first baseline](EIMP-11.user_story.day_1_first_baseline.md) |
-| D2 | [Day 2 — routine regression and failure](EIMP-11.user_story.day_2_regression_and_failure.md) |
-| W2 | [Week 2 — verify, then expand coverage](EIMP-11.user_story.week_2_expand_coverage.md) |
-| RC | [Removed commit and patched subject tests](EIMP-11.user_story.detected_many_broken_cases.md) |
-| IGN | [Ignored case, suite, or validation job](EIMP-11.user_story.detected_ignored_suite.md) |
-| SEQ | [Hierarchical and sequential failure cascade](EIMP-11.user_story.sequential_failure_cascade.md) |
-| INV | [Unavailable or stale protected inventory](EIMP-11.user_story.inventory_unavailable_or_stale.md) |
-| MUT | [Checkout or artifact mutated during execution](EIMP-11.user_story.checkout_mutated_during_run.md) |
-| STORE | [Store success without changing verifier identity](EIMP-11.user_story.store_success_without_changing_verifier.md) |
-| LEG | [Legitimate intentional behavior change](EIMP-11.user_story.intentional_behavior_change.md) |
-| Y2 | [Year 2 — long-term evidence evolution](EIMP-11.user_story.year_2_evidence_evolution.md) |
+| D1 | [Day 1 — first baseline](EIMP-21.user_story.day_1_first_baseline.md) |
+| D2 | [Day 2 — routine regression and failure](EIMP-21.user_story.day_2_regression_and_failure.md) |
+| W2 | [Week 2 — verify, then expand coverage](EIMP-21.user_story.week_2_expand_coverage.md) |
+| RC | [Removed commit and patched subject tests](EIMP-21.user_story.detected_many_broken_cases.md) |
+| IGN | [Ignored case, suite, or validation job](EIMP-21.user_story.detected_ignored_suite.md) |
+| SEQ | [Hierarchical and sequential failure cascade](EIMP-21.user_story.sequential_failure_cascade.md) |
+| INV | [Unavailable or stale protected inventory](EIMP-21.user_story.inventory_unavailable_or_stale.md) |
+| MUT | [Checkout or artifact mutated during execution](EIMP-21.user_story.checkout_mutated_during_run.md) |
+| STORE | [Store success without changing verifier identity](EIMP-21.user_story.store_success_without_changing_verifier.md) |
+| LEG | [Legitimate intentional behavior change](EIMP-21.user_story.intentional_behavior_change.md) |
+| Y2 | [Year 2 — long-term evidence evolution](EIMP-21.user_story.year_2_evidence_evolution.md) |
 
 ## Reading the Status Column
 
@@ -143,7 +143,7 @@ To close the weakest rows before an implementation plan, add stories for:
 
 - a legitimate test retirement or temporary exception in a small team;
 - several competing prior successes across platforms and inventories;
-- a real stateful sequence, if that is intended for initial EIMP 11 scope;
+- a real stateful sequence, if that is intended for initial EIMP 21 scope;
 - a repository migration and assurance-key compromise; and
 - an uncovered new component reaching a release decision.
 
@@ -151,7 +151,11 @@ To close the weakest rows before an implementation plan, add stories for:
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)
-**Changes**: Created the consolidated EIMP 11 contract-to-story matrix, audited
+**Changes**: Renumbered this document from EIMP 11 to EIMP 21 and updated its internal references because EIMP 11 collided with another proposal.
+
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Created the consolidated EIMP 21 contract-to-story matrix, audited
 every contract against eleven user stories, distinguished grounded behavior from
 open mechanisms, and recorded design gaps discovered only by walking the
 proposal through realistic timelines, storage, outage, and adversarial events.

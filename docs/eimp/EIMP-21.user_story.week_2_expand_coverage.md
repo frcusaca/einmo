@@ -1,4 +1,4 @@
-# EIMP-11 User Story: Week 2 — Verify Old Obligations, Then Expand Coverage
+# EIMP-21 User Story: Week 2 — Verify Old Obligations, Then Expand Coverage
 
 ## Story
 
@@ -203,9 +203,13 @@ S8 passed V4 + I4
 
 ## Last Updated
 
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Renumbered this document from EIMP 11 to EIMP 21 and updated its internal references because EIMP 11 collided with another proposal.
+
 **Date**: 2026-09-04  
 **Updated By**: OpenAI Codex (GPT-5)  
-**Changes**: Created the central Week 2 EIMP 11 user story. Defined the
+**Changes**: Created the central Week 2 EIMP 21 user story. Defined the
 two-pass workflow of validating old obligations first, then authoring,
 reviewing, protecting, and validating new structured coverage, with explicit
 contract references, honest intermediate claims, and non-circular success

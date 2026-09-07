@@ -1,5 +1,5 @@
 ---
-eimp: D11
+eimp: D12
 title: Extra-repository verification and assurance
 author: OpenAI Codex (GPT-5) <noreply@openai.com>
 status: Draft
@@ -9,7 +9,7 @@ supersedes: []
 begun: [ ]
 ---
 
-# EIMP-11: Extra-repository verification and assurance
+# EIMP-21: Extra-repository verification and assurance
 
 EIMP numbering is little-endian; the full rules live in `eimp.md` at the
 repository root — **read it before creating or editing an EIMP.**
@@ -235,7 +235,7 @@ snapshots, promote stages, or run ordinary gates.
   pass. Transitional policy, if supported, must be explicit and conspicuous.
 
 The detailed rationale and acceptance implications live in
-[the contract catalogue](EIMP-11.contract.assurance_validation.md).
+[the contract catalogue](EIMP-21.contract.assurance_validation.md).
 
 ### S.3 — Contract 2: validation execution
 
@@ -340,7 +340,7 @@ appropriate controls for weakened assertions.
   without configured delivery and acknowledgement evidence.
 
 The human-factors rationale and candidate interaction model are expanded in
-[the human-responsibility design supplement](EIMP-11.design.human_responsibility.md).
+[the human-responsibility design supplement](EIMP-21.design.human_responsibility.md).
 
 ### S.7 — Contract 6: structured tests
 
@@ -366,7 +366,7 @@ The human-factors rationale and candidate interaction model are expanded in
 
 These contracts preserve current directory mirroring and dependent-case
 ordering; they do not silently reinterpret those mechanisms as stateful
-workflows. See [the structured-test design supplement](EIMP-11.design.structured_tests.md).
+workflows. See [the structured-test design supplement](EIMP-21.design.structured_tests.md).
 
 ### S.8 — Typical lifecycle
 
@@ -381,7 +381,7 @@ development:
 The first result MUST identify the older inventory and MUST NOT be presented as
 coverage of the new behavior. The second result MUST identify the expanded
 inventory. The full walkthrough is
-[the Week 2 user story](EIMP-11.user_story.week_2_expand_coverage.md).
+[the Week 2 user story](EIMP-21.user_story.week_2_expand_coverage.md).
 
 ### S.9 — Successful validation record
 
@@ -422,19 +422,19 @@ specification gap rather than merely a documentation problem.
 
 | Story | Primary design question |
 |---|---|
-| [Day 1](EIMP-11.user_story.day_1_first_baseline.md) | How is the first independently protected baseline established? |
-| [Day 2](EIMP-11.user_story.day_2_regression_and_failure.md) | What happens on an ordinary pass, a regression, and a retry? |
-| [Week 2](EIMP-11.user_story.week_2_expand_coverage.md) | How are old obligations checked before coverage expands for new code? |
-| [Removed commit and patched tests](EIMP-11.user_story.detected_many_broken_cases.md) | How does independent validation focus human attention when subject-owned tests were made green? |
-| [Ignored suite](EIMP-11.user_story.detected_ignored_suite.md) | Who detects an ignored inner case, outer suite wrapper, or entire validation job? |
-| [Sequential failure cascade](EIMP-11.user_story.sequential_failure_cascade.md) | How do hierarchy and sequence turn many red leaves into truthful causal context? |
-| [Unavailable or stale inventory](EIMP-11.user_story.inventory_unavailable_or_stale.md) | When may an authenticated local inventory be used offline, and how is rollback refused? |
-| [Inputs mutate during execution](EIMP-11.user_story.checkout_mutated_during_run.md) | Why are clean pre/post checks insufficient, and which paths may remain writable? |
-| [Store a successful result](EIMP-11.user_story.store_success_without_changing_verifier.md) | How can good evidence be appended without recursively changing the verifier identity it names? |
-| [Intentional behavior change](EIMP-11.user_story.intentional_behavior_change.md) | How does a legitimate new requirement replace old expectations without rewriting history or bypassing staged review? |
-| [Year 2](EIMP-11.user_story.year_2_evidence_evolution.md) | How do old evidence, new policy, key changes, platforms, and archives coexist? |
+| [Day 1](EIMP-21.user_story.day_1_first_baseline.md) | How is the first independently protected baseline established? |
+| [Day 2](EIMP-21.user_story.day_2_regression_and_failure.md) | What happens on an ordinary pass, a regression, and a retry? |
+| [Week 2](EIMP-21.user_story.week_2_expand_coverage.md) | How are old obligations checked before coverage expands for new code? |
+| [Removed commit and patched tests](EIMP-21.user_story.detected_many_broken_cases.md) | How does independent validation focus human attention when subject-owned tests were made green? |
+| [Ignored suite](EIMP-21.user_story.detected_ignored_suite.md) | Who detects an ignored inner case, outer suite wrapper, or entire validation job? |
+| [Sequential failure cascade](EIMP-21.user_story.sequential_failure_cascade.md) | How do hierarchy and sequence turn many red leaves into truthful causal context? |
+| [Unavailable or stale inventory](EIMP-21.user_story.inventory_unavailable_or_stale.md) | When may an authenticated local inventory be used offline, and how is rollback refused? |
+| [Inputs mutate during execution](EIMP-21.user_story.checkout_mutated_during_run.md) | Why are clean pre/post checks insufficient, and which paths may remain writable? |
+| [Store a successful result](EIMP-21.user_story.store_success_without_changing_verifier.md) | How can good evidence be appended without recursively changing the verifier identity it names? |
+| [Intentional behavior change](EIMP-21.user_story.intentional_behavior_change.md) | How does a legitimate new requirement replace old expectations without rewriting history or bypassing staged review? |
+| [Year 2](EIMP-21.user_story.year_2_evidence_evolution.md) | How do old evidence, new policy, key changes, platforms, and archives coexist? |
 
-[The contract-to-story matrix](EIMP-11.traceability.contract_story_matrix.md)
+[The contract-to-story matrix](EIMP-21.traceability.contract_story_matrix.md)
 audits every numbered contract against these stories and records the design
 gaps they exposed.
 
@@ -473,8 +473,8 @@ cover:
   sequence dependencies, cycle detection, and blocked descendants;
 - comprehensive end-to-end Day 1, Day 2, and Week 2 workflows.
 
-The future `EIMP-11.plan.md` MUST follow `eimp.md`'s test-first and
-sub-section-test-subset rules, including a final EIMP 11 comprehensive test.
+The future `EIMP-21.plan.md` MUST follow `eimp.md`'s test-first and
+sub-section-test-subset rules, including a final EIMP 21 comprehensive test.
 
 ## Rejected Alternatives
 
@@ -547,20 +547,24 @@ claims.
 - [EIMP 0 — process](EIMP-0.md)
 - [EIMP 01 — generated stage and adjacent gates](EIMP-01.md)
 - [EIMP 9 — test-tooling contract](EIMP-9.md)
-- [Contract catalogue](EIMP-11.contract.assurance_validation.md)
-- [Human understanding and responsible action](EIMP-11.design.human_responsibility.md)
-- [Structured tests](EIMP-11.design.structured_tests.md)
-- [Contract-to-story traceability](EIMP-11.traceability.contract_story_matrix.md)
-- [Motivation, failure catalogue, and prior-art research](EIMP-11.research.motivation_and_prior_art.md)
+- [Contract catalogue](EIMP-21.contract.assurance_validation.md)
+- [Human understanding and responsible action](EIMP-21.design.human_responsibility.md)
+- [Structured tests](EIMP-21.design.structured_tests.md)
+- [Contract-to-story traceability](EIMP-21.traceability.contract_story_matrix.md)
+- [Motivation, failure catalogue, and prior-art research](EIMP-21.research.motivation_and_prior_art.md)
 - [Repository tutorial](../tutorial.md)
 - Root `README.md`, especially the stage model and specific-test guidance
 - Root `rust_instructions.md`, especially testing and cryptographic code rules
 
 ## Last Updated
 
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Renumbered this document from EIMP 11 to EIMP 21 and updated its internal references because EIMP 11 collided with another proposal.
+
 **Date**: 2026-09-04  
 **Updated By**: OpenAI Codex (GPT-5)  
-**Changes**: Created Draft EIMP 11, preserving existing colocated and four-stage
+**Changes**: Created Draft EIMP 21, preserving existing colocated and four-stage
 einmo behavior while specifying the initial extra-repository authority model,
 six contract families, lifecycle, successful validation claim, test
 obligations, rejected alternatives, and open design questions. Added Phase 2

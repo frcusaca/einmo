@@ -1,9 +1,9 @@
-# EIMP-11 Design Supplement: Human Understanding and Responsible Action
+# EIMP-21 Design Supplement: Human Understanding and Responsible Action
 
 ## Phase 2 Goal
 
 Complex software can now change faster than a human can responsibly inspect
-every generated line. EIMP 11 must not solve that mismatch by treating a green
+every generated line. EIMP 21 must not solve that mismatch by treating a green
 command, a signature, or a single approval click as proof of human judgment.
 
 The Phase 2 goal is to provide mechanisms that help humans:
@@ -42,7 +42,7 @@ capabilities, scenarios, and requirements, not only a flat list of filenames.
 It should show why an important case exists, which specification or risk it
 addresses, and where it sits in a hierarchy or sequence.
 
-This view is grounded by EIMP 11 contracts 5.1 and 6.1–6.7.
+This view is grounded by EIMP 21 contracts 5.1 and 6.1–6.7.
 
 ### A model of development since the last relevant success
 
@@ -213,9 +213,13 @@ new code.
 
 ## Last Updated
 
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Renumbered this document from EIMP 11 to EIMP 21 and updated its internal references because EIMP 11 collided with another proposal.
+
 **Date**: 2026-09-04  
 **Updated By**: OpenAI Codex (GPT-5)  
-**Changes**: Created the EIMP 11 Phase 2 human-responsibility design supplement,
+**Changes**: Created the EIMP 21 Phase 2 human-responsibility design supplement,
 defining correctness versus propriety, the protected-system and development-
 delta views, discrepancy packets, four explicit resolution paths, proposal/
 approval separation, review rationale, safe interaction defaults, honest

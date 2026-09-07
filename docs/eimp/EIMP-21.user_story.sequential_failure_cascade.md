@@ -1,4 +1,4 @@
-# EIMP-11 User Story: A Structured Sequence Exposes One Root Failure
+# EIMP-21 User Story: A Structured Sequence Exposes One Root Failure
 
 ## Story
 
@@ -31,7 +31,7 @@ deterministic `DIFF` between their independently evaluated outputs.
 
 That is a **comparison sequence**. It does not necessarily mean the cases share
 one mutable process or that `ordinary_order++discount.foo` consumes runtime
-state produced by `ordinary_order.foo`. EIMP 11 must retain this current
+state produced by `ordinary_order.foo`. EIMP 21 must retain this current
 behavior and name it accurately. **Contracts relied upon: 6.1, 6.2.**
 
 ## Official Validation
@@ -127,7 +127,7 @@ If authorization fails:
 
 This variant may require new evaluator or runner semantics. The existing `++`
 reference mechanism must not be silently redefined as shared state. Whether
-stateful workflows belong in EIMP 11's first implementation remains open.
+stateful workflows belong in EIMP 21's first implementation remains open.
 
 ## Contract Trace
 
@@ -166,7 +166,7 @@ validation fact.
 
 ## Questions Exposed by This Story
 
-- Does EIMP 11 initially support only existing comparison sequences, or also
+- Does EIMP 21 initially support only existing comparison sequences, or also
   true stateful execution prerequisites?
 - If a sequence is already unable to pass, which independent cases should
   continue to maximize diagnostic value?
@@ -178,6 +178,10 @@ validation fact.
   one stable execution identity?
 
 ## Last Updated
+
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Renumbered this document from EIMP 11 to EIMP 21 and updated its internal references because EIMP 11 collided with another proposal.
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)

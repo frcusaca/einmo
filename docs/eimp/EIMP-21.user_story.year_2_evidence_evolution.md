@@ -1,4 +1,4 @@
-# EIMP-11 User Story: Year 2 — Evidence Through Long-Term Change
+# EIMP-21 User Story: Year 2 — Evidence Through Long-Term Change
 
 ## Story
 
@@ -121,7 +121,7 @@ current policy acceptance:   separately evaluated
 
 Identity and archival availability are separate guarantees. **Contracts
 relied upon: 2.3, 3.4, 3.6, 5.3.** A future archival contract may belong in
-EIMP 11 or a follow-on EIMP.
+EIMP 21 or a follow-on EIMP.
 
 ## What Year 2 Establishes
 
@@ -157,9 +157,13 @@ policy can demand newer and stronger evidence.
 
 ## Last Updated
 
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Renumbered this document from EIMP 11 to EIMP 21 and updated its internal references because EIMP 11 collided with another proposal.
+
 **Date**: 2026-09-04  
 **Updated By**: OpenAI Codex (GPT-5)  
-**Changes**: Created the Year 2 EIMP 11 user story, grounding historical
+**Changes**: Created the Year 2 EIMP 21 user story, grounding historical
 interpretation, present policy, test retirement, structural evolution, key
 rotation and revocation, repository migration, platform evidence, and archival
 limits in the numbered contracts.

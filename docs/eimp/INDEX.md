@@ -26,7 +26,7 @@ ls docs/eimp | rev | sort -V | rev
 | [EIMP-8](EIMP-8.md) | Code-review findings — einmo library, review server, and zweimomo | Draft | 2026-07-31 | opencode (z-ai/glm-5.2); Claude Code (Opus 5) |
 | [EIMP-9](EIMP-9.md) | The test-tooling contract — one reliable way to run einmo's tests and read the results | Implementing (paused) | 2026-08-01 | Claude Code (Opus 5) |
 | [EIMP-01](EIMP-01.md) | A separate generation phase writing an uncommitted `generated/` stage, and validation levels that compare only against their predecessor | Implementing | 2026-08-11 | Claude Code (Opus 5) |
-| [EIMP-11](EIMP-11.md) | Extra-repository verification and assurance | Draft | 2026-09-04 | OpenAI Codex (GPT-5) |
+| [EIMP-21](EIMP-21.md) | Extra-repository verification and assurance | Draft | 2026-09-04 | OpenAI Codex (GPT-5) |
 
 ---
 
@@ -144,6 +144,12 @@ nothing is dropped — both land after `EIMP-1`:
 ---
 
 ## Last Updated
+
+**Date**: 2026-09-04
+**Updated By**: OpenAI Codex (GPT-5)
+**Changes**: Renumbered the extra-repository verification and assurance Draft
+and its supplemental family from EIMP 11 to EIMP 21 because EIMP 11 collided
+with another proposal.
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)
