@@ -1,9 +1,9 @@
-# EIMP-21 Design Supplement: Human Understanding and Responsible Action
+# EIMP-31 Design Supplement: Human Understanding and Responsible Action
 
 ## Phase 2 Goal
 
 Complex software can now change faster than a human can responsibly inspect
-every generated line. EIMP 21 must not solve that mismatch by treating a green
+every generated line. EIMP 31 must not solve that mismatch by treating a green
 command, a signature, or a single approval click as proof of human judgment.
 
 The Phase 2 goal is to provide mechanisms that help humans:
@@ -42,7 +42,7 @@ capabilities, scenarios, and requirements, not only a flat list of filenames.
 It should show why an important case exists, which specification or risk it
 addresses, and where it sits in a hierarchy or sequence.
 
-This view is grounded by EIMP 21 contracts 5.1 and 6.1–6.7.
+This view is grounded by EIMP 31 contracts 5.1 and 6.1–6.7.
 
 ### A model of development since the last relevant success
 
@@ -212,6 +212,11 @@ exception, a compromised signer, and a release performed with known uncovered
 new code.
 
 ## Last Updated
+
+**Date**: 2026-09-07
+**Updated By**: OpenAI Codex (GPT-6)
+**Changes**: Renumbered this proposal family from EIMP 21 to EIMP 31 at the
+maintainer's request; updated active references and retained earlier history.
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)

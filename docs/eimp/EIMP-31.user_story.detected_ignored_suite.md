@@ -1,4 +1,4 @@
-# EIMP-21 User Story: A Tiny `#[ignore]` Tries to Silence a Suite
+# EIMP-31 User Story: A Tiny `#[ignore]` Tries to Silence a Suite
 
 ## Story
 
@@ -46,7 +46,7 @@ fn external_assurance_suite() {
 then einmo code inside that function cannot notice the change. Software that
 does not execute cannot report its own non-execution.
 
-EIMP 21 therefore does not use a subject-owned `cargo test` wrapper as the
+EIMP 31 therefore does not use a subject-owned `cargo test` wrapper as the
 authority for extra-repository assurance. The validation runner has its own
 independently controlled suite inventory and invocation path. It expects the
 suite to run, and reports the whole suite missing when the wrapper produces no
@@ -109,7 +109,7 @@ upon: 1.4, 5.4–5.6, 6.8.**
 
 ## Guarantees and Limits
 
-EIMP 21 can guarantee non-execution detection only across an independently
+EIMP 31 can guarantee non-execution detection only across an independently
 controlled chain:
 
 ```text
@@ -147,6 +147,11 @@ and let deployments choose local, CI, or hosted implementations of them.
 - Which attention events require acknowledgement before a release can proceed?
 
 ## Last Updated
+
+**Date**: 2026-09-07
+**Updated By**: OpenAI Codex (GPT-6)
+**Changes**: Renumbered this proposal family from EIMP 21 to EIMP 31 at the
+maintainer's request; updated active references and retained earlier history.
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)

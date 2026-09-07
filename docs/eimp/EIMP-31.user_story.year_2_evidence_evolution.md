@@ -1,4 +1,4 @@
-# EIMP-21 User Story: Year 2 — Evidence Through Long-Term Change
+# EIMP-31 User Story: Year 2 — Evidence Through Long-Term Change
 
 ## Story
 
@@ -121,7 +121,7 @@ current policy acceptance:   separately evaluated
 
 Identity and archival availability are separate guarantees. **Contracts
 relied upon: 2.3, 3.4, 3.6, 5.3.** A future archival contract may belong in
-EIMP 21 or a follow-on EIMP.
+EIMP 31 or a follow-on EIMP.
 
 ## What Year 2 Establishes
 
@@ -156,6 +156,11 @@ policy can demand newer and stronger evidence.
   threshold than requirement addition?
 
 ## Last Updated
+
+**Date**: 2026-09-07
+**Updated By**: OpenAI Codex (GPT-6)
+**Changes**: Renumbered this proposal family from EIMP 21 to EIMP 31 at the
+maintainer's request; updated active references and retained earlier history.
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)

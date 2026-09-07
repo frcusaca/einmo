@@ -1,4 +1,4 @@
-# EIMP-21 User Story: An Agent Removes an Older Commit and Patches the Tests
+# EIMP-31 User Story: An Agent Removes an Older Commit and Patches the Tests
 
 ## Story
 
@@ -46,7 +46,7 @@ subject repository. **Contracts relied upon: 1.1–1.4, 2.4, 3.4.**
 This is not itself a failure of colocated testing. Those tests remain valuable
 development tools, but the subject-writing authority controls both the code and
 those tests. They cannot independently establish that earlier protected
-behavior survived. EIMP 21 preserves colocated tests while making this limit
+behavior survived. EIMP 31 preserves colocated tests while making this limit
 visible. **Contracts relied upon: 1.2, 4.6, 5.7.**
 
 ## Independent Validation Begins
@@ -198,7 +198,7 @@ claim. **Contracts relied upon: 2.4–2.6, 3.2, 5.1–5.3, 6.1–6.7.**
 ## Guarantees and Limits
 
 This story is detected only when the lost behavior is represented by an
-independently controlled case or other oracle. EIMP 21 does not guarantee that
+independently controlled case or other oracle. EIMP 31 does not guarantee that
 every omitted commit has a test, nor that the external suite cannot be gamed by
 code written specifically against visible fixtures.
 
@@ -239,6 +239,11 @@ and explicit human resolution is the intended assurance mechanism.
   secondary regressions?
 
 ## Last Updated
+
+**Date**: 2026-09-07
+**Updated By**: OpenAI Codex (GPT-6)
+**Changes**: Renumbered this proposal family from EIMP 21 to EIMP 31 at the
+maintainer's request; updated active references and retained earlier history.
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)

@@ -1,7 +1,7 @@
-# EIMP-21 Research: Motivation, Failure Modes, and Prior Art
+# EIMP-31 Research: Motivation, Failure Modes, and Prior Art
 
-These are non-normative research notes supporting EIMP 21. The normative Draft
-is [`EIMP-21.md`](EIMP-21.md); if these older exploratory notes disagree with
+These are non-normative research notes supporting EIMP 31. The normative Draft
+is [`EIMP-31.md`](EIMP-31.md); if these older exploratory notes disagree with
 it, the EIMP governs.
 
 ## Start Here
@@ -1384,6 +1384,11 @@ upstream tests + external hardware lab + downstream integration suite
 > trust are controlled independently from the code.
 
 ## Last Updated
+
+**Date**: 2026-09-07
+**Updated By**: OpenAI Codex (GPT-6)
+**Changes**: Renumbered this proposal family from EIMP 21 to EIMP 31 at the
+maintainer's request; updated active references and retained earlier history.
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)

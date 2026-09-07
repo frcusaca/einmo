@@ -1,4 +1,4 @@
-# EIMP-21 User Story: The Protected Inventory Is Unavailable or Stale
+# EIMP-31 User Story: The Protected Inventory Is Unavailable or Stale
 
 ## Story
 
@@ -117,7 +117,7 @@ Offline verification requires local trust state. If revocation, expiry, or
 inventory activation can change remotely and policy demands knowledge of those
 changes, a disconnected runner cannot honestly claim freshness.
 
-EIMP 21 can define signed offline bundles and maximum acceptable age, but it
+EIMP 31 can define signed offline bundles and maximum acceptable age, but it
 cannot make mutually disconnected systems share current state.
 
 ## Acceptance Scenarios Derived from This Story
@@ -144,6 +144,11 @@ cannot make mutually disconnected systems share current state.
 - Who may authorize a temporary policy change during a prolonged outage?
 
 ## Last Updated
+
+**Date**: 2026-09-07
+**Updated By**: OpenAI Codex (GPT-6)
+**Changes**: Renumbered this proposal family from EIMP 21 to EIMP 31 at the
+maintainer's request; updated active references and retained earlier history.
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)

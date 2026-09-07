@@ -1,4 +1,4 @@
-# EIMP-21 User Story: Day 1 — Establish the First Baseline
+# EIMP-31 User Story: Day 1 — Establish the First Baseline
 
 ## Story
 
@@ -103,6 +103,11 @@ future subject revision is valid.
   within the validation repository?
 
 ## Last Updated
+
+**Date**: 2026-09-07
+**Updated By**: OpenAI Codex (GPT-6)
+**Changes**: Renumbered this proposal family from EIMP 21 to EIMP 31 at the
+maintainer's request; updated active references and retained earlier history.
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)

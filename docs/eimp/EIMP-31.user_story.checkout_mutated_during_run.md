@@ -1,4 +1,4 @@
-# EIMP-21 User Story: An Evaluator Mutates and Restores Its Inputs
+# EIMP-31 User Story: An Evaluator Mutates and Restores Its Inputs
 
 ## Story
 
@@ -132,7 +132,7 @@ Raw sandbox diagnostics remain available. **Contracts relied upon: 5.1, 5.3,
 Filesystem read-only permissions alone may be insufficient if the evaluator
 can remount storage, control the kernel, replace a remote dependency, or alter
 another process. The assurance strength depends on the runner's isolation and
-threat model. EIMP 21 must state which attackers are in scope.
+threat model. EIMP 31 must state which attackers are in scope.
 
 The contract prevents inputs from changing during a run; it does not prove the
 initial inputs were correct or that a trusted compiler produced the tested
@@ -163,6 +163,11 @@ binary.
   those dependencies declared and hashed?
 
 ## Last Updated
+
+**Date**: 2026-09-07
+**Updated By**: OpenAI Codex (GPT-6)
+**Changes**: Renumbered this proposal family from EIMP 21 to EIMP 31 at the
+maintainer's request; updated active references and retained earlier history.
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)

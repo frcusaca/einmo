@@ -1,4 +1,4 @@
-# EIMP-21 User Story: Store Success Without Changing Its Verifier Identity
+# EIMP-31 User Story: Store Success Without Changing Its Verifier Identity
 
 ## Story
 
@@ -177,6 +177,11 @@ remains verifiable.
   successful validation record?
 
 ## Last Updated
+
+**Date**: 2026-09-07
+**Updated By**: OpenAI Codex (GPT-6)
+**Changes**: Renumbered this proposal family from EIMP 21 to EIMP 31 at the
+maintainer's request; updated active references and retained earlier history.
 
 **Date**: 2026-09-04
 **Updated By**: OpenAI Codex (GPT-5)
