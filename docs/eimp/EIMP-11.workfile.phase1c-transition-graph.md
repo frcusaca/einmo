@@ -33,7 +33,44 @@ a signing key. Review planning and the review server already use
 there is no independent legal-pair list to update. The full source/fixture
 audit found no signed fixture or EIMP 01 test using the removed edge.
 
+## Regression repair verification — 2026-09-16
+
+The replacement fixture now creates the checked source through the existing
+promotion helper before recording either decision. Its assertion checks the
+surviving action's case and verified destination, not only the action count.
+The separate output-only shortcut-refusal test still passes.
+
+Full run `cf60c2de-a828-4c66-95f7-af6ee88f490a` completed in 383.684 seconds:
+445 attempted, 438 passed, seven failed, zero skipped. Formatting and strict
+workspace clippy passed. The failures all exercise socket binding in this
+restricted environment:
+
+- `private_socket_path_can_be_served_over`
+- `serve_tcp_end_to_end_enforces_the_bearer_token`
+- `serve_uds_end_to_end_and_cleans_up_on_shutdown`
+- `serve_uds_rebinds_a_stale_socket_file`
+- `serve_uds_refuses_a_live_socket`
+- `acquire_refuses_a_second_lock_while_the_first_socket_is_live`
+- `run_serve_refuses_when_suite_lock_is_held`
+
+TCP and the two suite-lock failures explicitly report OS error 1,
+`Operation not permitted`; the remaining tests fail their socket-binding
+assertions. An unrestricted run is required to close the full gate.
+
+`cargo test --workspace --doc` succeeded for all three crates (zero doctests
+defined). EIMP numbering validation and `git diff --check` also passed.
+
 ## Last Updated
+
+**Date**: 2026-09-16
+**Updated By**: OpenAI Codex (GPT-6)
+**Changes**: Corrected the fixture-audit record: the server decision-replacement
+test also depended on the removed output-to-verified shortcut. Its fixture now
+promotes output to checked before recording decisions and asserts that the
+replacement verified decision survives. Isolated reproduction failed with
+HTTP 400 versus expected 200; focused replacement and shortcut-refusal tests
+then both passed (run `1042ca21-b516-41e4-9643-8e9e2faf2755`). Earlier claims
+that the full gate passed were premature and are corrected in the plan.
 
 **Date**: 2026-09-05
 **Updated By**: OpenAI Codex (GPT-5)

@@ -1573,6 +1573,9 @@ mod tests {
     #[tokio::test]
     async fn put_decision_replaces_not_stacks() {
         let tmp = seeded_suite();
+        // Both decisions need a real adjacent source; recording the first
+        // decision does not execute an output-to-checked promotion.
+        promote_output_to_checked(tmp.path());
         let state = Arc::new(AppState::default());
         let session = state.create_session(tmp.path());
         let app = router(state);
@@ -1594,6 +1597,14 @@ mod tests {
         let resp = app.oneshot(req).await.unwrap();
         let plan: PlanResponse = body_json(resp).await;
         assert_eq!(plan.actions.len(), 1, "replace-not-stack: still one action");
+        assert!(
+            matches!(
+                &plan.actions[0],
+                PlannedActionResponse::Promote { id, to }
+                    if id == "a.foo" && to == "verified"
+            ),
+            "the surviving action must be the replacement decision"
+        );
     }
 
     #[tokio::test]
